@@ -13,11 +13,12 @@ import requests
 
 try:
     from PIL import Image
+
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
 
-from ...Core.logger import get_logger
+from ...common.logger import get_logger
 
 logger = get_logger("skin")
 
@@ -91,42 +92,197 @@ def _cache_skin_address(uuid: str, type_name: str, skin_url: str) -> None:
     _save_skin_index(parser, type_name)
 
 
-def _cache_offline_avatar(uuid: str, skin_type: str, size: int) -> None:
+# 基于 128 画布的皮肤裁剪数据（与前端 JS 保持一致）
+_SKIN_DATA = {
+    "old": {
+        "rightLeg": {"cropBox": (8, 40, 8, 24), "mirror": False},
+        "leftLeg": {"cropBox": (8, 40, 8, 24), "mirror": True},
+        "rightArm": {"cropBox": (86, 40, 6, 24), "mirror": False},
+        "leftArm": {"cropBox": (86, 40, 6, 24), "mirror": True},
+        "torso": {"cropBox": (40, 40, 16, 24), "mirror": False},
+        "head": {"cropBox": (16, 16, 16, 16), "mirror": False},
+        "headSide": {"cropBox": (0, 16, 16, 16), "mirror": False},
+        "headOuter": {"cropBox": (80, 16, 16, 16), "mirror": False},
+    },
+    "new": {
+        "rightLeg": {"cropBox": (8, 40, 8, 24), "mirror": False},
+        "rightLegOuter": {"cropBox": (8, 72, 8, 24), "mirror": False},
+        "leftLeg": {"cropBox": (40, 104, 8, 24), "mirror": False},
+        "leftLegOuter": {"cropBox": (8, 104, 8, 24), "mirror": False},
+        "rightArm": {"cropBox": (86, 40, 6, 24), "mirror": False},
+        "rightArmSide": {"cropBox": (98, 40, 6, 24), "mirror": False},
+        "rightArmOuter": {"cropBox": (88, 72, 6, 24), "mirror": False},
+        "leftArm": {"cropBox": (74, 104, 6, 24), "mirror": False},
+        "leftArmSide": {"cropBox": (92, 40, 6, 24), "mirror": False},
+        "leftArmOuter": {"cropBox": (104, 104, 6, 24), "mirror": False},
+        "torso": {"cropBox": (40, 40, 16, 24), "mirror": False},
+        "torsoOuter": {"cropBox": (40, 72, 16, 24), "mirror": False},
+        "head": {"cropBox": (16, 16, 16, 16), "mirror": False},
+        "headSide": {"cropBox": (0, 16, 16, 16), "mirror": False},
+        "headOuter": {"cropBox": (80, 16, 16, 16), "mirror": False},
+    },
+}
+
+# 基于 1000x1000 画布的操作列表（与前端 JS 保持一致）
+# 每个操作: (cropBox, mirror, scaleFactor, pastePosition)
+_MINIMAL_OPERATIONS = {
+    "head": [
+        (_SKIN_DATA["new"]["head"]["cropBox"], _SKIN_DATA["new"]["head"]["mirror"], 37.5, (200, 200)),
+        (_SKIN_DATA["new"]["headOuter"]["cropBox"], _SKIN_DATA["new"]["headOuter"]["mirror"], 41, (175, 175)),
+    ],
+    "full": {
+        "old": [
+            (_SKIN_DATA["old"]["torso"]["cropBox"], _SKIN_DATA["old"]["torso"]["mirror"], 8.0625, (437, 561)),
+            (_SKIN_DATA["old"]["rightLeg"]["cropBox"], _SKIN_DATA["old"]["rightLeg"]["mirror"], 8.375, (434, 751)),
+            (_SKIN_DATA["old"]["leftLeg"]["cropBox"], _SKIN_DATA["old"]["leftLeg"]["mirror"], 8.375, (505, 751)),
+            (_SKIN_DATA["old"]["rightArm"]["cropBox"], _SKIN_DATA["old"]["rightArm"]["mirror"], 8.167, (388, 561)),
+            (_SKIN_DATA["old"]["leftArm"]["cropBox"], _SKIN_DATA["old"]["leftArm"]["mirror"], 8.167, (566, 561)),
+            (_SKIN_DATA["old"]["head"]["cropBox"], _SKIN_DATA["old"]["head"]["mirror"], 26.875, (287, 131)),
+            (_SKIN_DATA["old"]["headOuter"]["cropBox"], _SKIN_DATA["old"]["headOuter"]["mirror"], 30.8125, (254, 107)),
+        ],
+        "new": [
+            (_SKIN_DATA["new"]["torso"]["cropBox"], _SKIN_DATA["new"]["torso"]["mirror"], 8.0625, (437, 561)),
+            (_SKIN_DATA["new"]["torsoOuter"]["cropBox"], _SKIN_DATA["new"]["torsoOuter"]["mirror"], 8.6575, (432, 555)),
+            (_SKIN_DATA["new"]["rightLeg"]["cropBox"], _SKIN_DATA["new"]["rightLeg"]["mirror"], 8.375, (434, 751)),
+            (
+                _SKIN_DATA["new"]["rightLegOuter"]["cropBox"],
+                _SKIN_DATA["new"]["rightLegOuter"]["mirror"],
+                9.375,
+                (428, 737),
+            ),
+            (_SKIN_DATA["new"]["leftLeg"]["cropBox"], _SKIN_DATA["new"]["leftLeg"]["mirror"], 8.375, (505, 751)),
+            (
+                _SKIN_DATA["new"]["leftLegOuter"]["cropBox"],
+                _SKIN_DATA["new"]["leftLegOuter"]["mirror"],
+                9.375,
+                (503, 737),
+            ),
+            (_SKIN_DATA["new"]["rightArm"]["cropBox"], _SKIN_DATA["new"]["rightArm"]["mirror"], 8.167, (388, 561)),
+            (
+                _SKIN_DATA["new"]["rightArmOuter"]["cropBox"],
+                _SKIN_DATA["new"]["rightArmOuter"]["mirror"],
+                9.5,
+                (382, 538),
+            ),
+            (_SKIN_DATA["new"]["leftArm"]["cropBox"], _SKIN_DATA["new"]["leftArm"]["mirror"], 8.167, (566, 561)),
+            (
+                _SKIN_DATA["new"]["leftArmOuter"]["cropBox"],
+                _SKIN_DATA["new"]["leftArmOuter"]["mirror"],
+                9.5,
+                (564, 538),
+            ),
+            (_SKIN_DATA["new"]["head"]["cropBox"], _SKIN_DATA["new"]["head"]["mirror"], 26.875, (287, 131)),
+            (_SKIN_DATA["new"]["headOuter"]["cropBox"], _SKIN_DATA["new"]["headOuter"]["mirror"], 30.8125, (254, 107)),
+        ],
+    },
+}
+
+
+def _preprocess_skin_image(skin_img: Image.Image) -> Image.Image:
+    """皮肤预处理：与前端 JS preprecessSkinImage 保持一致"""
+    w, h = skin_img.size
+    if w == 64 and h == 32:
+        return skin_img.resize((128, 64), Image.NEAREST)
+    return skin_img.resize((128, 128), Image.NEAREST)
+
+
+def _process_image(
+    skin_img: Image.Image,
+    crop_box: tuple[int, int, int, int],
+    mirror: bool,
+    scale_factor: float,
+) -> Image.Image:
+    """处理图像部分（裁剪、缩放、镜像），对应前端 JS processImage"""
+    x, y, cw, ch = crop_box
+    part = skin_img.crop((x, y, x + cw, y + ch))
+    new_w = int(cw * scale_factor)
+    new_h = int(ch * scale_factor)
+    if new_w != cw or new_h != ch:
+        part = part.resize((new_w, new_h), Image.NEAREST)
+    if mirror:
+        part = part.transpose(Image.FLIP_LEFT_RIGHT)
+    return part
+
+
+def _get_operations(avatar_type: str, original_size: tuple[int, int]) -> list:
+    """根据头像类型和皮肤尺寸获取操作列表，对应前端 JS getOperations"""
+    if not _MINIMAL_OPERATIONS:
+        return []
+    if avatar_type == "head":
+        return _MINIMAL_OPERATIONS["head"]
+    if avatar_type in ("big-head", "big_head"):
+        avatar_type = "full"
+    skin_version = "old" if original_size == (64, 32) else "new"
+    return _MINIMAL_OPERATIONS.get(avatar_type, {}).get(skin_version, [])
+
+
+def _calculate_canvas_size(operations: list) -> tuple[int, int]:
+    """根据操作列表计算刚好能放下所有内容的最小画布尺寸"""
+    max_x = 0
+    max_y = 0
+    for crop_box, _, scale_factor, (px, py) in operations:
+        w = int(crop_box[2] * scale_factor)
+        h = int(crop_box[3] * scale_factor)
+        max_x = max(max_x, px + w)
+        max_y = max(max_y, py + h)
+    return max_x, max_y
+
+
+def _render_avatar_js(skin_img: Image.Image, avatar_type: str, target_size: int) -> Image.Image:
+    """基于前端 JS 逻辑的精确渲染实现（画布按需分配，无多余留白）"""
+    original_size = skin_img.size
+    skin_img = _preprocess_skin_image(skin_img)
+    if skin_img.mode != "RGBA":
+        skin_img = skin_img.convert("RGBA")
+
+    if avatar_type in ("big-head", "big_head"):
+        # 先渲染 full，再放大截取
+        full_ops = _get_operations("full", original_size)
+        canvas_w, canvas_h = _calculate_canvas_size(full_ops)
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        for crop_box, mirror, scale_factor, paste_pos in full_ops:
+            part = _process_image(skin_img, crop_box, mirror, scale_factor)
+            canvas.paste(part, paste_pos, part)
+
+        big = canvas.resize((int(canvas_w * 1.4), int(canvas_h * 1.4)), Image.NEAREST)
+        left = int(canvas_w * 0.2)
+        canvas = big.crop((left, 0, left + canvas_w, canvas_h))
+    else:
+        operations = _get_operations(avatar_type, original_size)
+        canvas_w, canvas_h = _calculate_canvas_size(operations)
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        for crop_box, mirror, scale_factor, paste_pos in operations:
+            part = _process_image(skin_img, crop_box, mirror, scale_factor)
+            canvas.paste(part, paste_pos, part)
+
+    # 裁剪掉透明边界，只保留实际内容
+    bbox = canvas.getbbox()
+    if bbox:
+        canvas = canvas.crop(bbox)
+
+    # 缩放到目标尺寸
+    if target_size != canvas.width or target_size != canvas.height:
+        canvas = canvas.resize((target_size, target_size), Image.NEAREST)
+    return canvas
+
+
+def _cache_offline_avatar(uuid: str, skin_type: str, size: int, avatar_type: str = "head") -> None:
     """缓存离线玩家或默认皮肤的头像数据"""
     cache_dir = _get_skin_cache_dir()
-    filename = f"{uuid.lower()}-{skin_type}-{size}.png"
+    filename = f"{uuid.lower()}-{skin_type}-{avatar_type}-{size}.png"
     file_path = cache_dir / filename
-    
-    # 如果缓存已存在，直接返回
+
     if file_path.exists():
         return
-    
-    # 生成头像并保存到缓存
+
     try:
         skin_path = _get_default_skin_path(skin_type)
         if not skin_path.exists():
             return
-        
+
         with Image.open(skin_path) as skin_img:
-            if skin_img.mode != 'RGBA':
-                skin_img = skin_img.convert('RGBA')
-            
-            scale = max(1, skin_img.width // 64)
-            head_x, head_y = 8 * scale, 8 * scale
-            head_size = 8 * scale
-            
-            head_region = skin_img.crop((head_x, head_y, head_x + head_size, head_y + head_size))
-            
-            hair_x, hair_y = 40 * scale, 8 * scale
-            if hair_x + head_size <= skin_img.width and hair_y + head_size <= skin_img.height:
-                hair_region = skin_img.crop((hair_x, hair_y, hair_x + head_size, hair_y + head_size))
-                if hair_region.getbbox() is not None:
-                    head_region.paste(hair_region, (0, 0), hair_region)
-            
-            if size != head_size:
-                head_region = head_region.resize((size, size), Image.NEAREST)
-            
-            head_region.save(file_path, 'PNG')
+            result = _render_avatar_js(skin_img, avatar_type, size)
+            result.save(file_path, "PNG")
     except Exception as e:
         logger.warning(f"缓存离线头像失败 {uuid}: {e}")
 
@@ -152,28 +308,25 @@ def _build_skin_server_url(type_name: str, custom_server: str | None = None) -> 
 
 
 def _fetch_profile_json(url: str, timeout: int = 10) -> dict[str, Any]:
-    headers = {
-        "User-Agent": "EuoraCraft Launcher",
-        "Accept": "application/json"
-    }
-    
+    headers = {"User-Agent": "EuoraCraft Launcher", "Accept": "application/json"}
+
     # 调试：打印请求URL
     logger.debug(f"请求皮肤URL: {url}")
-    
+
     response = requests.get(url, timeout=timeout, headers=headers)
-    
+
     # 处理 204 No Content 响应（用户不存在）
     if response.status_code == 204:
         logger.debug("Mojang API 返回 204 No Content，用户不存在")
         raise ValueError("用户不存在或未设置皮肤")
-    
+
     response.raise_for_status()
-    
+
     # 调试：查看响应内容
     content = response.text
     logger.debug(f"响应状态码: {response.status_code}")
     logger.debug(f"响应内容前200字符: {content[:200]}")
-    
+
     try:
         data = response.json()
         if not data:
@@ -271,17 +424,25 @@ def get_skin_sex(uuid: str) -> str:
     return "Alex" if (values[0] ^ values[1] ^ values[2] ^ values[3]) % 2 else "Steve"
 
 
-def get_avatar_data_url(uuid: str, type_name: str = "Mojang", custom_server: str | None = None, size: int = 64, use_default_skin: bool = False) -> str:
+def get_avatar_data_url(
+    uuid: str,
+    type_name: str = "Mojang",
+    custom_server: str | None = None,
+    size: int = 64,
+    use_default_skin: bool = False,
+    avatar_type: str = "head",
+) -> str:
     """
     获取玩家头像的 base64 data URL
-    从皮肤中提取头部区域并缩放到指定尺寸
-    
+    支持 head（头部）、full（全身）、big-head（大头）三种渲染模式
+
     Args:
         uuid: 玩家UUID
         type_name: 皮肤服务器类型 (Mojang, Nide, Auth)
         custom_server: 自定义服务器地址
         size: 头像尺寸
-        use_default_skin: 是否强制使用默认皮肤（True: 使用默认皮肤，False: 尝试API获取）
+        use_default_skin: 是否强制使用默认皮肤
+        avatar_type: 头像类型 (head, full, big-head)
     """
     if not HAS_PIL:
         raise ImportError("PIL (Pillow) 库未安装，无法处理头像")
@@ -289,80 +450,48 @@ def get_avatar_data_url(uuid: str, type_name: str = "Mojang", custom_server: str
     if not uuid:
         raise ValueError("UUID 为空")
 
-    # 调试信息
-    logger.debug(f"获取头像参数: uuid={uuid}, type_name={type_name}, use_default_skin={use_default_skin}")
+    logger.debug(
+        f"获取头像参数: uuid={uuid}, type_name={type_name}, avatar_type={avatar_type}, use_default_skin={use_default_skin}"
+    )
 
     # 根据参数决定使用默认皮肤还是API获取
     if use_default_skin:
-        # 强制使用默认皮肤
-        skin_type = get_skin_sex(uuid)  # Steve 或 Alex
+        skin_type = get_skin_sex(uuid)
         skin_path = _get_default_skin_path(skin_type)
         logger.debug(f"强制使用默认皮肤路径: {skin_path}")
         if not skin_path.exists():
             raise FileNotFoundError(f"默认皮肤文件不存在: {skin_path}")
-        # 缓存离线玩家皮肤
-        _cache_offline_avatar(uuid, skin_type, size)
+        _cache_offline_avatar(uuid, skin_type, size, avatar_type)
         logger.debug(f"强制使用默认皮肤: {uuid} -> {skin_type}")
     elif type_name.lower() in ("mojang", "ms", "microsoft"):
-        # 使用 API 获取皮肤（Mojang正版用户和Microsoft账户）
         logger.debug(f"尝试API获取正版用户皮肤: {uuid}")
         try:
             skin_url = get_skin_address(uuid, type_name, custom_server)
             skin_path = download_skin(skin_url)
             logger.debug(f"成功获取正版用户在线皮肤: {uuid}")
         except Exception as e:
-            # 如果获取失败，使用默认皮肤
             logger.warning(f"获取正版用户皮肤失败 {uuid}: {e}，使用默认皮肤")
             skin_type = get_skin_sex(uuid)
             skin_path = _get_default_skin_path(skin_type)
             if not skin_path.exists():
-                raise FileNotFoundError(f"默认皮肤文件不存在: {skin_path}")
-            # 缓存默认皮肤
-            _cache_offline_avatar(uuid, skin_type, size)
+                raise FileNotFoundError(f"默认皮肤文件不存在: {skin_path}") from e
+            _cache_offline_avatar(uuid, skin_type, size, avatar_type)
     else:
-        # 非Mojang服务器（如Nide、Auth等）使用默认皮肤
-        skin_type = get_skin_sex(uuid)  # Steve 或 Alex
+        skin_type = get_skin_sex(uuid)
         skin_path = _get_default_skin_path(skin_type)
         logger.debug(f"非Mojang服务器使用默认皮肤路径: {skin_path}")
         if not skin_path.exists():
             raise FileNotFoundError(f"默认皮肤文件不存在: {skin_path}")
-        # 缓存离线玩家皮肤
-        _cache_offline_avatar(uuid, skin_type, size)
+        _cache_offline_avatar(uuid, skin_type, size, avatar_type)
         logger.debug(f"非Mojang服务器使用默认皮肤: {uuid} -> {skin_type}")
 
-    # 处理头像
     with Image.open(skin_path) as skin_img:
-        # 确保是 RGBA 模式
-        if skin_img.mode != 'RGBA':
-            skin_img = skin_img.convert('RGBA')
+        result = _render_avatar_js(skin_img, avatar_type, size)
 
-        # 检测皮肤缩放比例（通常是 64x64 或更高）
-        scale = max(1, skin_img.width // 64)
-
-        # 提取头部区域 (8x8 像素，从位置 8,8 开始)
-        head_x, head_y = 8 * scale, 8 * scale
-        head_size = 8 * scale
-
-        head_region = skin_img.crop((head_x, head_y, head_x + head_size, head_y + head_size))
-
-        # 检查是否有头发层 (位置 40,8)
-        hair_x, hair_y = 40 * scale, 8 * scale
-        if hair_x + head_size <= skin_img.width and hair_y + head_size <= skin_img.height:
-            hair_region = skin_img.crop((hair_x, hair_y, hair_x + head_size, hair_y + head_size))
-
-            # 检查头发层是否透明或为空
-            if hair_region.getbbox() is not None:  # 有非透明像素
-                # 合并头发层到头部
-                head_region.paste(hair_region, (0, 0), hair_region)
-
-        # 缩放到目标尺寸
-        if size != head_size:
-            head_region = head_region.resize((size, size), Image.NEAREST)
-
-        # 转换为 base64 data URL
         from io import BytesIO
+
         buffer = BytesIO()
-        head_region.save(buffer, format='PNG')
-        img_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        result.save(buffer, format="PNG")
+        img_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         return f"data:image/png;base64,{img_data}"

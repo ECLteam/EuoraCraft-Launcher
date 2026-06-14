@@ -1,8 +1,8 @@
-from typing import Callable
-from pathlib import Path
-from uuid import uuid4
 import subprocess
 import threading
+from collections.abc import Callable
+from pathlib import Path
+from uuid import uuid4
 
 
 class InstancesManager:
@@ -10,7 +10,7 @@ class InstancesManager:
         self.instances: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-        self._log_callback: Callable[[str], None] = print   # 默认输出到控制台
+        self._log_callback: Callable[[str], None] = print  # 默认输出到控制台
         self._exit_callback: Callable[[int], None] = print
 
     def set_log_callback(self, callback: Callable[[str], None]) -> None:
@@ -27,16 +27,22 @@ class InstancesManager:
         """
         self._exit_callback = callback
 
-    def _read_stream(self, stream, callback: Callable[[str], None], proc: subprocess.Popen = None,
-                     exit_callback: Callable[[int], None] = None, instance_id: str = "") -> None:
+    def _read_stream(
+        self,
+        stream,
+        callback: Callable[[str], None],
+        proc: subprocess.Popen | None = None,
+        exit_callback: Callable[[int], None] | None = None,
+        instance_id: str = "",
+    ) -> None:
         """
         在线程中读取一个流，逐行回调
         stdout 流循环结束后触发退出回调
         """
         try:
-            for line in iter(stream.readline, ''):
+            for line in iter(stream.readline, ""):
                 if line:
-                    callback(line.rstrip('\n'))
+                    callback(line.rstrip("\n"))
         finally:
             stream.close()
             # 子进程已退出，管道关闭，获取返回码并回调
@@ -46,16 +52,18 @@ class InstancesManager:
                     self.instances.pop(instance_id, None)
                 exit_callback(return_code)
 
-    def create_instance(self,
-                        instance_name: str,
-                        instance_type: str,
-                        args: str | list[str],
-                        cwd: str | Path = None,
-                        new_session: bool = True,
-                        only_stdout: bool = False,
-                        std_in: bool = False,
-                        log_callback: Callable[[str], None] = None,
-                        exit_callback: Callable[[int], None] = None) -> str:
+    def create_instance(
+        self,
+        instance_name: str,
+        instance_type: str,
+        args: str | list[str],
+        cwd: str | Path | None = None,
+        new_session: bool = True,
+        only_stdout: bool = False,
+        std_in: bool = False,
+        log_callback: Callable[[str], None] | None = None,
+        exit_callback: Callable[[int], None] | None = None,
+    ) -> str:
         """
         创建一个新的实例（子进程），并自动启动日志读取线程
         :param instance_name: 实例名称
@@ -79,7 +87,7 @@ class InstancesManager:
             start_new_session=new_session,
             text=True,
             encoding="utf-8",
-            errors="ignore"
+            errors="ignore",
         )
 
         callback = log_callback or self._log_callback
@@ -88,38 +96,35 @@ class InstancesManager:
         instance_id = uuid4().hex
         # stdout 线程：负责读取日志 + 监控进程退出
         t_out = threading.Thread(
-            target=self._read_stream,
-            args=(proc.stdout, callback, proc, exit_callback, instance_id),
-            daemon=True
+            target=self._read_stream, args=(proc.stdout, callback, proc, exit_callback, instance_id), daemon=True
         )
         t_out.start()
 
         # stderr 线程（若未合并）：仅读取日志
         t_err = None
         if not only_stdout and proc.stderr:
-            t_err = threading.Thread(
-                target=self._read_stream,
-                args=(proc.stderr, callback),
-                daemon=True
-            )
+            t_err = threading.Thread(target=self._read_stream, args=(proc.stderr, callback), daemon=True)
             t_err.start()
 
-        self.instances.update({
-            instance_id: {
-                "Name": instance_name,
-                "ID": instance_id,
-                "Type": instance_type,
-                "StdIn": std_in,
-                "Instance": proc,
-                "Threads": [t_out, t_err],
-                "ExitCallback": exit_callback
+        self.instances.update(
+            {
+                instance_id: {
+                    "Name": instance_name,
+                    "ID": instance_id,
+                    "Type": instance_type,
+                    "StdIn": std_in,
+                    "Instance": proc,
+                    "Threads": [t_out, t_err],
+                    "ExitCallback": exit_callback,
+                }
             }
-        })
+        )
         return instance_id
 
     def send_stdin(self, instance_id: str, data: str) -> None:
         """向指定实例的 stdin 写入数据（仅当 std_in=True 时有效）"""
-        if (instance_id not in self.instances) or (not self.instances[instance_id]["StdIn"]): return
+        if (instance_id not in self.instances) or (not self.instances[instance_id]["StdIn"]):
+            return
         proc: subprocess.Popen = self.instances[instance_id]["Instance"]
         if proc.stdin:
             try:
@@ -134,7 +139,8 @@ class InstancesManager:
         :param instance_id: 实例ID
         :param terminate: True 使用 terminate()，False 使用 kill()
         """
-        if instance_id not in self.instances: return
+        if instance_id not in self.instances:
+            return
         proc: subprocess.Popen = self.instances[instance_id]["Instance"]
         if proc.poll() is None:  # 进程仍在运行
             if terminate:
@@ -148,7 +154,7 @@ class InstancesManager:
     def shutdown_all(self, kill: bool = True) -> None:
         """终止所有正在运行的实例"""
         with self._lock:
-            for inst in list(self.instances.values()):   # 遍历副本
+            for inst in list(self.instances.values()):  # 遍历副本
                 proc: subprocess.Popen = inst["Instance"]
                 if proc.poll() is None:
                     if kill:

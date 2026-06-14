@@ -1,16 +1,17 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Tuple, Optional
-from pathlib import Path
 import threading
-import requests
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import requests
 
 
 class Downloader:
     def __init__(self, max_retries: int = 3, chunk_size: int = 8192, user_agent: str = "Euora Craft Launcher"):
         self.download_status = True
-        self.__download_total: List[Tuple[str, str]] = []
-        self.__download_done: List[str] = []
+        self.__download_total: list[tuple[str, str]] = []
+        self.__download_done: list[str] = []
         self.output_progress = self.__default_output_progress
         self.output_log: Callable[[str], None] = print
         self.lock = threading.Lock()
@@ -19,10 +20,12 @@ class Downloader:
 
         # 配置requests会话
         self.session = requests.Session()
-        self.session.headers.update({
-            # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            "User-Agent": user_agent
-        })
+        self.session.headers.update(
+            {
+                # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": user_agent
+            }
+        )
 
     def __default_output_progress(self, total_files: list, downloaded_files: list):
         with self.lock:
@@ -45,7 +48,7 @@ class Downloader:
         with self.lock:
             self.download_status = set_status
 
-    def __get_file_size(self, url: str) -> Optional[int]:
+    def __get_file_size(self, url: str) -> int | None:
         """获取文件大小，支持重试"""
         for attempt in range(self.max_retries):
             try:
@@ -67,9 +70,9 @@ class Downloader:
 
             except requests.exceptions.RequestException as e:
                 if attempt == self.max_retries - 1:
-                    self.output_log(f"获取文件大小失败 {url}: {str(e)}")
+                    self.output_log(f"获取文件大小失败 {url}: {e!s}")
                     return None
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
         return None
 
     def __download_stream(self, url: str, file_path: Path, start_byte: int = 0) -> bool:
@@ -104,11 +107,11 @@ class Downloader:
 
             except requests.exceptions.RequestException as e:
                 if attempt == self.max_retries - 1:
-                    self.output_log(f"下载失败 {url}: {str(e)}")
+                    self.output_log(f"下载失败 {url}: {e!s}")
                     return False
-                time.sleep(2 ** attempt)
-            except IOError as e:
-                self.output_log(f"文件写入失败 {file_path}: {str(e)}")
+                time.sleep(2**attempt)
+            except OSError as e:
+                self.output_log(f"文件写入失败 {file_path}: {e!s}")
                 return False
         return False
 
@@ -124,7 +127,7 @@ class Downloader:
             save_file_path.parent.mkdir(parents=True, exist_ok=True)
             # self.output_log(f"创建目录: {save_file_path.parent}")
         except Exception as e:
-            self.output_log(f"创建目录失败 {save_file_path.parent}: {str(e)}")
+            self.output_log(f"创建目录失败 {save_file_path.parent}: {e!s}")
             return False
 
         # 2. 获取文件大小（如果失败，尝试直接下载）
@@ -149,7 +152,7 @@ class Downloader:
                     temp_path.unlink(missing_ok=True)
                     downloaded_size = 0
             except Exception as e:
-                self.output_log(f"检查临时文件失败: {str(e)}")
+                self.output_log(f"检查临时文件失败: {e!s}")
                 temp_path.unlink(missing_ok=True)
                 downloaded_size = 0
 
@@ -168,7 +171,7 @@ class Downloader:
                 self.output_log(f"文件大小不匹配: 期望 {file_size}, 实际 {final_size}")
                 return False
         except Exception as e:
-            self.output_log(f"验证文件大小失败: {str(e)}")
+            self.output_log(f"验证文件大小失败: {e!s}")
 
         # 6. 重命名临时文件
         try:
@@ -180,10 +183,10 @@ class Downloader:
             # self.output_log(f"下载完成: {save_path}")
             return True
         except Exception as e:
-            self.output_log(f"重命名文件失败 {save_path}: {str(e)}")
+            self.output_log(f"重命名文件失败 {save_path}: {e!s}")
             return False
 
-    def download_manager(self, download_list: List[Tuple[str, str]], max_threads: int) -> bool:
+    def download_manager(self, download_list: list[tuple[str, str]], max_threads: int) -> bool:
         """下载管理器"""
         if not download_list or max_threads <= 0:
             self.output_log("下载列表为空或线程数无效")
@@ -216,19 +219,16 @@ class Downloader:
                                 successful_downloads += 1
 
                             # 更新进度
-                            self.output_progress(
-                                self.__download_total,
-                                self.__download_done
-                            )
+                            self.output_progress(self.__download_total, self.__download_done)
                             self.output_log(f"成功下载: {save_path}")
                         else:
                             self.output_log(f"失败下载: {save_path}")
 
                     except Exception as e:
-                        self.output_log(f"任务执行异常 {url}: {str(e)}")
+                        self.output_log(f"任务执行异常 {url}: {e!s}")
 
         except Exception as e:
-            self.output_log(f"下载管理器异常: {str(e)}")
+            self.output_log(f"下载管理器异常: {e!s}")
 
         # 检查是否所有文件都下载完成
         total_files = len(self.__download_total)
@@ -238,4 +238,3 @@ class Downloader:
 
         with self.lock:
             return downloaded_files == total_files
-

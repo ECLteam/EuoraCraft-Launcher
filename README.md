@@ -325,7 +325,7 @@ ECL_LAUNCHER_DEBUG=true
 
 - 项目主页: https://github.com/ECLTeam/EuoraCraft-Launcher
 - 问题反馈: https://github.com/ECLTeam/EuoraCraft-Launcher/issues
-- 邮箱: eclteam@eclteam.freeqiye.com
+- 邮箱: EuoraCraft-Studio@outlook.com.
 
 ---
 

@@ -1,10 +1,11 @@
-from ECL.launcher import EuoraCraftLauncher
+import sys
+
+from ECL.tauri_app import main as tauri_main
 
 
-def main() -> None:
-    launcher = EuoraCraftLauncher()
-    launcher.run()
+def main() -> int:
+    return tauri_main()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
