@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import time
 import uuid
@@ -6,6 +7,7 @@ import webbrowser
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import msal
 import requests
@@ -25,13 +27,22 @@ class MultiAccountMinecraftAuth:
         self._log_callback: Callable[[str], None] = logger.info
         self._login_log_callback: Callable[[str], None] = logger.info
         self._login_callback: Callable[[dict], None] = self._login_print
-        self._first_launch_callback: Callable[[], str] | None = None
         self.encryption: EncryptionManager | None = None
         self.accounts: dict[str, MinecraftAccount] = {}
         self.current_account: MinecraftAccount | None = None
         self.accounts_file = self.data_dir / "accounts.json"
         self.current_account_file = self.data_dir / "current_account.txt"
-        self._initialized = False
+        self._initialized: bool = False
+
+        # pending login state
+        self._pending_flow: dict | None = None
+        self._pending_cache_file: str | None = None
+        self._pending_app: msal.PublicClientApplication | None = None
+        self._poll_interval: int = 5
+        self._poll_expires_at: float = 0
+        self._poll_result: dict | None = None
+        self._poll_future: Any = None
+        self._poll_executor: ThreadPoolExecutor | None = None
 
     def set_output_log(self, func: Callable[[str], None]) -> None:
         self._log_callback = func
@@ -41,9 +52,6 @@ class MultiAccountMinecraftAuth:
 
     def set_login_callback(self, func: Callable[[dict], None]) -> None:
         self._login_callback = func
-
-    def set_first_launch_callback(self, func: Callable[[], str]) -> None:
-        self._first_launch_callback = func
 
     def _log(self, msg: str) -> None:
         self._log_callback(msg)
@@ -58,15 +66,28 @@ class MultiAccountMinecraftAuth:
             self._log("已经初始化过，跳过")
             return True
         try:
-            self.encryption = EncryptionManager(
-                log_callback=self._log_callback, first_launch_callback=self._first_launch_callback
-            )
+            self.encryption = EncryptionManager(log_callback=self._log_callback)
+            if self.encryption.needs_password():
+                self._log("需要设置主密码")
+                return False
             self._load_accounts()
             self._initialized = True
             self._log("初始化成功")
             return True
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError) as e:
             self._log(f"初始化失败: {e}")
+            return False
+
+    def set_encryption_password(self, password: str) -> bool:
+        if self.encryption is None:
+            return False
+        try:
+            self.encryption.set_password(password)
+            self._load_accounts()
+            self._initialized = True
+            return True
+        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError) as e:
+            self._log(f"设置密码失败: {e}")
             return False
 
     def _ensure_initialized(self) -> None:
@@ -78,7 +99,7 @@ class MultiAccountMinecraftAuth:
             logger.debug("账户文件不存在，跳过加载")
             return
         try:
-            with self.accounts_file.open() as f:
+            with self.accounts_file.open(encoding="utf-8") as f:
                 accounts_data = json.load(f)
                 logger.debug(f"账户文件原始数据包含 {len(accounts_data)} 个条目")
                 for account_id, enc_data in accounts_data.items():
@@ -88,21 +109,21 @@ class MultiAccountMinecraftAuth:
                             account_dict = json.loads(decrypted_data)
                             self.accounts[account_id] = MinecraftAccount.from_dict(account_dict)
                             logger.debug(f"加载账户成功: {account_id}")
-                        except Exception as item_err:
+                        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as item_err:
                             logger.warning(f"加载账户 {account_id} 失败: {item_err}")
                     else:
                         logger.warning(f"账户 {account_id} 数据格式异常，期望字符串，得到 {type(enc_data)}")
             self._log(f"已加载 {len(self.accounts)} 个账户")
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             logger.error(f"加载账户数据失败: {e}")
         if self.current_account_file.exists():
             try:
-                with self.current_account_file.open() as f:
+                with self.current_account_file.open(encoding="utf-8") as f:
                     current_id = f.read().strip()
                     if current_id in self.accounts:
                         self.current_account = self.accounts[current_id]
                         self._log(f"当前选中账户: {self.current_account.alias}")
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 self._log(f"加载当前账户失败: {e}")
 
     def _save_accounts(self) -> None:
@@ -111,17 +132,17 @@ class MultiAccountMinecraftAuth:
             encrypted = self.encryption.encrypt_data(json.dumps(account.to_dict()))
             accounts_data[account_id] = encrypted
         try:
-            with self.accounts_file.open("w") as f:
+            with self.accounts_file.open("w", encoding="utf-8") as f:
                 json.dump(accounts_data, f, indent=2)
-        except Exception as e:
+        except (OSError, TypeError, ValueError, RuntimeError) as e:
             self._log(f"保存账户数据失败: {e}")
 
     def _set_current_account(self, account: MinecraftAccount) -> None:
         self.current_account = account
         try:
-            with self.current_account_file.open("w") as f:
+            with self.current_account_file.open("w", encoding="utf-8") as f:
                 f.write(account.account_id)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self._log(f"保存当前账户设置失败: {e}")
 
     def _build_persistence_cache(self, cache_file: str) -> msal.SerializableTokenCache:
@@ -130,11 +151,11 @@ class MultiAccountMinecraftAuth:
         token_cache = msal.SerializableTokenCache()
         if cache_path.exists():
             try:
-                with cache_path.open() as f:
+                with cache_path.open(encoding="utf-8") as f:
                     encrypted = f.read()
                     decrypted = self.encryption.decrypt_data(encrypted)
                     token_cache.deserialize(decrypted)
-            except Exception as e:
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 self._log(f"加载加密缓存失败: {e}")
         token_cache.cache_path = str(cache_path)
         return token_cache
@@ -145,9 +166,9 @@ class MultiAccountMinecraftAuth:
         try:
             cache_data = token_cache.serialize()
             encrypted = self.encryption.encrypt_data(cache_data)
-            with Path(token_cache.cache_path).open("w") as f:
+            with Path(token_cache.cache_path).open("w", encoding="utf-8") as f:
                 f.write(encrypted)
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
             self._log(f"保存加密缓存失败: {e}")
 
     def _get_microsoft_token(self, cache_file: str) -> tuple[str | None, str | None, str | None]:
@@ -175,7 +196,7 @@ class MultiAccountMinecraftAuth:
                 if result and "id_token_claims" in result:
                     id_claims = result["id_token_claims"]
                     email = id_claims.get("preferred_username") or id_claims.get("email")
-            except Exception as e:
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError, requests.exceptions.RequestException) as e:
                 self._login_log_callback(f"设备代码流失败: {e}")
                 return None, None, None
         if "access_token" in result:
@@ -225,11 +246,11 @@ class MultiAccountMinecraftAuth:
             xsts_token = resp.json()["Token"]
             self._login_log_callback("XSTS 令牌获取成功")
             return xsts_token, user_hash
-        except Exception as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
             self._login_log_callback(f"Xbox 认证链失败: {e}")
             return None, None
 
-    def _get_minecraft_token(self, xsts_token: str, user_hash: str) -> str | None:
+    def _get_minecraft_token(self, xsts_token: str, user_hash: str) -> tuple[str | None, int]:
         try:
             resp = requests.post(
                 "https://api.minecraftservices.com/authentication/login_with_xbox",
@@ -238,12 +259,13 @@ class MultiAccountMinecraftAuth:
             )
             if resp.status_code != 200:
                 self._login_log_callback(f"Minecraft 令牌获取失败: {resp.status_code}")
-                return None
+                return None, 0
+            data = resp.json()
             self._login_log_callback("Minecraft 令牌获取成功")
-            return resp.json()["access_token"]
-        except Exception as e:
+            return data["access_token"], data.get("expires_in", 86400)
+        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
             self._login_log_callback(f"Minecraft 令牌获取失败: {e}")
-            return None
+            return None, 0
 
     def _check_minecraft_ownership(self, mc_access_token: str) -> tuple[bool, dict | None]:
         try:
@@ -261,7 +283,7 @@ class MultiAccountMinecraftAuth:
             else:
                 self._login_log_callback(f"验证失败: {resp.status_code}")
                 return False, None
-        except Exception as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
             self._login_log_callback(f"验证失败: {e}")
             return False, None
 
@@ -274,7 +296,7 @@ class MultiAccountMinecraftAuth:
         xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
         if not xsts_token:
             return False
-        mc_token = self._get_minecraft_token(xsts_token, user_hash)
+        mc_token, expires_in = self._get_minecraft_token(xsts_token, user_hash)
         if not mc_token:
             return False
         has_minecraft, profile = self._check_minecraft_ownership(mc_token)
@@ -327,8 +349,6 @@ class MultiAccountMinecraftAuth:
                     msg = f"玩家名 '{username}' 已被微软账户使用"
                 self._log(msg)
                 return {"success": False, "message": msg}
-
-        import hashlib
 
         offline_uuid_str = hashlib.md5(f"OfflinePlayer:{username}".encode()).hexdigest()
         formatted_uuid = f"{offline_uuid_str[:8]}-{offline_uuid_str[8:12]}-{offline_uuid_str[12:16]}-{offline_uuid_str[16:20]}-{offline_uuid_str[20:32]}"
@@ -416,6 +436,12 @@ class MultiAccountMinecraftAuth:
         if self.current_account.account_type == "offline":
             self._log(f"离线账户 '{self.current_account.alias}' 无需获取令牌")
             return "OFFLINE"
+
+        # 检查缓存的 Minecraft 令牌是否仍然有效
+        if self.current_account.mc_token and self.current_account.mc_token_expires > time.time():
+            self._log(f"使用缓存的 Minecraft 令牌 (剩余 {self.current_account.mc_token_expires - time.time():.0f}s)")
+            return self.current_account.mc_token
+
         self._log(f"正在为账户 {self.current_account.alias} 获取 Minecraft 令牌...")
         ms_token, _, _ = self._get_microsoft_token(self.current_account.cache_file)
         if not ms_token:
@@ -425,7 +451,7 @@ class MultiAccountMinecraftAuth:
         if not xsts_token:
             self._login_log_callback("Xbox 认证链失败")
             return None
-        mc_token = self._get_minecraft_token(xsts_token, user_hash)
+        mc_token, expires_in = self._get_minecraft_token(xsts_token, user_hash)
         if not mc_token:
             self._login_log_callback("获取 Minecraft 令牌失败")
             return None
@@ -437,7 +463,10 @@ class MultiAccountMinecraftAuth:
             self._log(f"玩家 ID 变化: {self.current_account.alias} -> {profile['name']}")
             self.current_account.alias = profile["name"]
             self.current_account.profile = profile
-            self._save_accounts()
+        # 缓存令牌（提前 5 分钟过期）
+        self.current_account.mc_token = mc_token
+        self.current_account.mc_token_expires = time.time() + expires_in - 300
+        self._save_accounts()
         return mc_token
 
     def refresh_account_profile(self, account_alias: str) -> bool:
@@ -453,7 +482,7 @@ class MultiAccountMinecraftAuth:
             xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
             if not xsts_token:
                 return False
-            mc_token = self._get_minecraft_token(xsts_token, user_hash)
+            mc_token, _ = self._get_minecraft_token(xsts_token, user_hash)
             if not mc_token:
                 return False
             is_valid, profile = self._check_minecraft_ownership(mc_token)
@@ -482,14 +511,14 @@ class MultiAccountMinecraftAuth:
         self._log(f"档案刷新完成，成功更新 {updated}/{len(self.accounts)} 个账户")
 
     def change_master_password(self, new_password: str) -> bool:
+        self._ensure_initialized()
         if len(new_password) < 8:
             self._log("密码长度至少8位")
             return False
-        self._ensure_initialized()
         old_fernet = self.encryption.fernet
         try:
             new_fernet = self.encryption.change_password(new_password)
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as e:
             self._log(f"更改密码失败: {e}")
             return False
         self._log("重新加密缓存文件...")
@@ -499,16 +528,16 @@ class MultiAccountMinecraftAuth:
             cache_path = self.data_dir / "cache" / f"{account.cache_file}.bin"
             if cache_path.exists():
                 try:
-                    with cache_path.open() as f:
+                    with cache_path.open(encoding="utf-8") as f:
                         encrypted_data = f.read()
                     decrypted_bytes = old_fernet.decrypt(base64.urlsafe_b64decode(encrypted_data.encode()))
                     decrypted_data = decrypted_bytes.decode()
                     new_encrypted = new_fernet.encrypt(decrypted_data.encode())
                     new_encrypted_b64 = base64.urlsafe_b64encode(new_encrypted).decode()
-                    with cache_path.open("w") as f:
+                    with cache_path.open("w", encoding="utf-8") as f:
                         f.write(new_encrypted_b64)
                     success += 1
-                except Exception as e:
+                except (OSError, ValueError, KeyError, TypeError) as e:
                     self._log(f"重新加密账户 {account.alias} 的缓存失败: {e}")
         self._save_accounts()
         self._log(f"主密码更改完成，成功重新加密 {success}/{total} 个账户")
@@ -575,7 +604,7 @@ class MultiAccountMinecraftAuth:
         self._pending_cache_file = cache_file
         self._pending_app = app
         self._poll_interval = flow.get("interval", 5)
-        self._poll_expires_at = flow.get("expires_at", 0)
+        self._poll_expires_at = float(flow.get("expires_at", 0))
         return {
             "status": "pending",
             "userCode": flow["user_code"],
@@ -586,17 +615,17 @@ class MultiAccountMinecraftAuth:
 
     def poll_microsoft_login(self) -> dict:
         self._ensure_initialized()
-        if not hasattr(self, "_pending_flow") or not self._pending_flow:
+        if not self._pending_flow:
             return {"status": "error", "message": "没有待处理的登录流程"}
 
-        if hasattr(self, "_poll_expires_at") and time.time() > self._poll_expires_at:
+        if time.time() > self._poll_expires_at:
             self._cleanup_pending_login()
             return {"status": "error", "message": "登录超时，请重试"}
 
-        if hasattr(self, "_poll_result") and self._poll_result:
+        if self._poll_result:
             return {"status": "ready", "message": "授权完成，等待完成登录"}
 
-        if hasattr(self, "_poll_future") and self._poll_future:
+        if self._poll_future:
             if self._poll_future.done():
                 try:
                     result = self._poll_future.result()
@@ -615,7 +644,7 @@ class MultiAccountMinecraftAuth:
                     self._poll_future = None
                     return {"status": "pending", "message": "等待用户授权..."}
 
-                except Exception as e:
+                except (RuntimeError, KeyError, TypeError, ValueError) as e:
                     error_str = str(e)
                     if "authorization_pending" in error_str or "AADSTS70016" in error_str:
                         self._poll_future = None
@@ -626,7 +655,7 @@ class MultiAccountMinecraftAuth:
                 return {"status": "pending", "message": "等待用户授权..."}
 
         try:
-            if not hasattr(self, "_poll_executor") or self._poll_executor is None:
+            if self._poll_executor is None:
                 self._poll_executor = ThreadPoolExecutor(max_workers=1)
 
             self._poll_future = self._poll_executor.submit(
@@ -634,32 +663,28 @@ class MultiAccountMinecraftAuth:
             )
             return {"status": "pending", "message": "等待用户授权..."}
 
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             error_str = str(e)
             logger.error(f"启动轮询任务失败: {error_str}")
             return {"status": "pending", "message": "等待用户授权..."}
 
-    def _cleanup_poll(self):
-        if hasattr(self, "_poll_future"):
-            if self._poll_future and not self._poll_future.done():
-                self._poll_future.cancel()
-            self._poll_future = None
-            delattr(self, "_poll_future")
-        if hasattr(self, "_poll_executor") and self._poll_executor is not None:
+    def _cleanup_poll(self) -> None:
+        if self._poll_future and not self._poll_future.done():
+            self._poll_future.cancel()
+        self._poll_future = None
+        if self._poll_executor is not None:
             self._poll_executor.shutdown(wait=False)
             self._poll_executor = None
-            delattr(self, "_poll_executor")
 
-    def _cleanup_pending_login(self):
+    def _cleanup_pending_login(self) -> None:
         self._cleanup_poll()
         self._pending_flow = None
         self._pending_app = None
         self._poll_result = None
-        if hasattr(self, "_pending_cache_file"):
-            self._pending_cache_file = None
+        self._pending_cache_file = None
 
     def shutdown(self) -> None:
-        """关闭所有资源：取消轮询、清理 pending 登录状态"""
+        # 关闭所有资源：取消轮询、清理 pending 登录状态
         self._cleanup_pending_login()
         logger.debug("MultiAccountMinecraftAuth 资源已清理")
 
@@ -667,16 +692,16 @@ class MultiAccountMinecraftAuth:
         try:
             webbrowser.open(url)
             return True
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             logger.error(f"打开浏览器失败: {e}")
             return False
 
     def complete_microsoft_login(self) -> dict:
         self._ensure_initialized()
-        if not hasattr(self, "_pending_flow") or not self._pending_flow:
+        if not self._pending_flow:
             return {"success": False, "message": "没有待处理的登录流程"}
         try:
-            if hasattr(self, "_poll_result") and self._poll_result:
+            if self._poll_result:
                 result = self._poll_result
                 self._poll_result = None
             else:
@@ -748,5 +773,5 @@ class MultiAccountMinecraftAuth:
                 "message": f"账户 '{alias}' 添加成功",
                 "account": {"id": account_id, "alias": alias, "type": "microsoft", "email": email},
             }
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError, requests.exceptions.RequestException) as e:
             return {"success": False, "message": f"登录过程出错: {e}"}

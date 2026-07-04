@@ -1,0 +1,16 @@
+{
+  "name": "mouse_effect",
+  "version": "1.0.0",
+  "title": "鼠标特效",
+  "description": "鼠标移动时显示粒子拖尾特效，支持自定义颜色、大小、透明度和速度",
+  "author": "EuoraCraft",
+  "entry_point": "main:MouseEffectPlugin",
+  "dependencies": {
+    "third_party": {},
+    "plugins": {}
+  },
+  "events": {
+    "provided": [],
+    "required": ["plugin:settings_changed"]
+  }
+}

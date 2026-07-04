@@ -4,6 +4,10 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
+from ...common.logger import get_logger
+
+logger = get_logger("instances")
+
 
 class InstancesManager:
     def __init__(self):
@@ -106,26 +110,29 @@ class InstancesManager:
             t_err = threading.Thread(target=self._read_stream, args=(proc.stderr, callback), daemon=True)
             t_err.start()
 
-        self.instances.update(
-            {
-                instance_id: {
-                    "Name": instance_name,
-                    "ID": instance_id,
-                    "Type": instance_type,
-                    "StdIn": std_in,
-                    "Instance": proc,
-                    "Threads": [t_out, t_err],
-                    "ExitCallback": exit_callback,
+        with self._lock:
+            self.instances.update(
+                {
+                    instance_id: {
+                        "Name": instance_name,
+                        "ID": instance_id,
+                        "Type": instance_type,
+                        "StdIn": std_in,
+                        "Instance": proc,
+                        "Threads": [t_out, t_err],
+                        "ExitCallback": exit_callback,
+                    }
                 }
-            }
-        )
+            )
         return instance_id
 
     def send_stdin(self, instance_id: str, data: str) -> None:
         """向指定实例的 stdin 写入数据（仅当 std_in=True 时有效）"""
-        if (instance_id not in self.instances) or (not self.instances[instance_id]["StdIn"]):
-            return
-        proc: subprocess.Popen = self.instances[instance_id]["Instance"]
+        with self._lock:
+            inst = self.instances.get(instance_id)
+            if not inst or not inst["StdIn"]:
+                return
+            proc: subprocess.Popen = inst["Instance"]
         if proc.stdin:
             try:
                 proc.stdin.write(data)
@@ -139,9 +146,11 @@ class InstancesManager:
         :param instance_id: 实例ID
         :param terminate: True 使用 terminate()，False 使用 kill()
         """
-        if instance_id not in self.instances:
-            return
-        proc: subprocess.Popen = self.instances[instance_id]["Instance"]
+        with self._lock:
+            inst = self.instances.get(instance_id)
+            if not inst:
+                return
+            proc: subprocess.Popen = inst["Instance"]
         if proc.poll() is None:  # 进程仍在运行
             if terminate:
                 proc.terminate()
@@ -154,11 +163,18 @@ class InstancesManager:
     def shutdown_all(self, kill: bool = True) -> None:
         """终止所有正在运行的实例"""
         with self._lock:
-            for inst in list(self.instances.values()):  # 遍历副本
-                proc: subprocess.Popen = inst["Instance"]
-                if proc.poll() is None:
-                    if kill:
-                        proc.kill()
-                    else:
-                        proc.terminate()
-                self.instances.pop(inst["ID"], None)
+            instances_copy = list(self.instances.items())  # 锁内获取副本
+        for inst_id, inst in instances_copy:  # 锁外执行 kill/wait，避免阻塞其他线程
+            proc: subprocess.Popen = inst["Instance"]
+            if proc.poll() is None:
+                if kill:
+                    proc.kill()
+                else:
+                    proc.terminate()
+                # 等待进程结束，避免僵尸进程阻塞退出
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"实例 {inst['ID']} 进程未在5秒内退出")
+            with self._lock:
+                self.instances.pop(inst_id, None)

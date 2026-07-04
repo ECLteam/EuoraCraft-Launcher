@@ -14,6 +14,7 @@ class Downloader:
         self.__download_done: list[str] = []
         self.output_progress = self.__default_output_progress
         self.output_log: Callable[[str], None] = print
+        self.event_callback: Callable[[dict], None] | None = None
         self.lock = threading.Lock()
         self.max_retries = max_retries
         self.chunk_size = chunk_size
@@ -26,6 +27,9 @@ class Downloader:
                 "User-Agent": user_agent
             }
         )
+
+    def close(self):
+        self.session.close()
 
     def __default_output_progress(self, total_files: list, downloaded_files: list):
         with self.lock:
@@ -61,11 +65,11 @@ class Downloader:
                     return int(content_length)
 
                 # 如果HEAD请求没有Content-Length，尝试GET请求
-                response = self.session.get(url, stream=True, timeout=10)
-                response.raise_for_status()
-                content_length = response.headers.get("Content-Length")
-                if content_length:
-                    return int(content_length)
+                with self.session.get(url, stream=True, timeout=10) as response:
+                    response.raise_for_status()
+                    content_length = response.headers.get("Content-Length")
+                    if content_length:
+                        return int(content_length)
                 return 0  # 未知大小，返回0
 
             except requests.exceptions.RequestException as e:
@@ -186,11 +190,18 @@ class Downloader:
             self.output_log(f"重命名文件失败 {save_path}: {e!s}")
             return False
 
+    def cancel_all_downloads(self) -> None:
+        with self.lock:
+            self.download_status = False
+
     def download_manager(self, download_list: list[tuple[str, str]], max_threads: int) -> bool:
         """下载管理器"""
         if not download_list or max_threads <= 0:
             self.output_log("下载列表为空或线程数无效")
             return False
+
+        with self.lock:
+            self.download_status = True  # 每次启动下载时重置状态
 
         self.output_log(f"开始下载 {len(download_list)} 个文件，使用 {max_threads} 个线程")
 
@@ -221,6 +232,20 @@ class Downloader:
                             # 更新进度
                             self.output_progress(self.__download_total, self.__download_done)
                             self.output_log(f"成功下载: {save_path}")
+
+                            # 事件回调
+                            if self.event_callback:
+                                total = len(self.__download_total)
+                                done = len(self.__download_done)
+                                try:
+                                    self.event_callback({
+                                        "type": "download_progress",
+                                        "done": done,
+                                        "total": total,
+                                        "current_file": save_path,
+                                    })
+                                except Exception as e:
+                                    print(f"事件回调异常: {e}")
                         else:
                             self.output_log(f"失败下载: {save_path}")
 

@@ -1,45 +1,43 @@
+import asyncio
 import base64
-import ctypes
+import inspect
 import json
 import os
+import re
 import sys
+import time
 import uuid
-from ctypes import wintypes
 from pathlib import Path
-from tkinter import Tk, filedialog
-from typing import Any
+from typing import Any, Callable
 
+import keyring
 import requests
+
+try:
+    import pyperclip
+    HAS_PYPERCLIP = True
+except ImportError:
+    HAS_PYPERCLIP = False
 
 from ..common.logger import get_logger
 from ..common.state import AppState
 from ..game.Core import get_avatar_data_url as get_avatar_func
 
 
-class MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [
-        ("dwLength", wintypes.DWORD),
-        ("dwMemoryLoad", wintypes.DWORD),
-        ("ullTotalPhys", ctypes.c_ulonglong),
-        ("ullAvailPhys", ctypes.c_ulonglong),
-        ("ullTotalPageFile", ctypes.c_ulonglong),
-        ("ullAvailPageFile", ctypes.c_ulonglong),
-        ("ullTotalVirtual", ctypes.c_ulonglong),
-        ("ullAvailVirtual", ctypes.c_ulonglong),
-        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-    ]
-
-
 logger = get_logger("api")
+
+_IMAGE_MIME_MAP = {
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".bmp": "image/bmp",
+}
 
 
 def _get_project_root() -> Path:
     return Path(__file__).resolve().parents[3]
-
-
-def get_resource_path(relative_path: str) -> str:
-    p = Path(getattr(sys, "_MEIPASS", Path.cwd())) / relative_path
-    return str(p.resolve())
 
 
 def make_json_safe(obj: Any) -> Any:
@@ -63,8 +61,87 @@ class Api:
         self._config_manager = state.config_manager
         self._account_manager = state.account_manager
 
+    def _get_first_game_path(self) -> str:
+        config = self._config_manager.get_game_config()
+        paths = config.get("minecraft_paths", [])
+        if not paths:
+            return "./.minecraft"
+        first = paths[0]
+        return first if isinstance(first, str) else first.get("path", "./.minecraft")
+
+    # ── 通用配置存取 ─────────────────────────────────────────────────
+    def config_get(self, section: str) -> dict[str, Any]:
+        # 获取指定配置分区
+        try:
+            cfg = self._config_manager.config
+            if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
+                return {"success": False, "message": "配置为空", "data": None}
+            data = cfg[0].get(section)
+            if data is None:
+                return {"success": False, "message": f"配置分区 '{section}' 不存在", "data": None}
+            return {"success": True, "data": data}
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"config_get 失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+    def config_set(self, section: str, data: dict[str, Any]) -> dict[str, Any]:
+        # 设置指定配置分区
+        try:
+            from ..api.events import emit_plugin_event
+            cfg = self._config_manager.config
+            if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
+                cfg = self._config_manager._get_default_config()
+                self._config_manager.config = cfg
+            old_value = cfg[0].get(section)
+            cfg[0][section] = data
+            self._config_manager.save(cfg)
+            emit_plugin_event("config:changed", {"section": section, "old_value": old_value, "new_value": data})
+            return {"success": True, "message": "配置已保存"}
+        except (OSError, KeyError, TypeError, ValueError) as e:
+            logger.error(f"config_set 失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def config_get_all(self) -> dict[str, Any]:
+        # 获取所有配置
+        try:
+            cfg = self._config_manager.config
+            if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
+                return {"success": False, "message": "配置为空", "data": None}
+            return {"success": True, "data": cfg[0]}
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"config_get_all 失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    def config_list(self) -> dict[str, Any]:
+        # 列出所有配置分区名称
+        try:
+            cfg = self._config_manager.config
+            if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
+                return {"success": True, "data": []}
+            return {"success": True, "data": list(cfg[0].keys())}
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"config_list 失败: {e}")
+            return {"success": False, "message": str(e), "data": []}
+    def config_get_many(self, sections: list[str]) -> dict[str, Any]:
+        # 批量获取多个配置分区
+        try:
+            cfg = self._config_manager.config
+            if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
+                return {"success": False, "message": "配置为空", "data": None}
+            result = {}
+            for section in sections:
+                result[section] = cfg[0].get(section)
+            return {"success": True, "data": result}
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"config_get_many 失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
     def __dir__(self) -> list[str]:
         return [
+            "config_get",
+            "config_set",
+            "config_get_all",
+            "config_get_many",
+            "config_list",
             "minimize_window",
             "close_window",
             "get_window_position",
@@ -114,12 +191,37 @@ class Api:
             "launch_instance",
             "get_launch_status",
             "stop_instance",
+            "set_master_password",
+            "get_keyring_info",
+            "clear_keyring",
+            "plugin_list",
+            "plugin_info",
+            "plugin_enable",
+            "plugin_disable",
+            "plugin_unload",
+            "plugin_reload",
+            "plugin_install",
+            "plugin_get_settings",
+            "plugin_update_setting",
+            "plugin_get_routes",
+            "plugin_call_command",
+            "plugin_get_slots",
+            "frontend_ready",
         ]
 
     def ping(self) -> dict[str, Any]:
         return {"success": True, "data": {"status": "ok", "message": "API连接正常"}, "message": "Pong"}
 
-    def get_user_agreement_status(self) -> dict[str, Any]:
+    def frontend_ready(self) -> dict[str, Any]:
+        fw = self._state.plugin_framework
+        if fw is not None:
+            try:
+                fw.fire_frontend_ready()
+            except (RuntimeError, OSError, ValueError, TypeError) as e:
+                logger.error(f"触发前端就绪事件失败: {e}")
+        return {"success": True}
+
+    def get_user_agreement_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
             if agreement_file.exists():
@@ -131,103 +233,59 @@ class Api:
                     "message": "获取用户协议状态成功",
                 }
             return {"success": True, "data": {"accepted": False, "uuid": ""}, "message": "用户协议未同意"}
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
             logger.error(f"获取用户协议状态失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
-    def save_user_agreement(self) -> dict[str, Any]:
+    def save_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
             agreement_file.parent.mkdir(parents=True, exist_ok=True)
-            data = {"accepted": True, "uuid": str(uuid.uuid4())}
+            data = kwargs.get("data")
+            if data is None and args:
+                data = args[0] if isinstance(args[0], dict) else None
+            data = data or {"accepted": True, "uuid": str(uuid.uuid4())}
             with agreement_file.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            from ..api.events import emit_plugin_event
+            emit_plugin_event("user:agreed", {"uuid": data.get("uuid", "")})
             return {"success": True, "data": data, "message": "用户协议已保存"}
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
             logger.error(f"保存用户协议失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
-    def clear_user_agreement(self) -> dict[str, Any]:
+    def clear_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
             if agreement_file.exists():
                 agreement_file.unlink()
             return {"success": True, "message": "用户协议已清除"}
-        except Exception as e:
+        except (OSError, PermissionError) as e:
             logger.error(f"清除用户协议失败: {e}")
             return {"success": False, "message": str(e)}
 
-    def minimize_window(self) -> dict[str, Any]:
-        try:
-            import webview
+    def _unimplemented_window_op(self, op_name: str, data: Any = None) -> dict[str, Any]:
+        return {"success": False, "message": "窗口控制功能待对接（建议通过前端 Tauri API 实现）", "data": data}
 
-            if webview.windows:
-                webview.windows[0].minimize()
-                return {"success": True, "message": "窗口已最小化"}
-            return {"success": False, "message": "窗口未找到"}
-        except Exception as e:
-            logger.error(f"最小化窗口失败: {e}")
-            return {"success": False, "message": str(e)}
+    def minimize_window(self) -> dict[str, Any]:
+        return self._unimplemented_window_op("minimize_window")
 
     def close_window(self) -> dict[str, Any]:
-        try:
-            import webview
-
-            if webview.windows:
-                webview.windows[0].destroy()
-                return {"success": True, "message": "窗口已关闭"}
-            return {"success": False, "message": "窗口未找到"}
-        except Exception as e:
-            logger.error(f"关闭窗口失败: {e}")
-            return {"success": False, "message": str(e)}
+        return self._unimplemented_window_op("close_window")
 
     def get_window_position(self) -> dict[str, Any]:
-        try:
-            import webview
-
-            if webview.windows:
-                window = webview.windows[0]
-                return {
-                    "success": True,
-                    "data": {"x": window.x, "y": window.y, "width": window.width, "height": window.height},
-                    "message": "获取窗口位置成功",
-                }
-            return {"success": False, "message": "窗口未找到", "data": None}
-        except Exception as e:
-            logger.error(f"获取窗口位置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        return self._unimplemented_window_op("get_window_position")
 
     def set_window_position(self, x: int, y: int) -> dict[str, Any]:
-        try:
-            import webview
-
-            if webview.windows:
-                webview.windows[0].move(x, y)
-                return {"success": True, "message": f"窗口位置已设置为 ({x}, {y})"}
-            return {"success": False, "message": "窗口未找到"}
-        except Exception as e:
-            logger.error(f"设置窗口位置失败: {e}")
-            return {"success": False, "message": str(e)}
+        return self._unimplemented_window_op("set_window_position")
 
     def get_launcher_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_launcher_config()
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回启动器配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
-            logger.error(f"获取启动器配置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        config = self._config_manager.get_launcher_config()
+        return {"success": True, "data": config, "message": "获取成功"}
 
     def get_background_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_background_config()
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回背景图配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
-            logger.error(f"获取背景图配置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        config = self._config_manager.get_background_config()
+        return {"success": True, "data": config, "message": "获取成功"}
 
     def get_background_image(self) -> dict[str, Any]:
         try:
@@ -246,18 +304,11 @@ class Api:
 
             try:
                 image_data = path.read_bytes()
-            except Exception as e:
+            except (OSError, PermissionError) as e:
                 logger.error(f"[get_background_image] 读取文件失败: {e}")
                 return {"success": False, "message": f"读取背景图文件失败: {e}", "data": None}
 
-            mime_map = {
-                ".png": "image/png",
-                ".gif": "image/gif",
-                ".webp": "image/webp",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-            }
-            mime_type = mime_map.get(path.suffix.lower(), "image/jpeg")
+            mime_type = _IMAGE_MIME_MAP.get(path.suffix.lower(), "image/jpeg")
             base64_data = base64.b64encode(image_data).decode("utf-8")
 
             return {
@@ -269,7 +320,7 @@ class Api:
                 },
                 "message": "获取成功",
             }
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             logger.error(f"[get_background_image] 异常: {e}")
             return {"success": False, "message": str(e), "data": None}
 
@@ -290,7 +341,7 @@ class Api:
                 logger.info(f"同步背景模糊值到主题配置: {background_config['blur']}")
 
             return {"success": True, "message": "背景图更新成功"}
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError) as e:
             logger.error(f"更新背景图配置失败: {e}")
             return {"success": False, "message": str(e)}
 
@@ -324,15 +375,11 @@ class Api:
 
             file_path.write_bytes(response.content)
 
-            if not file_path.exists():
-                logger.error(f"[load_image_from_url] 文件保存失败，路径不存在: {file_path}")
-                return {"success": False, "message": "图片保存失败", "data": None}
-
             abs_path = str(file_path.resolve()).replace("\\", "/")
             logger.info(f"[load_image_from_url] 成功: {abs_path} ({len(response.content)} bytes)")
 
             return {"success": True, "data": {"path": abs_path}, "message": "图片下载成功"}
-        except Exception as e:
+        except (requests.RequestException, OSError, ValueError) as e:
             logger.error(f"加载网络图片失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
@@ -372,8 +419,6 @@ class Api:
                             )
                             if attempt < max_retries - 1:
                                 logger.info(f"[fetch_image_data_url] {2**attempt} 秒后重试...")
-                                import time
-
                                 time.sleep(2**attempt)
                                 continue
                         return {"success": False, "message": f"URL不是图片类型: {content_type}", "data": None}
@@ -382,8 +427,6 @@ class Api:
                         logger.warning(f"[fetch_image_data_url] 图片数据过小: {len(response.content)} bytes")
                         if attempt < max_retries - 1:
                             logger.info(f"[fetch_image_data_url] {2**attempt} 秒后重试...")
-                            import time
-
                             time.sleep(2**attempt)
                             continue
                         return {"success": False, "message": "图片数据不完整", "data": None}
@@ -401,16 +444,12 @@ class Api:
                     if status_code and 500 <= status_code < 600:
                         is_5xx_error = True
                     elif status_code is None and ("5" in error_msg and "Server Error" in error_msg):
-                        import re
-
                         match = re.search(r"(\d{3})\s+Server Error", error_msg)
                         if match and 500 <= int(match.group(1)) < 600:
                             is_5xx_error = True
 
                     if is_5xx_error and attempt < max_retries - 1:
                         logger.info(f"[fetch_image_data_url] 服务器错误，{2**attempt} 秒后重试...")
-                        import time
-
                         time.sleep(2**attempt)
                         continue
 
@@ -420,15 +459,13 @@ class Api:
                     logger.warning(f"[fetch_image_data_url] 请求异常: {req_err}")
                     if attempt < max_retries - 1:
                         logger.info(f"[fetch_image_data_url] {2**attempt} 秒后重试...")
-                        import time
-
                         time.sleep(2**attempt)
                         continue
                     return {"success": False, "message": f"网络请求失败: {req_err!s}", "data": None}
 
             return {"success": False, "message": f"重试 {max_retries} 次后仍失败", "data": None}
 
-        except Exception as e:
+        except (ValueError, OSError, requests.RequestException) as e:
             logger.error(f"代理获取图片失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
@@ -447,43 +484,62 @@ class Api:
         except ImportError as e:
             logger.error(f"[get_avatar_data_url] PIL 库未安装: {e}")
             return {"success": False, "message": "PIL (Pillow) 库未安装，无法处理头像", "data": None}
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             logger.error(f"[get_avatar_data_url] 生成头像失败: {e}")
             return {"success": False, "message": f"头像生成失败: {e!s}", "data": None}
 
-    def load_image_from_local(self, file_path: str) -> dict[str, Any]:
+    def load_image_from_local(self, path: str) -> dict[str, Any]:
+        path_obj = Path(path)
+        if not path_obj.exists():
+            return {"success": False, "message": f"文件不存在: {path}", "data": None}
+
+        valid_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+        if path_obj.suffix.lower() not in valid_extensions:
+            return {"success": False, "message": f"不支持的图片格式: {path_obj.suffix}", "data": None}
+
         try:
-            path_obj = Path(file_path)
-            if not path_obj.exists():
-                return {"success": False, "message": f"文件不存在: {file_path}", "data": None}
-
-            valid_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-            if path_obj.suffix.lower() not in valid_extensions:
-                return {"success": False, "message": f"不支持的图片格式: {path_obj.suffix}", "data": None}
-
-            return {"success": True, "data": {"path": str(path_obj.absolute())}, "message": "图片验证成功"}
-        except Exception as e:
-            logger.error(f"验证本地图片失败: {e}")
+            file_bytes = path_obj.read_bytes()
+        except OSError as e:
+            logger.error(f"读取图片文件失败: {e}")
             return {"success": False, "message": str(e), "data": None}
+
+        base64_data = base64.b64encode(file_bytes).decode("utf-8")
+        mime = _IMAGE_MIME_MAP.get(path_obj.suffix.lower(), "image/png")
+        data_url = f"data:{mime};base64,{base64_data}"
+
+        return {
+            "success": True,
+            "data": {"path": str(path_obj.absolute()), "base64": data_url},
+            "message": "图片加载成功",
+        }
+
+    def _ask_file_dialog(self, dialog_func, title: str, filetypes=None) -> dict[str, Any]:
+        from tkinter import TclError, Tk
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            result = dialog_func(title=title, filetypes=filetypes) if filetypes else dialog_func(title=title)
+        except TclError as e:
+            logger.error(f"文件对话框失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+        finally:
+            root.destroy()
+        if result:
+            return {"success": True, "data": {"path": str(result)}, "message": "选择成功"}
+        return {"success": False, "message": "用户取消选择", "data": None}
 
     def select_local_image(self) -> dict[str, Any]:
-        try:
-            root = Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
+        from tkinter import filedialog
 
-            result = filedialog.askopenfilename(
-                title="选择图片", filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.gif;*.webp"), ("All files", "*.*")]
-            )
-            root.destroy()
-
-            if result:
-                return self.load_image_from_local(str(result))
-            else:
-                return {"success": False, "message": "用户取消选择", "data": None}
-        except Exception as e:
-            logger.error(f"选择本地图片失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        result = self._ask_file_dialog(
+            filedialog.askopenfilename, "选择图片",
+            [("Image files", "*.jpg;*.jpeg;*.png;*.gif;*.webp"), ("All files", "*.*")]
+        )
+        if result["success"]:
+            return self.load_image_from_local(result["data"]["path"])
+        return result
 
     def get_game_config(self) -> dict[str, Any]:
         try:
@@ -511,10 +567,8 @@ class Api:
 
             config["minecraft_paths"] = formatted_paths
 
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回游戏配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
+            return {"success": True, "data": config, "message": "获取成功"}
+        except (KeyError, TypeError, ValueError) as e:
             logger.error(f"获取游戏配置失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
@@ -529,147 +583,262 @@ class Api:
 
             self._config_manager.update_game_config(game_config)
             return {"success": True, "message": "游戏配置更新成功"}
-        except Exception as e:
+        except (KeyError, TypeError, ValueError, OSError) as e:
             logger.error(f"更新游戏配置失败: {e}")
             return {"success": False, "message": str(e)}
 
     def get_java_list(self) -> dict[str, Any]:
-        try:
-            java_dicts = self._state.get_java_dicts()
-            if not java_dicts:
-                return {"success": True, "data": [], "message": "未找到Java安装"}
-            return {"success": True, "data": java_dicts, "message": f"找到 {len(java_dicts)} 个Java安装"}
-        except Exception as e:
-            logger.error(f"获取Java列表失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        java_dicts = self._state.get_java_dicts()
+        if not java_dicts:
+            return {"success": True, "data": [], "message": "未找到Java安装"}
+        return {"success": True, "data": java_dicts, "message": f"找到 {len(java_dicts)} 个Java安装"}
 
     def get_theme_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_theme_config()
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回主题配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
-            logger.error(f"获取主题配置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        config = self._config_manager.get_theme_config()
+        return {"success": True, "data": config, "message": "获取成功"}
 
     def update_theme_config(self, theme_config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            self._config_manager.update_theme_config(theme_config)
-            return {"success": True, "message": "主题配置更新成功"}
-        except Exception as e:
-            logger.error(f"更新主题配置失败: {e}")
-            return {"success": False, "message": str(e)}
+        self._config_manager.update_theme_config(theme_config)
+        return {"success": True, "message": "主题配置更新成功"}
 
     def get_download_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_download_config()
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回下载配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
-            logger.error(f"获取下载配置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        config = self._config_manager.get_download_config()
+        return {"success": True, "data": config, "message": "获取成功"}
 
     def update_download_config(self, download_config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            self._config_manager.update_download_config(download_config)
-            return {"success": True, "message": "下载配置更新成功"}
-        except Exception as e:
-            logger.error(f"更新下载配置失败: {e}")
-            return {"success": False, "message": str(e)}
+        self._config_manager.update_download_config(download_config)
+        return {"success": True, "message": "下载配置更新成功"}
 
     def get_mouse_effect_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_mouse_effect_config()
-            safe_config = make_json_safe(config)
-            return {"success": True, "message": "鼠标点击效果配置获取成功", "data": safe_config}
-        except Exception as e:
-            logger.error(f"获取鼠标点击效果配置失败: {e}")
-            return {"success": False, "message": f"获取鼠标点击效果配置失败: {e!s}", "data": None}
+        config = self._config_manager.get_mouse_effect_config()
+        return {"success": True, "message": "鼠标点击效果配置获取成功", "data": config}
 
     def update_mouse_effect_config(self, mouse_effect_config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            self._config_manager.update_mouse_effect_config(mouse_effect_config)
-            return {"success": True, "message": "鼠标点击效果配置已更新"}
-        except Exception as e:
-            logger.error(f"更新鼠标点击效果配置失败: {e}")
-            return {"success": False, "message": f"更新鼠标点击效果配置失败: {e!s}"}
+        self._config_manager.update_mouse_effect_config(mouse_effect_config)
+        return {"success": True, "message": "鼠标点击效果配置已更新"}
 
     def get_locale_config(self) -> dict[str, Any]:
-        try:
-            config = self._config_manager.get_locale_config()
-            safe_config = make_json_safe(config)
-            logger.debug(f"返回语言配置: {safe_config}")
-            return {"success": True, "data": safe_config, "message": "获取成功"}
-        except Exception as e:
-            logger.error(f"获取语言配置失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        config = self._config_manager.get_locale_config()
+        return {"success": True, "data": config, "message": "获取成功"}
 
     def update_locale_config(self, locale: str) -> dict[str, Any]:
         try:
             self._config_manager.update_locale_config(locale)
             return {"success": True, "message": "语言配置更新成功"}
-        except Exception as e:
+        except (OSError, KeyError, TypeError, ValueError) as e:
             logger.error(f"更新语言配置失败: {e}")
             return {"success": False, "message": str(e)}
 
     def select_directory(self) -> dict[str, Any]:
-        try:
-            root = Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
+        from tkinter import filedialog
 
-            selected_dir = filedialog.askdirectory(title="选择目录")
-            root.destroy()
-
-            if selected_dir:
-                return {"success": True, "data": {"path": selected_dir}, "message": "目录选择成功"}
-            else:
-                return {"success": False, "message": "用户取消选择", "data": None}
-        except Exception as e:
-            logger.error(f"选择目录失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        return self._ask_file_dialog(filedialog.askdirectory, "选择目录")
 
     def select_java_executable(self) -> dict[str, Any]:
-        try:
-            root = Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
+        from tkinter import filedialog
 
-            result = filedialog.askopenfilename(
-                title="选择 Java 可执行文件", filetypes=[("Java Executable", "*.exe;java"), ("All files", "*.*")]
-            )
-            root.destroy()
-
-            if result:
-                return {"success": True, "data": {"path": str(result)}, "message": "Java 路径选择成功"}
-            else:
-                return {"success": False, "message": "用户取消选择", "data": None}
-        except Exception as e:
-            logger.error(f"选择 Java 路径失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        result = self._ask_file_dialog(
+            filedialog.askopenfilename, "选择 Java 可执行文件",
+            [("Java Executable", "*.exe;java"), ("All files", "*.*")]
+        )
+        if result.get("success") and result.get("data", {}).get("path"):
+            from ..api.events import emit_plugin_event
+            emit_plugin_event("java:selected", {"path": result["data"]["path"]})
+        return result
 
     def scan_versions_in_path(self, path: str | list[str] | list[dict[str, str]]) -> dict[str, Any]:
-        return {"success": True, "message": "扫描版本功能待对接", "data": []}
+        try:
+            paths = path if isinstance(path, list) else [path]
+            scan_results = []
+            for p in paths:
+                if isinstance(p, dict):
+                    p = p.get("path", "")
+                versions_dir = Path(p) / "versions"
+                if not versions_dir.is_dir():
+                    continue
+                for vjson in versions_dir.glob("*/*.json"):
+                    try:
+                        folder_name = vjson.parent.name
+                        data = json.loads(vjson.read_text("utf-8"))
+                        inherits_from = data.get("inheritsFrom")
+                        jar_path = vjson.parent / (folder_name + ".jar")
+
+                        # 判断 mod loader 类型
+                        primary_loader = "vanilla"
+                        has_forge = has_neoforge = has_fabric = has_quilt = False
+                        jar_name_lower = folder_name.lower()
+                        if "forge" in jar_name_lower:
+                            primary_loader = "forge"
+                            has_forge = True
+                        elif "neoforge" in jar_name_lower:
+                            primary_loader = "neoforge"
+                            has_neoforge = True
+                        elif "fabric" in jar_name_lower:
+                            primary_loader = "fabric"
+                            has_fabric = True
+                        elif "quilt" in jar_name_lower:
+                            primary_loader = "quilt"
+                            has_quilt = True
+                        elif inherits_from:
+                            inh_lower = inherits_from.lower()
+                            if "forge" in inh_lower:
+                                primary_loader = "forge"
+                                has_forge = True
+                            elif "neoforge" in inh_lower:
+                                primary_loader = "neoforge"
+                                has_neoforge = True
+                            elif "fabric" in inh_lower:
+                                primary_loader = "fabric"
+                                has_fabric = True
+                            elif "quilt" in inh_lower:
+                                primary_loader = "quilt"
+                                has_quilt = True
+
+                        is_broken = not jar_path.exists()
+
+                        scan_results.append({
+                            "id": folder_name,
+                            "versionId": folder_name,
+                            "displayName": data.get("displayName", folder_name),
+                            "primaryLoader": primary_loader,
+                            "vanillaName": inherits_from or data.get("id", folder_name),
+                            "hasForge": has_forge,
+                            "hasNeoForge": has_neoforge,
+                            "hasFabric": has_fabric,
+                            "hasQuilt": has_quilt,
+                            "isBroken": is_broken,
+                            "jsonPath": str(vjson),
+                        })
+                    except (OSError, ValueError):
+                        continue
+            from ..api.events import emit_plugin_event
+            emit_plugin_event("version:scanned", {"count": len(scan_results), "versions": [v["id"] for v in scan_results]})
+            return {"success": True, "data": scan_results}
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.error(f"扫描版本失败: {e}")
+            return {"success": False, "message": str(e), "data": []}
 
     def get_minecraft_versions(self, filter_type: str | None = None) -> dict[str, Any]:
-        return {"success": True, "message": "版本列表功能待对接", "data": []}
+        try:
+            result = self._state.get_games.get_minecraft_versions()
+            if result is None:
+                return {"success": False, "message": "获取版本列表失败", "data": None}
 
-    def get_fabric_versions(self) -> dict[str, Any]:
-        return {"success": True, "message": "Fabric 版本列表功能待对接", "data": []}
+            # 扁平化为前端期望的数组格式 {id, type, releaseTime}
+            # 注意: GetGames 返回的是 Mojang API 原始数据，字段名为小写
+            versions = []
+            type_map = {
+                "Release": "release",
+                "Snapshot": "snapshot",
+                "Beta": "old_beta",
+                "Alpha": "old_alpha",
+                "FoolDays": "april_fools",
+            }
+            for key, mapped_type in type_map.items():
+                for v in result.get(key, []):
+                    vid = v.get("id")
+                    if not vid:
+                        continue
+                    versions.append({
+                        "id": vid,
+                        "type": mapped_type,
+                        "releaseTime": v.get("releaseTime"),
+                    })
 
-    def install_version(self, version_id: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {"success": False, "message": "安装功能待对接", "data": None}
+            if filter_type and filter_type != "all":
+                versions = [v for v in versions if v["type"] == filter_type]
+
+            return {"success": True, "data": versions}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    def get_fabric_versions(self, game_version: str | None = None) -> dict[str, Any]:
+        if not game_version:
+            return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+        try:
+            # 若缓存命中且版本号匹配，直接返回
+            cached = self._state.get_games._cached_fabric_versions
+            if cached and cached.get("_game_version") == game_version:
+                return {"success": True, "data": {
+                    "all": cached.get("All", []),
+                    "stable": cached.get("Stable", []),
+                    "unstable": cached.get("NotStable", []),
+                }}
+            result = self._state.get_games.get_fabric_versions(game_version)
+            if result is None:
+                # 可能是版本号不被 Fabric 支持（如远古版本），返回空列表不算失败
+                return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+            data = {
+                "all": result.get("All", []),
+                "stable": result.get("Stable", []),
+                "unstable": result.get("NotStable", []),
+            }
+            return {"success": True, "data": data}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取 Fabric 版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    async def install_version(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = params or {}
+        version_id = params.get("version_id", "")
+        version_name = params.get("version_name", version_id)
+        loader_type = params.get("loader_type", "vanilla")
+        fabric_version = params.get("fabric_version")
+        game_path = params.get("game_path")
+        download_threads = params.get("download_threads", 32)
+
+        if not version_id:
+            return {"success": False, "message": "缺少 version_id 参数"}
+
+        if not game_path:
+            game_path = self._get_first_game_path()
+
+        try:
+            from ..api.events import emit, emit_plugin_event
+
+            # 插件事件：下载开始
+            emit_plugin_event("download:start", {"task_id": version_id, "total_size": 0})
+
+            if loader_type == "fabric" and fabric_version:
+                emit("game:install_progress", {"phase": "install", "done": 0, "total": 2, "message": f"安装 Fabric {fabric_version} for {version_id}"})
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_fabric,
+                    game_path=game_path,
+                    game_version_id=version_id,
+                    fabric_version=fabric_version,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
+            else:
+                emit("game:install_progress", {"phase": "install", "done": 0, "total": 1, "message": f"下载原版 {version_id}"})
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_minecraft,
+                    game_path=game_path,
+                    version_id=version_id,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
+
+            if ok:
+                emit("game:install_progress", {"phase": "done", "done": 1, "total": 1, "message": "安装完成"})
+                emit_plugin_event("download:complete", {"task_id": version_id})
+                emit_plugin_event("version:installed", {"version_id": version_id, "loader_type": loader_type})
+                return {"success": True, "message": f"版本 {version_id} 安装成功"}
+            emit_plugin_event("download:error", {"task_id": version_id, "error": "安装失败"})
+            return {"success": False, "message": f"版本 {version_id} 安装失败"}
+        except (OSError, ValueError, RuntimeError, asyncio.CancelledError) as e:
+            logger.error(f"安装版本失败: {e}")
+            emit_plugin_event("download:error", {"task_id": version_id, "error": str(e)})
+            return {"success": False, "message": str(e)}
 
     def uninstall_version(self, version_id: str, game_path: str | None = None) -> dict[str, Any]:
         try:
             from shutil import rmtree
+            from ..api.events import emit_plugin_event
 
             if not game_path:
-                config = self._config_manager.get_game_config()
-                paths = config.get("minecraft_paths", ["./.minecraft"])
-                game_path = paths[0] if isinstance(paths[0], str) else paths[0].get("path", "./.minecraft")
+                game_path = self._get_first_game_path()
 
             game_path = Path(game_path)
             version_dir = game_path / "versions" / version_id
@@ -679,38 +848,33 @@ class Api:
 
             rmtree(version_dir)
             logger.info(f"版本 {version_id} 已卸载")
+            emit_plugin_event("version:uninstalled", {"version_id": version_id})
 
             return {"success": True, "message": f"版本 {version_id} 已卸载"}
-        except Exception as e:
+        except OSError as e:
             logger.error(f"卸载版本失败: {e}")
             return {"success": False, "message": str(e)}
 
     def get_accounts(self) -> dict[str, Any]:
-        try:
-            accounts = self._account_manager.get_all_accounts()
-            current = self._account_manager.get_current_account()
-            return {
-                "success": True,
-                "data": {"accounts": accounts, "current": current},
-                "message": f"获取到 {len(accounts)} 个账户",
-            }
-        except Exception as e:
-            logger.error(f"获取账户列表失败: {e}")
-            return {"success": False, "message": str(e), "data": {"accounts": [], "current": None}}
+        accounts = self._account_manager.get_all_accounts()
+        current = self._account_manager.get_current_account()
+        return {
+            "success": True,
+            "data": {"accounts": accounts, "current": current},
+            "message": f"获取到 {len(accounts)} 个账户",
+        }
 
     def get_current_account(self) -> dict[str, Any]:
-        try:
-            current = self._account_manager.get_current_account()
-            return {"success": True, "data": current, "message": "获取当前账户成功" if current else "未选择账户"}
-        except Exception as e:
-            logger.error(f"获取当前账户失败: {e}")
-            return {"success": False, "message": str(e), "data": None}
+        current = self._account_manager.get_current_account()
+        return {"success": True, "data": current, "message": "获取当前账户成功" if current else "未选择账户"}
 
     def add_offline_account(self, username: str) -> dict[str, Any]:
         try:
+            from ..api.events import emit_plugin_event
             result = self._account_manager.add_offline_account(username)
+            emit_plugin_event("account:login", {"account_type": "offline", "player_name": username})
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "添加成功")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"添加离线账户失败: {e}")
             return {"success": False, "message": str(e)}
 
@@ -722,13 +886,11 @@ class Api:
                 verification_uri = result.get("verificationUri", "")
                 user_code = result.get("userCode", "")
 
-                if user_code:
+                if user_code and HAS_PYPERCLIP:
                     try:
-                        import pyperclip
-
                         pyperclip.copy(user_code)
                         logger.info(f"授权码已自动复制: {user_code}")
-                    except Exception as copy_err:
+                    except (RuntimeError, OSError) as copy_err:
                         logger.warning(f"自动复制授权码失败: {copy_err}")
 
                 if verification_uri:
@@ -737,11 +899,11 @@ class Api:
 
                         webbrowser.open(verification_uri)
                         logger.info(f"已自动打开浏览器: {verification_uri}")
-                    except Exception as open_err:
+                    except (OSError, RuntimeError) as open_err:
                         logger.warning(f"自动打开浏览器失败: {open_err}")
 
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "请完成授权")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"启动微软登录失败: {e}")
             return {"success": False, "message": str(e)}
 
@@ -750,63 +912,70 @@ class Api:
             result = self._account_manager.poll_microsoft_login()
 
             if result.get("status") == "ready":
-                try:
-                    import webview
-
-                    if webview.windows:
-                        window = webview.windows[0]
-                        window.restore()
-                        window.on_top = True
-                        window.on_top = False
-                        logger.info("登录完成，窗口已置顶")
-                except ModuleNotFoundError:
-                    pass  # webview 未安装，静默跳过（如 Tauri 模式）
-                except Exception as window_err:
-                    logger.warning(f"窗口置顶失败: {window_err}")
+                logger.info("微软登录完成")
 
             return make_json_safe(result)
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"轮询微软登录状态失败: {e}")
             return {"success": False, "message": str(e)}
 
     def complete_microsoft_login(self) -> dict[str, Any]:
         try:
+            from ..api.events import emit_plugin_event
             result = self._account_manager.complete_microsoft_login()
+            if result.get("success"):
+                account = result.get("account", {})
+                emit_plugin_event("account:login", {"account_type": "microsoft", "player_name": account.get("alias", ""), "uuid": account.get("uuid", "")})
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "登录成功")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"完成微软登录失败: {e}")
             return {"success": False, "message": str(e)}
 
     def switch_account(self, account_id: str) -> dict[str, Any]:
         try:
+            from ..api.events import emit_plugin_event
+            old = self._account_manager.get_current_account()
             result = self._account_manager.switch_account(account_id)
+            new = self._account_manager.get_current_account()
+            emit_plugin_event("account:switch", {
+                "from_type": old.get("type", "") if old else "",
+                "to_type": new.get("type", "") if new else "",
+                "player_name": new.get("alias", "") if new else "",
+            })
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "切换成功")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"切换账户失败: {e}")
             return {"success": False, "message": str(e)}
 
     def remove_account(self, account_id: str) -> dict[str, Any]:
         try:
+            from ..api.events import emit_plugin_event
+            account = self._account_manager.get_account_by_id(account_id)
             result = self._account_manager.remove_account(account_id)
+            emit_plugin_event("account:logout", {"account_type": account.get("type", "") if account else "", "account_id": account_id})
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "移除成功")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"移除账户失败: {e}")
             return {"success": False, "message": str(e)}
 
     def refresh_account_profile(self, account_id: str) -> dict[str, Any]:
         try:
             result = self._account_manager.refresh_account_profile(account_id)
+            from ..api.events import emit_plugin_event
+            account = self._account_manager.get_account_by_id(account_id)
+            emit_plugin_event("account:profile_refreshed", {
+                "account_type": account.get("type", "") if account else "",
+                "player_name": account.get("alias", "") if account else "",
+            })
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "刷新成功")}
-        except Exception as e:
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"刷新账户档案失败: {e}")
             return {"success": False, "message": str(e)}
 
     def get_game_instances(self) -> dict[str, Any]:
         try:
-            from ..game.Core.ECLauncherCore import ECLauncherCore
-
-            core = ECLauncherCore()
-            running_instances = core.instances_manager.get_instances_info()
+            im = self._state.launcher_core.instances_manager
+            running_instances = im.get_instances_info()
 
             instances = []
             for inst in running_instances:
@@ -824,29 +993,468 @@ class Api:
                 )
 
             return {"success": True, "data": instances, "message": f"获取到 {len(instances)} 个运行中的进程"}
-        except Exception as e:
+        except (AttributeError, OSError) as e:
             logger.error(f"获取运行中的进程列表失败: {e}")
             return {"success": False, "message": str(e), "data": []}
 
-    def launch_instance(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {"success": False, "message": "启动功能待对接", "data": None}
+    def set_master_password(self, password: str) -> dict[str, Any]:
+        try:
+            if len(password) < 8:
+                return {"success": False, "message": "密码长度至少8位"}
+            result = self._state.account_manager.set_master_password(password)
+            if result:
+                return {"success": True, "message": "主密码设置成功"}
+            return {"success": False, "message": "设置主密码失败"}
+        except ValueError as e:
+            return {"success": False, "message": str(e)}
 
+    def get_keyring_info(self) -> dict[str, Any]:
+        try:
+            auth = self._state.account_manager._auth
+            if auth is None or auth.encryption is None:
+                return {"success": True, "data": {"initialized": False, "needs_password": False}}
+            info = auth.encryption.keyring_manager.get_backend_info()
+            needs_password = auth.encryption.needs_password()
+            return {"success": True, "data": {"initialized": True, "needs_password": needs_password, **info}}
+        except (AttributeError, KeyError, ValueError, OSError) as e:
+            return {"success": False, "message": str(e), "data": None}
+
+    def clear_keyring(self) -> dict[str, Any]:
+        try:
+            auth = self._state.account_manager._auth
+            if auth is None:
+                return {"success": False, "message": "账户系统未初始化"}
+
+            # 删除密钥环中的加密密钥
+            try:
+                keyring.delete_password(auth.encryption.service_name, "encryption_key")
+            except (RuntimeError, OSError, ValueError):
+                pass
+
+            # 删除本地 salt 文件和账户文件
+            data_dir = auth.encryption.data_dir
+            salt_file = auth.encryption.salt_file
+            accounts_file = auth.accounts_file
+
+            removed = []
+            if salt_file.exists():
+                salt_file.unlink()
+                removed.append("salt")
+            if accounts_file.exists():
+                accounts_file.unlink()
+                removed.append("accounts")
+
+            # 清理内存状态
+            auth.encryption.fernet = None
+            auth.encryption._needs_password = True
+            auth.accounts = {}
+            auth.current_account = None
+            auth._initialized = False
+
+            logger.info(f"密钥环已清理，移除: {removed}")
+            return {"success": True, "message": "密钥环已清理", "data": {"removed": removed}}
+        except (OSError, AttributeError, KeyError) as e:
+            return {"success": False, "message": str(e)}
+
+    async def launch_instance(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from ..api.events import emit, emit_plugin_event
+
+        params = params or {}
+        try:
+            version_id = params.get("version_id")
+            if not version_id:
+                return {"success": False, "message": "缺少 version_id 参数"}
+
+            java_path = params.get("java_path")
+            if not java_path:
+                javas = self._state.get_java_dicts()
+                if not javas:
+                    return {"success": False, "message": "未找到 Java 环境"}
+                java_path = javas[0]["path"]
+
+            game_path = params.get("game_path")
+            if not game_path:
+                game_path = self._get_first_game_path()
+
+            # 获取账户信息
+            current = self._state.account_manager.get_current_account()
+            if not current:
+                return {"success": False, "message": "请先选择账户"}
+
+            player_name = current.get("alias", "Player")
+            user_type = current.get("type", "legacy")
+            auth_uuid = current.get("uuid", "")
+            access_token = self._state.account_manager.get_current_account_token() or "None"
+
+            # 插件事件：游戏启动前（可取消）
+            pre_payload = {"version_id": version_id, "player_name": player_name, "user_type": user_type, "options": params}
+            pre_results = emit_plugin_event("game:pre_launch", pre_payload)
+            if any(r is False for r in pre_results):
+                emit("game:launch_progress", {"phase": "error", "message": "启动被插件阻止"})
+                return {"success": False, "message": "启动被插件阻止"}
+
+            # 重置取消标志
+            self._state.launcher_core.reset_cancel()
+
+            # 推送启动进度：准备阶段
+            emit("game:launch_progress", {"phase": "preparing", "message": f"正在准备启动 {version_id}..."})
+
+            await asyncio.to_thread(
+                self._state.launcher_core.launch_minecraft,
+                java_path=java_path,
+                game_path=game_path,
+                version_name=version_id,
+                max_use_ram=params.get("memory", 2048),
+                player_name=player_name,
+                user_type=user_type,
+                auth_uuid=auth_uuid,
+                access_token=access_token,
+                window_width=params.get("width", 854),
+                window_height=params.get("height", 480),
+                custom_jvm_params=params.get("jvm_args"),
+                download_max_thread=params.get("download_threads", 32),
+            )
+
+            # 检查是否被取消
+            if self._state.launcher_core.is_canceled():
+                emit("game:launch_progress", {"phase": "error", "message": "启动已取消"})
+                return {"success": False, "message": "启动已取消"}
+
+            # 推送启动完成
+            emit("game:launch_progress", {"phase": "launched", "message": f"游戏 {version_id} 已启动"})
+            # 插件事件：游戏已启动
+            emit_plugin_event("game:launch_start", {"version_id": version_id, "player_name": player_name})
+            return {"success": True, "message": f"游戏 {version_id} 启动中"}
+        except (ValueError, FileNotFoundError, OSError, RuntimeError, asyncio.CancelledError) as e:
+            logger.error(f"启动游戏失败: {e}")
+            emit("game:launch_progress", {"phase": "error", "message": str(e)})
+            # 插件事件：启动失败
+            emit_plugin_event("game:exit", {"version_id": params.get("version_id", ""), "exit_code": -1, "reason": str(e)})
+            return {"success": False, "message": str(e)}
+
+    # TODO: 实现启动进度查询功能
     def get_launch_status(self, task_id: str) -> dict[str, Any]:
         return {"success": False, "message": "启动进度查询功能待对接", "data": None}
 
     def stop_instance(self, instance_id: str) -> dict[str, Any]:
         try:
-            from ..game.Core.ECLauncherCore import ECLauncherCore
-
-            core = ECLauncherCore()
-
-            running_instances = core.instances_manager.get_instances_info()
+            from ..api.events import emit_plugin_event
+            im = self._state.launcher_core.instances_manager
+            running_instances = im.get_instances_info()
             if not any(inst["ID"] == instance_id for inst in running_instances):
                 return {"success": False, "message": "实例未在运行"}
 
-            core.instances_manager.stop_instance(instance_id, terminate=True)
-
+            im.stop_instance(instance_id, terminate=True)
+            emit_plugin_event("game:exit", {"instance_id": instance_id, "exit_code": -1, "reason": "stopped"})
             return {"success": True, "message": "实例已停止"}
-        except Exception as e:
+        except (OSError, AttributeError, RuntimeError) as e:
             logger.error(f"停止实例失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def cancel_launch(self) -> dict[str, Any]:
+        # 取消当前启动流程，终止所有运行中的游戏实例。
+        logger.info("[cancel_launch] 收到前端取消请求")
+        try:
+            self._state.launcher_core.cancel_launch()
+            logger.info("[cancel_launch] 取消标志已设置，下载器已停止，实例已终止")
+            return {"success": True, "message": "启动已取消"}
+        except (RuntimeError, OSError, AttributeError) as e:
+            logger.error(f"[cancel_launch] 取消失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def _get_plugin_framework(self):
+        return self._state.plugin_framework
+
+    def _plugin_action(self, plugin_name: str, action: str, fw_method: Callable, **kwargs) -> dict[str, Any]:
+        # 通用插件操作方法：enable/disable/unload/reload 等。
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        try:
+            if action == "reload":
+                logger.info(f"[plugin-reload] 开始重载插件: {plugin_name}, cascade={kwargs.get('cascade', False)}")
+            result = fw_method(fw, **kwargs)
+            if action == "reload":
+                logger.info(f"[plugin-reload] 重载结果: {plugin_name} -> success={result.get('success')}, message={result.get('message', '')}")
+            from ..api.events import emit
+            emit("plugin:status_changed", {"name": plugin_name, "action": action, "result": result})
+            return result
+        except (RuntimeError, OSError, ValueError, TypeError) as e:
+            logger.error(f"{action} 插件 {plugin_name} 失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def plugin_list(self) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": True, "data": [], "message": "插件框架未启用"}
+        try:
+            plugins = fw.scan_plugins()
+            return {"success": True, "data": plugins, "message": f"共 {len(plugins)} 个插件"}
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error(f"获取插件列表失败: {e}")
+            return {"success": False, "message": str(e), "data": []}
+
+    def plugin_info(self, plugin_name: str) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        try:
+            plugin = fw.get_plugin(plugin_name)
+            if not plugin:
+                return {"success": False, "message": f"插件 {plugin_name} 不存在"}
+            data = fw.get_plugin_info_dict(plugin)
+            data["provided_events"] = plugin.get_provided_events()
+            data["subscribed_events"] = plugin.get_subscribed_events()
+            return {"success": True, "data": data}
+        except (AttributeError, OSError, RuntimeError) as e:
+            logger.error(f"获取插件信息失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def plugin_enable(self, plugin_name: str) -> dict[str, Any]:
+        return self._plugin_action(plugin_name, "enable", lambda fw: fw.enable_plugin(plugin_name))
+
+    def plugin_disable(self, plugin_name: str, force: bool = False) -> dict[str, Any]:
+        return self._plugin_action(plugin_name, "disable", lambda fw: fw.disable_plugin(plugin_name, force=force))
+
+    def plugin_unload(self, plugin_name: str) -> dict[str, Any]:
+        return self._plugin_action(plugin_name, "unload", lambda fw: fw.unload_plugin(plugin_name))
+
+    def plugin_reload(self, plugin_name: str, cascade: bool = False) -> dict[str, Any]:
+        return self._plugin_action(plugin_name, "reload", lambda fw: fw.reload_plugin(plugin_name, cascade=cascade), cascade=cascade)
+
+    def plugin_install(self, plugin_path: str) -> dict[str, Any]:
+        import zipfile
+        import shutil
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        try:
+            source = Path(plugin_path)
+            if not source.exists():
+                return {"success": False, "message": f"路径不存在: {plugin_path}"}
+
+            if source.is_dir():
+                manifest = source / "plugin.json"
+                if not manifest.exists():
+                    return {"success": False, "message": "所选目录中未找到 plugin.json"}
+                with manifest.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                plugin_name = data.get("name")
+                if not plugin_name:
+                    return {"success": False, "message": "plugin.json 中缺少 name 字段"}
+
+                target_dir = fw._plugins_dir / plugin_name
+                if target_dir.exists():
+                    return {"success": False, "message": f"插件 {plugin_name} 已存在，请先卸载"}
+
+                shutil.copytree(source, target_dir)
+                result = fw.load_plugin(plugin_name)
+                if result.get("success"):
+                    from ..api.events import emit
+                    emit("plugin:installed", {"name": plugin_name})
+                return result
+            else:
+                with zipfile.ZipFile(source, "r") as zf:
+                    names = zf.namelist()
+                    json_entry = next((n for n in names if n.endswith("plugin.json")), None)
+                    if not json_entry:
+                        return {"success": False, "message": "压缩包中未找到 plugin.json"}
+                    with zf.open(json_entry) as f:
+                        data = json.load(f)
+                    plugin_name = data.get("name")
+                    if not plugin_name:
+                        return {"success": False, "message": "plugin.json 中缺少 name 字段"}
+
+                target_dir = fw._plugins_dir / plugin_name
+                if target_dir.exists():
+                    return {"success": False, "message": f"插件 {plugin_name} 已存在，请先卸载"}
+
+                with zipfile.ZipFile(source, "r") as zf:
+                    target_dir_resolved = Path(target_dir).resolve()
+                    for member in zf.namelist():
+                        member_path = (Path(target_dir) / member).resolve()
+                        if not str(member_path).startswith(str(target_dir_resolved)):
+                            return {"success": False, "message": f"压缩包包含不安全的路径: {member}"}
+                    zf.extractall(target_dir)
+
+                result = fw.load_plugin(plugin_name)
+                if result.get("success"):
+                    from ..api.events import emit
+                    emit("plugin:installed", {"name": plugin_name})
+                return result
+        except (zipfile.BadZipFile, json.JSONDecodeError, OSError, KeyError, ValueError) as e:
+            logger.error(f"安装插件失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def plugin_get_settings(self, plugin_name: str) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        data = fw._plugin_settings.get(plugin_name, {"schema": {}, "values": {}})
+        return {"success": True, "data": data}
+
+    def plugin_update_setting(self, plugin_name: str, key: str, value: Any) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        fw._update_plugin_setting(plugin_name, key, value)
+        return {"success": True, "message": "设置已更新"}
+
+    def plugin_get_routes(self) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": True, "data": []}
+        return {"success": True, "data": fw.get_routes()}
+
+    def plugin_call_command(self, command: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": False, "message": "插件框架未启用"}
+        return fw.call_command(command, **(params or {}))
+
+    def plugin_get_slots(self) -> dict[str, Any]:
+        fw = self._get_plugin_framework()
+        if fw is None:
+            return {"success": True, "data": {}}
+        return {"success": True, "data": fw.get_html_slots()}
+
+    async def exec_action(self, payload: dict | None = None) -> dict[str, Any]:
+        # 通用命令分发器，供前端 exec_action 调用。
+        # 前端传入形如 { name: str, params: any } 的对象，本方法负责将 name 映射到具体的 Api 方法并调用。
+        # 为兼容旧前端命令，本方法对常见命令名做映射，并实现简单的文件系统辅助方法。
+        try:
+            if not payload or not isinstance(payload, dict):
+                return {"success": False, "message": "缺少操作名称或参数格式错误"}
+
+            name = payload.get("name")
+            params = payload.get("params", {})
+
+            # 简单映射：前端命令名 -> Api 类中实际方法名
+            mapping = {
+                "ping": "ping",
+                "java_scan": "get_java_list",
+                "java_list": "get_java_list",
+                "minecraft_versions": "get_minecraft_versions",
+                "fabric_versions": "get_fabric_versions",
+                "scan_versions": "scan_versions_in_path",
+                "install_version": "install_version",
+                "uninstall_version": "uninstall_version",
+
+                "accounts_list": "get_accounts",
+                "accounts_current": "get_current_account",
+                "accounts_add_offline": "add_offline_account",
+                "accounts_start_microsoft_login": "start_microsoft_login",
+                "accounts_poll_microsoft_login": "poll_microsoft_login",
+                "accounts_complete_microsoft_login": "complete_microsoft_login",
+                "accounts_switch": "switch_account",
+                "accounts_remove": "remove_account",
+                "accounts_refresh_profile": "refresh_account_profile",
+
+                "user_agreement_get": "get_user_agreement_status",
+                "user_agreement_save": "save_user_agreement",
+                "user_agreement_clear": "clear_user_agreement",
+
+                "image_fetch_data_url": "fetch_image_data_url",
+                "image_save_url": "load_image_from_url",
+                "image_read_file": "load_image_from_local",
+
+                "select_directory": "select_directory",
+                "select_java": "select_java_executable",
+                "select_image": "select_local_image",
+                "avatar_data_url": "get_avatar_data_url",
+
+                "instances_list": "get_game_instances",
+                "launch_instance": "launch_instance",
+                "cancel_launch": "cancel_launch",
+                "instance_stop": "stop_instance",
+
+                "launcher_info": "get_launcher_config",
+                "set_master_password": "set_master_password",
+                "get_keyring_info": "get_keyring_info",
+                "clear_keyring": "clear_keyring",
+
+                "frontend_ready": "frontend_ready",
+            }
+
+            # 文件系统与路径相关命令单独实现
+            if name == "fs_read_dir":
+                path = params.get("path") if isinstance(params, dict) else params
+                p = Path(path)
+                if not p.exists():
+                    return {"success": False, "message": "路径不存在", "data": []}
+                items = []
+                for it in p.iterdir():
+                    try:
+                        stat = it.stat()
+                        items.append(
+                            {
+                                "name": it.name,
+                                "is_dir": it.is_dir(),
+                                "size": stat.st_size,
+                                "mtime": int(stat.st_mtime),
+                            }
+                        )
+                    except (OSError, PermissionError):
+                        items.append({"name": it.name, "is_dir": it.is_dir(), "size": 0, "mtime": 0})
+                return {"success": True, "data": items}
+
+            if name == "fs_read_file":
+                path = params.get("path") if isinstance(params, dict) else params
+                mode = (params.get("mode") if isinstance(params, dict) else None) or "text"
+                p = Path(path)
+                if not p.exists():
+                    return {"success": False, "message": "文件不存在", "data": None}
+                try:
+                    if mode == "base64":
+                        content = base64.b64encode(p.read_bytes()).decode("utf-8")
+                        return {"success": True, "data": {"content": content, "size": p.stat().st_size}}
+                    else:
+                        text = p.read_text(encoding="utf-8")
+                        return {"success": True, "data": {"content": text, "size": p.stat().st_size}}
+                except (OSError, UnicodeDecodeError, PermissionError) as e:
+                    logger.error(f"读取文件失败: {e}")
+                    return {"success": False, "message": str(e), "data": None}
+
+            if name == "fs_exists":
+                path = params.get("path") if isinstance(params, dict) else params
+                p = Path(path)
+                return {"success": True, "data": {"exists": p.exists(), "is_dir": p.is_dir(), "is_file": p.is_file()}}
+
+            if name == "file_resolve":
+                path = params.get("path") if isinstance(params, dict) else params
+                p = Path(path)
+                if not p.exists():
+                    return {"success": False, "message": "路径不存在", "data": None}
+                return {"success": True, "data": {"path": str(p.resolve())}}
+
+            # 映射到 Api 中的真实方法名
+            target = mapping.get(name, name)
+
+            if not hasattr(self, target):
+                return {"success": False, "message": f"未知操作: {name}"}
+
+            func = getattr(self, target)
+            if not callable(func):
+                return {"success": False, "message": f"目标不是可调用的方法: {target}"}
+
+            # 调用目标方法，尝试多种参数传递方式以兼容不同签名
+            try:
+                if isinstance(params, dict):
+                    result = func(**params)
+                elif isinstance(params, (list, tuple)):
+                    result = func(*params)
+                else:
+                    result = func(params)
+                return await result if inspect.iscoroutine(result) else result
+            except TypeError:
+                try:
+                    result = func(params)
+                    return await result if inspect.iscoroutine(result) else result
+                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                    return {"success": False, "message": f"调用失败: {e}"}
+            except (RuntimeError, OSError, ValueError, TypeError) as e:
+                return {"success": False, "message": f"调用失败: {e}"}
+
+        except (RuntimeError, OSError, ValueError, TypeError) as e:
+            logger.error(f"exec_action 调用失败: {e}")
             return {"success": False, "message": str(e)}

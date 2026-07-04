@@ -57,7 +57,7 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
             with Path(filepath).open("rb") as f_in, gzip.open(compressed_path, "wb") as f_out:
                 f_out.writelines(f_in)
             Path(filepath).unlink()
-        except Exception as e:
+        except (OSError, EOFError) as e:
             print(f"压缩日志文件失败 {filepath}: {e}")
 
     def _cleanup_old_logs(self) -> None:
@@ -67,9 +67,9 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
             log_files = [f for f in log_dir.iterdir() if f.name.startswith(base_name) and f.name != base_name]
             log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
             for old_file in log_files[self.backup_count :]:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError, PermissionError):
                     old_file.unlink()
-        except Exception:
+        except (OSError, PermissionError):
             pass
 
 
@@ -133,9 +133,9 @@ class LoggerManager:
 
     def shutdown(self) -> None:
         for handler in self._root_logger.handlers[:]:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError, RuntimeError):
                 handler.flush()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError, RuntimeError):
                 handler.close()
             self._root_logger.removeHandler(handler)
 

@@ -1,11 +1,16 @@
+# ------------------------------
+# EuoraCraft Launcher 主程序
+# ECLTeam © 2026 GNU General Public License v3.0
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+# ------------------------------
+
 import sys
+from ECL.app import main
 
-from ECL.tauri_app import main as tauri_main
 
-
-def main() -> int:
-    return tauri_main()
+def run_launch() -> int:
+    return main()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_launch())

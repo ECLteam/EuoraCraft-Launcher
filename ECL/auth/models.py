@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -6,11 +9,13 @@ class MinecraftAccount:
     alias: str
     account_id: str
     email: str
-    profile: dict
+    profile: dict[str, Any]
     cache_file: str
     account_type: str = "microsoft"
+    mc_token: str = ""
+    mc_token_expires: float = 0.0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "alias": self.alias,
             "account_id": self.account_id,
@@ -18,10 +23,12 @@ class MinecraftAccount:
             "profile": self.profile,
             "cache_file": self.cache_file,
             "account_type": self.account_type,
+            "mc_token": self.mc_token,
+            "mc_token_expires": self.mc_token_expires,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MinecraftAccount":
+    def from_dict(cls, data: dict[str, Any]) -> MinecraftAccount:
         return cls(
             alias=data["alias"],
             account_id=data["account_id"],
@@ -29,6 +36,8 @@ class MinecraftAccount:
             profile=data["profile"],
             cache_file=data.get("cache_file", ""),
             account_type=data.get("account_type", "microsoft"),
+            mc_token=data.get("mc_token", ""),
+            mc_token_expires=data.get("mc_token_expires", 0.0),
         )
 
     def get_display_name(self) -> str:

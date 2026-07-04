@@ -1,11 +1,16 @@
 import json
 import platform
 import re
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from shutil import rmtree
 
+from ...common.logger import get_logger
 from . import C_Downloader, C_FilesChecker, C_Libs, InstancesManager
+
+logger = get_logger("core")
 
 
 class ECLauncherCore:
@@ -19,6 +24,7 @@ class ECLauncherCore:
         self.instances_manager = InstancesManager.InstancesManager()
 
         self.system_type = platform.system()  # 获取系统类型
+        self._cancel_launch = False  # 启动取消标志
 
     def set_api_url(self, api_url_dict: dict):  # 等价于 api_url.update_from_dict
         self.api_url.update_from_dict(api_url_dict)
@@ -39,6 +45,31 @@ class ECLauncherCore:
     def set_output_jvm_params(self, output_function: Callable[[str], None]) -> None:
         self.output_jvm_params = output_function
 
+    def cancel_launch(self) -> None:
+        """取消当前启动流程，并终止已创建的游戏实例。"""
+        self._cancel_launch = True
+        self.downloader.cancel_all_downloads()
+        threading.Thread(target=self.instances_manager.shutdown_all, args=(True,), daemon=True).start()
+
+    def reset_cancel(self) -> None:
+        """重置取消标志（每次启动前调用）。"""
+        self._cancel_launch = False
+        self.downloader.set_download_status(True)
+
+    def is_canceled(self) -> bool:
+        return self._cancel_launch
+
+    def _pause_with_cancel(self, seconds: float, message: str) -> bool:
+        """暂停指定秒数，每 0.1 秒检查取消标志。返回 True 表示已取消"""
+        self.output_launcher_log(message)
+        steps = int(seconds * 10)
+        for _ in range(steps):
+            if self._cancel_launch:
+                self.output_launcher_log("启动已取消")
+                return True
+            time.sleep(0.1)
+        return False
+
     def launch_minecraft(
         self,
         java_path: str | Path,
@@ -56,7 +87,7 @@ class ECLauncherCore:
         default_version_type: bool = False,
         custom_jvm_params: list[str] | None = None,
         window_width: int | str = "${resolution_width}",
-        window_height: int | str = "${resolution_width}",
+        window_height: int | str = "${resolution_height}",
         completes_file: bool = True,
         download_max_thread: int = 32,
         output_jvm_params: bool = False,
@@ -80,18 +111,23 @@ class ECLauncherCore:
         if not java_path.is_file():
             error_msg = f"未找到 Java 可执行文件 {java_path}"
             self.output_launcher_log(error_msg)
-            raise FileExistsError(error_msg)
+            raise FileNotFoundError(error_msg)
 
         if not version_json.is_file():
             error_msg = f"未找到游戏 {version_name}"
             self.output_launcher_log(error_msg)
-            raise FileExistsError(error_msg)
+            raise FileNotFoundError(error_msg)
 
         if max_use_ram < 256:
             max_use_ram = 256
 
         if completes_file:
             self.files_checker.check_files(game_path, version_name, download_max_thread)
+            if self.is_canceled():
+                self.output_launcher_log("启动已取消")
+                return
+            if self._pause_with_cancel(2.0, "文件校验完成，即将构建启动参数..."):
+                return
 
         jvm_params_list = []
         cp_delimiter = ":"  # ClassPath分隔符
@@ -127,35 +163,38 @@ class ECLauncherCore:
         if custom_jvm_params:
             jvm_params_list.extend(custom_jvm_params)  # 添加自定义Jvm
 
-        version_json = json.loads(version_json.read_text("utf-8"))
+        version_data = json.loads(version_json.read_text("utf-8"))
 
-        if "arguments" in version_json:
-            if "jvm" in version_json["arguments"]:
-                for arguments_jvm in version_json["arguments"]["jvm"]:  # 遍历Json中的Jvm参数
+        if "arguments" in version_data:
+            if "jvm" in version_data["arguments"]:
+                for arguments_jvm in version_data["arguments"]["jvm"]:  # 遍历Json中的Jvm参数
                     if type(arguments_jvm) is not str:
                         continue
                     if "${classpath_separator}" in arguments_jvm:  # 这个判断针对NeoForged的,为-p参数的依赖两边加双引号
                         jvm_params_list.append(f'"{arguments_jvm.replace(" ", "")}"')
                     else:
                         jvm_params_list.append(arguments_jvm.replace(" ", ""))
-            if "game" in version_json["arguments"]:
-                for arguments_game in version_json["arguments"]["game"]:  # 遍历Json中的Jvm参数
+            if "game" in version_data["arguments"]:
+                for arguments_game in version_data["arguments"]["game"]:  # 遍历Json中的Jvm参数
                     if type(arguments_game) is not str:
                         continue
                     jvm_params_list.append(arguments_game.replace(" ", ""))
-        elif "minecraftArguments" in version_json:
+        elif "minecraftArguments" in version_data:
             jvm_params_list.extend(
-                ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", version_json["minecraftArguments"]]
+                ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", version_data["minecraftArguments"]]
             )
 
-        if window_width != "${resolution_width}" != window_height:
+        if window_width != "${resolution_width}" or window_height != "${resolution_height}":
             jvm_params_list.append(f"--width {window_width} --height {window_height}")
         class_path_list = []
         asm_versions = []  # Fuck ASM!!!
         natives_path_list = []
 
-        for libraries in version_json["libraries"]:  # 遍历依赖
-            libraries_path = game_path / "libraries" / C_Libs.name_to_path(libraries["name"])
+        for libraries in version_data.get("libraries", []):  # 遍历依赖
+            get_path = C_Libs.name_to_path(libraries.get("name"))
+            if not get_path:
+                continue
+            libraries_path = game_path / "libraries" / get_path
             if str(libraries_path) in class_path_list:
                 continue  # 防止重复添加
             if re.search(r"asm-\d+(?:\.\d+)*", libraries_path.stem):  # Fuck ASM!!!
@@ -173,10 +212,10 @@ class ECLauncherCore:
         version_jar = game_path / "versions" / version_name / f"{version_name}.jar"
         asset_index_id = ""
 
-        if "id" in version_json.get("assetIndex", {}):
-            asset_index_id = version_json["assetIndex"]["id"]
+        if "id" in version_data.get("assetIndex", {}):
+            asset_index_id = version_data["assetIndex"]["id"]
 
-        game_json = C_Libs.find_version(version_json, game_path)
+        game_json = C_Libs.find_version(version_data, game_path)
 
         if game_json:
             game_json, version_path = game_json
@@ -197,13 +236,16 @@ class ECLauncherCore:
                         if arguments_game in jvm_params_list:
                             continue  # 防止重复添加
                         jvm_params_list.append(arguments_game)
-            elif "minecraftArguments" not in version_json and "minecraftArguments" in version_jar:
+            elif "minecraftArguments" not in version_data and "minecraftArguments" in game_json:
                 jvm_params_list.extend(
-                    ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", version_json["minecraftArguments"]]
+                    ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", game_json["minecraftArguments"]]
                 )
 
-            for libraries in game_json["libraries"]:  # 遍历依赖
-                libraries_path = game_path / "libraries" / C_Libs.name_to_path(libraries["name"])
+            for libraries in game_json.get("libraries", []):  # 遍历依赖
+                get_path = C_Libs.name_to_path(libraries.get("name"))
+                if not get_path:
+                    continue
+                libraries_path = game_path / "libraries" / get_path
                 if str(libraries_path) in class_path_list:
                     continue  # 防止重复添加
                 if (
@@ -224,27 +266,33 @@ class ECLauncherCore:
                 version_jar = version_path / f"{version_path.name}.jar"
 
             if not asset_index_id:
-                asset_index_id = game_json["assetIndex"]["id"]
+                asset_index_id = game_json.get("assetIndex", {}).get("id", asset_index_id)
 
-        asm_version = 0
+        asm_version = (0,)
         asm_path = ""
 
         for get_asm in asm_versions:  # Fuck ASM!!!
-            get_asm_version = float(get_asm.stem.replace("asm-", ""))
-            if get_asm_version > asm_version:
-                asm_version = get_asm_version
+            asm_ver = get_asm.stem.replace("asm-", "")
+            asm_parts = tuple(int(x) for x in asm_ver.split("."))  # 按版本号分段比较，避免 float 对三段版本号失败
+            if asm_parts > asm_version:
+                asm_version = asm_parts
                 asm_path = str(get_asm)
         if asm_path:
             class_path_list.append(asm_path)
 
         class_path_list.append(str(version_jar))
         jvm_params = f'"{java_path}" {" ".join(jvm_params_list)}'
-        class_path = f'"{cp_delimiter.join(class_path_list)}" {version_json["mainClass"]}'
+        class_path = f'"{cp_delimiter.join(class_path_list)}" {version_data["mainClass"]}'
+        if self._pause_with_cancel(2.0, "启动参数构建完成，即将解压原生库..."):
+            return
         natives_path = game_path / "versions" / version_name / "natives"
         is_set_lang = False
 
         if natives_path.is_dir():
-            rmtree(natives_path)
+            try:
+                rmtree(natives_path)
+            except OSError as e:
+                logger.warning(f"删除 natives 目录失败: {e}")
             natives_path.mkdir(parents=True, exist_ok=True)
         else:
             is_set_lang = True
@@ -252,7 +300,12 @@ class ECLauncherCore:
 
         self.output_launcher_log(f"需要解压 {len(natives_path_list)} 个文件")
         for a_natives in natives_path_list:
+            if self.is_canceled():  # 解压前检查取消标志
+                return
             C_Libs.unzip(a_natives, natives_path)
+
+        if self._pause_with_cancel(2.0, "原生库解压完成，即将启动游戏..."):
+            return
 
         if is_set_lang or set_lang:  # 设置游戏语言
             options_contents = lang = f"lang:{set_lang}" if set_lang else f"lang:{first_set_lang}"
@@ -279,7 +332,7 @@ class ECLauncherCore:
             # .replace("${version_name}", f'"{version_name}"', -1)
             .replace(
                 "${version_type}",
-                f'"{version_json.get("type", launcher_name)}"' if default_version_type else f'"{launcher_name}"',
+                f'"{version_data.get("type", launcher_name)}"' if default_version_type else f'"{launcher_name}"',
             )  # 版本类型
             .replace("${auth_player_name}", f'"{player_name}"')  # 玩家名字
             .replace("${user_type}", user_type)  # 登录方式
@@ -293,6 +346,13 @@ class ECLauncherCore:
             f'"{version_name}"',  # 版本名字
         ).replace("${version_name}", version_name)  # 特殊处理占位符,替换为游戏版本名称
 
+        if self.is_canceled():
+            self.output_launcher_log("启动已取消")
+            return
+
+        if self._pause_with_cancel(2.0, "即将启动游戏进程..."):
+            return
+
         if write_run_script:
             run_script_path = Path(run_script_path) / f"run{run_script_suffix}"
             self.output_launcher_log(f"生成的启动脚本在 {run_script_path}")
@@ -301,6 +361,9 @@ class ECLauncherCore:
             self.output_launcher_log("输出启动参数")
             self.output_jvm_params(jvm_params)
         else:
+            if self.is_canceled():
+                self.output_launcher_log("启动已取消")
+                return
             self.output_launcher_log(f"正在启动游戏 [{version_name}]")
             self.instances_manager.create_instance(
                 instance_name=version_name,

@@ -12,9 +12,13 @@ class FilesChecker:
         self.downloader = downloader or C_Downloader.Downloader()
         self.output_log: Callable[[str], None] = print
         self.api_url = api_url or C_Libs.ApiUrl()
+        self.cancel_check: Callable[[], bool] = lambda: False
 
     def set_output_log(self, output_function: Callable[[str], None]) -> None:
         self.output_log = output_function
+
+    def set_cancel_check(self, callback: Callable[[], bool]) -> None:
+        self.cancel_check = callback
 
     def set_api_url(self, api_url_dict: dict):
         self.api_url.update_from_dict(api_url_dict)
@@ -51,7 +55,10 @@ class FilesChecker:
     def __check_libraries(self, game_path: Path, version_json: dict) -> list[tuple[str, str]]:  # 检查依赖库的完整性
         download_list = []
         self.output_log("检查依赖库完整性...")
-        for libraries in version_json.get("libraries"):  # 检测补全libraries
+        for libraries in version_json.get("libraries", []):  # 检测补全libraries
+            if self.cancel_check():
+                self.output_log("文件校验已取消")
+                return download_list
             if "classifiers" in libraries.get("downloads", {}):  # 补全natives
                 for classifiers in libraries["downloads"]["classifiers"].values():
                     natives_path = game_path / "libraries" / classifiers["path"]
@@ -93,17 +100,24 @@ class FilesChecker:
         index_file_sha1 = version_json["assetIndex"]["sha1"]
         if C_Libs.get_file_sha1(asset_index_path) != index_file_sha1:
             try:
-                response = requests.get(f"{self.api_url.Meta}/v1/packages/{index_file_sha1}/{asset_id}.json")
+                response = requests.get(f"{self.api_url.Meta}/v1/packages/{index_file_sha1}/{asset_id}.json", timeout=30)
                 response.raise_for_status()
                 asset_index_path.parent.mkdir(parents=True, exist_ok=True)
                 asset_index_path.write_text(response.text, encoding="utf-8")
-            except requests.exceptions.RequestException:
-                pass
+            except requests.exceptions.RequestException as e:
+                print(f"获取 asset index 失败: {e}")
         if not asset_index_path.is_file():
             return download_list
         api_url = self.api_url.Assets
-        asset_index_json = json.loads(asset_index_path.read_text("utf-8"))
+        try:
+            asset_index_json = json.loads(asset_index_path.read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            print(f"解析 asset index 失败: {e}")
+            return download_list
         for assets in asset_index_json["objects"].values():
+            if self.cancel_check():
+                self.output_log("文件校验已取消")
+                return download_list
             asset_file_sha1 = assets["hash"]
             get_asset_path = f"{asset_file_sha1[:2]}/{asset_file_sha1}"
             asset_path = game_path / "assets" / "objects" / get_asset_path
@@ -120,7 +134,11 @@ class FilesChecker:
             self.output_log(f"未找到游戏 {version_name}")
             return
         download_list = []
-        version_json = json.loads((game_path / "versions" / version_name / f"{version_name}.json").read_text("utf-8"))
+        try:
+            version_json = json.loads((game_path / "versions" / version_name / f"{version_name}.json").read_text("utf-8"))
+        except json.JSONDecodeError as e:
+            print(f"解析版本 json 失败: {e}")
+            return
         download_list.extend(self.__check_game_jar(game_path, version_name, version_json))
         download_list.extend(self.__check_libraries(game_path, version_json))
         download_list.extend(self.__check_assets(game_path, version_json))
@@ -133,4 +151,4 @@ class FilesChecker:
         if len(download_list) < 1:
             return
         self.output_log("开始下载文件...")
-        self.downloader.download_manager(download_list, download_max_thread)
+        return self.downloader.download_manager(download_list, download_max_thread)

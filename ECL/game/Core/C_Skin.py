@@ -6,6 +6,7 @@ import json
 import os
 import threading
 from configparser import ConfigParser
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ logger = get_logger("skin")
 
 SKIN_CACHE_DIR_NAME = "ECL_Libs/Cache/Skin"
 _SKIN_DOWNLOAD_LOCK = threading.Lock()
+_SKIN_INDEX_LOCK = threading.Lock()  # 皮肤索引文件读写锁
 
 
 def _get_project_root() -> Path:
@@ -63,20 +65,22 @@ def _get_skin_index_path(type_name: str) -> Path:
 
 
 def _load_skin_index(type_name: str) -> ConfigParser:
-    path = _get_skin_index_path(type_name)
-    parser = ConfigParser()
-    parser.optionxform = str
-    if path.exists():
-        parser.read(path, encoding="utf-8")
-    if "skins" not in parser.sections():
-        parser["skins"] = {}
-    return parser
+    with _SKIN_INDEX_LOCK:
+        path = _get_skin_index_path(type_name)
+        parser = ConfigParser()
+        parser.optionxform = str
+        if path.exists():
+            parser.read(path, encoding="utf-8")
+        if "skins" not in parser.sections():
+            parser["skins"] = {}
+        return parser
 
 
 def _save_skin_index(parser: ConfigParser, type_name: str) -> None:
-    path = _get_skin_index_path(type_name)
-    with path.open("w", encoding="utf-8") as f:
-        parser.write(f)
+    with _SKIN_INDEX_LOCK:
+        path = _get_skin_index_path(type_name)
+        with path.open("w", encoding="utf-8") as f:
+            parser.write(f)
 
 
 def _get_cached_skin_address(uuid: str, type_name: str) -> str | None:
@@ -287,6 +291,32 @@ def _cache_offline_avatar(uuid: str, skin_type: str, size: int, avatar_type: str
         logger.warning(f"缓存离线头像失败 {uuid}: {e}")
 
 
+def _get_cached_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int) -> Path | None:
+    """检查在线皮肤的渲染缓存，命中则返回路径，否则返回 None"""
+    cache_dir = _get_skin_cache_dir()
+    cache_name = f"{uuid.lower()}-{skin_path.stem}-{avatar_type}-{size}.png"
+    cache_path = cache_dir / cache_name
+    return cache_path if cache_path.exists() else None
+
+
+def _cache_online_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int, result: Image.Image) -> None:
+    """缓存在线皮肤的渲染结果"""
+    try:
+        cache_dir = _get_skin_cache_dir()
+        cache_name = f"{uuid.lower()}-{skin_path.stem}-{avatar_type}-{size}.png"
+        result.save(cache_dir / cache_name, "PNG")
+    except Exception as e:
+        logger.warning(f"缓存在线头像失败 {uuid}: {e}")
+
+
+def _img_to_data_url(img_path: Path) -> str:
+    """从缓存文件读取并转为 base64 data URL"""
+    with Image.open(img_path) as img:
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
+
+
 def _build_skin_server_url(type_name: str, custom_server: str | None = None) -> str:
     type_clean = type_name.strip().lower()
     if type_clean in ("mojang", "ms", "microsoft"):
@@ -398,14 +428,14 @@ def download_skin(address: str) -> Path:
             return file_path
 
         headers = {"User-Agent": "EuoraCraft Launcher"}
-        response = requests.get(address, stream=True, timeout=15, headers=headers)
-        response.raise_for_status()
+        with requests.get(address, stream=True, timeout=15, headers=headers) as response:
+            response.raise_for_status()
 
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with tmp_path.open("wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with tmp_path.open("wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
 
         tmp_path.replace(file_path)
         return file_path
@@ -469,6 +499,12 @@ def get_avatar_data_url(
             skin_url = get_skin_address(uuid, type_name, custom_server)
             skin_path = download_skin(skin_url)
             logger.debug(f"成功获取正版用户在线皮肤: {uuid}")
+
+            # 检查渲染缓存
+            cached = _get_cached_avatar(uuid, skin_path, avatar_type, size)
+            if cached:
+                logger.debug(f"命中在线皮肤渲染缓存: {cached}")
+                return _img_to_data_url(cached)
         except Exception as e:
             logger.warning(f"获取正版用户皮肤失败 {uuid}: {e}，使用默认皮肤")
             skin_type = get_skin_sex(uuid)
@@ -488,7 +524,9 @@ def get_avatar_data_url(
     with Image.open(skin_path) as skin_img:
         result = _render_avatar_js(skin_img, avatar_type, size)
 
-        from io import BytesIO
+        # 在线皮肤缓存渲染结果
+        if not use_default_skin and type_name.lower() in ("mojang", "ms", "microsoft"):
+            _cache_online_avatar(uuid, skin_path, avatar_type, size, result)
 
         buffer = BytesIO()
         result.save(buffer, format="PNG")

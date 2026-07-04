@@ -5,14 +5,14 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('ui/dist', 'ui/dist'),('resources', 'resources')],
+    datas=[('EuoraCraftLauncher-UI/dist', 'ui/dist'),('resources', 'resources')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['numpy', 'PIL', 'bcrypt', 'psutil', 'charset_normalizer', 'setuptools', 'wheel', 'pkg_resources'],
+    excludes=['numpy', 'bcrypt', 'psutil', 'charset_normalizer', 'setuptools', 'wheel', 'pkg_resources'],
     noarchive=False,
-    optimize=0,
+    optimize=2,
 )
 pyz = PYZ(a.pure)
 

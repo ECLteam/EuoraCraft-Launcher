@@ -20,6 +20,7 @@ dist/
 *.egg-info/
 .eggs/
 *.spec
+!EuoraCraft-Launcher.spec
 
 # Frontend build output
 frontend/

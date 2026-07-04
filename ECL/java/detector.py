@@ -1,21 +1,39 @@
+from __future__ import annotations
+
+import asyncio
 import os
 import platform
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..common.logger import get_logger
 from .models import JavaInfo
 
-logger = get_logger("launcher")
+logger = get_logger("java")
 
 
 class JavaDetector:
-    def __init__(self):
+    _executor: ThreadPoolExecutor | None = None
+
+    def __init__(self) -> None:
         self.java_list: list[JavaInfo] = []
         self._candidate_cache: dict[str, tuple[Path, str]] = {}
-        self.is_windows = platform.system() == "Windows"
-        self.is_macos = platform.system() == "Darwin"
+        self.is_windows: bool = platform.system() == "Windows"
+        self.is_macos: bool = platform.system() == "Darwin"
+
+    @classmethod
+    def __get_executor(cls) -> ThreadPoolExecutor:
+        if cls._executor is None:
+            cls._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="java_detect")
+        return cls._executor
+
+    @classmethod
+    def shutdown_executor(cls) -> None:
+        if cls._executor is not None:
+            cls._executor.shutdown(wait=False)
+            cls._executor = None
 
     def detect_all(self) -> list[JavaInfo]:
         logger.debug("开始扫描 Java...")
@@ -32,6 +50,32 @@ class JavaDetector:
         self.java_list.sort(key=lambda x: x.major_version, reverse=True)
 
         logger.info(f"扫描完成，共找到 {len(self.java_list)} 个有效 Java")
+        return self.java_list
+
+    async def detect_all_async(self):
+        return await asyncio.to_thread(self.detect_all)
+
+    async def detect_all_parallel(self):
+        logger.debug("开始并行扫描 Java...")
+        loop = asyncio.get_running_loop()
+
+        async def _run_scan(fn):
+            return await loop.run_in_executor(self.__get_executor(), fn)
+
+        scan_tasks = [_run_scan(self._scan_environment)]
+        if self.is_windows:
+            scan_tasks.append(_run_scan(self._scan_registry))
+        if not self.is_windows:
+            scan_tasks.append(_run_scan(self._scan_unix_tools))
+
+        results = await asyncio.gather(*scan_tasks, return_exceptions=True)
+        for i, r in enumerate(results):
+            if isinstance(r, BaseException):
+                logger.error(f"Java 扫描子任务 {i} 失败: {r}")
+
+        self._validate_and_deduplicate()
+        self.java_list.sort(key=lambda x: x.major_version, reverse=True)
+        logger.info(f"并行扫描完成，共找到 {len(self.java_list)} 个有效 Java")
         return self.java_list
 
     def _add_candidate(self, path: Path, source: str) -> None:
@@ -101,7 +145,7 @@ class JavaDetector:
                             break
             except FileNotFoundError:
                 pass
-            except Exception as e:
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as e:
                 logger.error(f"注册表读取错误: {e}")
 
     def _scan_environment(self) -> None:
@@ -132,7 +176,7 @@ class JavaDetector:
             if result.returncode == 0 and (path := Path(result.stdout.strip())).exists():
                 real_path = path.resolve()
                 self._add_candidate(real_path, "which_java")
-        except Exception:
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
             pass
 
         if not self.is_macos:
@@ -144,7 +188,7 @@ class JavaDetector:
                     for line in result.stdout.strip().split("\n"):
                         if line and (path := Path(line)).exists():
                             self._add_candidate(path.resolve(), "update_alternatives")
-            except Exception:
+            except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
                 pass
 
     def _validate_and_deduplicate(self) -> None:
@@ -171,7 +215,7 @@ class JavaDetector:
             result = subprocess.run(
                 [str(exec_path), "-version"], capture_output=True, timeout=10, encoding="utf-8", errors="ignore"
             )
-        except Exception:
+        except (OSError, subprocess.TimeoutExpired):
             return None
 
         output = result.stderr or result.stdout
@@ -201,8 +245,6 @@ class JavaDetector:
         arch = "64-bit"
         if any(x in output for x in ["32-Bit", "i586", "i686", "x86"]):
             arch = "32-bit"
-        elif any(x in output for x in ["64-Bit", "amd64", "x86_64", "aarch64"]):
-            arch = "64-bit"
 
         return JavaInfo(
             path=path, version=version_str, major_version=major, java_type=java_type, arch=arch, sources=[source]

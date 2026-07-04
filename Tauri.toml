@@ -5,9 +5,13 @@ identifier = "com.euoracraft.launcher"
 
 [build]
 frontendDist = "./EuoraCraftLauncher-UI/dist"
+devUrl = "http://localhost:5173"
 
 [app]
-withGlobalTauri = true
+withGlobalTauri = false
+
+[app.security]
+csp = "default-src 'self'; connect-src 'self' https:; img-src 'self' asset: https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
 
 [[app.windows]]
 title = "EuoraCraft Launcher"
