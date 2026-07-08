@@ -15,44 +15,27 @@ logger = get_logger("core")
 
 class ECLauncherCore:
     def __init__(self):
-        self.output_launcher_log: Callable[[str], None] = print
-        self.output_jvm_params: Callable[[str], None] = print
-
+        self.output_log: Callable[[str], None] = print
         self.api_url = C_Libs.ApiUrl()
         self.downloader = C_Downloader.Downloader()
         self.files_checker = C_FilesChecker.FilesChecker(self.api_url, self.downloader)
+        self.files_checker.set_cancel_check(self.is_canceled)
         self.instances_manager = InstancesManager.InstancesManager()
-
         self.system_type = platform.system()  # 获取系统类型
         self._cancel_launch = False  # 启动取消标志
 
-    def set_api_url(self, api_url_dict: dict):  # 等价于 api_url.update_from_dict
+    def set_api_url(self, api_url_dict: dict):
         self.api_url.update_from_dict(api_url_dict)
 
-    def set_output_launcher_log(self, output_function: Callable[[str], None]) -> None:
-        self.output_launcher_log = output_function
-
-        """
-        {
-            "Name": "Name",  # 实例名称
-            "ID": "ID",  # 实例ID
-            "Type": "MinecraftClient/MinecraftServer/Other",  # 实例类型(不局限于这三个)
-            "StdIn": True,  # 是否支持输入管道, 默认支持输出和错误管道
-            "Instance": subprocess.Popen  # 进程管道实例
-        }
-        """
-
-    def set_output_jvm_params(self, output_function: Callable[[str], None]) -> None:
-        self.output_jvm_params = output_function
+    def set_output_log(self, output_function: Callable[[str], None]) -> None:
+        self.output_log = output_function
 
     def cancel_launch(self) -> None:
-        """取消当前启动流程，并终止已创建的游戏实例。"""
         self._cancel_launch = True
         self.downloader.cancel_all_downloads()
         threading.Thread(target=self.instances_manager.shutdown_all, args=(True,), daemon=True).start()
 
     def reset_cancel(self) -> None:
-        """重置取消标志（每次启动前调用）。"""
         self._cancel_launch = False
         self.downloader.set_download_status(True)
 
@@ -60,12 +43,11 @@ class ECLauncherCore:
         return self._cancel_launch
 
     def _pause_with_cancel(self, seconds: float, message: str) -> bool:
-        """暂停指定秒数，每 0.1 秒检查取消标志。返回 True 表示已取消"""
-        self.output_launcher_log(message)
+        self.output_log(message)
         steps = int(seconds * 10)
         for _ in range(steps):
             if self._cancel_launch:
-                self.output_launcher_log("启动已取消")
+                self.output_log("启动已取消")
                 return True
             time.sleep(0.1)
         return False
@@ -93,29 +75,31 @@ class ECLauncherCore:
         output_jvm_params: bool = False,
         write_run_script: bool = False,
         run_script_path: str | Path = ".",
+        authlib_injector_path: str | None = None,
+        authlib_server: str | None = None,
     ):
         if re.search(r"[^a-zA-Z0-9\-_+.]", player_name):  # 检测用户名是否合法
-            error_meg = "玩家名称不能包含数字、减号、下划线、加号或英文句号(小数点)以外的字符"
-            self.output_launcher_log(error_meg)
-            raise ValueError(error_meg)
+            error_msg = "玩家名称不能包含数字、减号、下划线、加号或英文句号(小数点)以外的字符"
+            self.output_log(error_msg)
+            raise ValueError(error_msg)
 
         if auth_uuid != "" and not C_Libs.is_uuid3(auth_uuid):  # 检测是否定义了UUID3,是否合法
             error_msg = "错误的 UUID, UUID 必须是 UUID3"
-            self.output_launcher_log(error_msg)
+            self.output_log(error_msg)
             raise ValueError(error_msg)
 
         java_path = Path(java_path)
-        game_path = Path(game_path)
-        version_json = game_path / "versions" / version_name / f"{version_name}.json"
+        game_path = Path(game_path).resolve()
+        version_json_path = game_path / "versions" / version_name / f"{version_name}.json"
 
         if not java_path.is_file():
             error_msg = f"未找到 Java 可执行文件 {java_path}"
-            self.output_launcher_log(error_msg)
+            self.output_log(error_msg)
             raise FileNotFoundError(error_msg)
 
-        if not version_json.is_file():
+        if not version_json_path.is_file():
             error_msg = f"未找到游戏 {version_name}"
-            self.output_launcher_log(error_msg)
+            self.output_log(error_msg)
             raise FileNotFoundError(error_msg)
 
         if max_use_ram < 256:
@@ -124,15 +108,27 @@ class ECLauncherCore:
         if completes_file:
             self.files_checker.check_files(game_path, version_name, download_max_thread)
             if self.is_canceled():
-                self.output_launcher_log("启动已取消")
+                self.output_log("启动已取消")
                 return
+            # 显式发送进度事件，确保前端能收到
+            try:
+                from ...common.state import _safe_emit
+                _safe_emit("game:launch_progress", {"phase": "files_checked", "percent": 50})
+            except ImportError:
+                pass
             if self._pause_with_cancel(2.0, "文件校验完成，即将构建启动参数..."):
                 return
 
         jvm_params_list = []
         cp_delimiter = ":"  # ClassPath分隔符
         run_script_suffix = ".sh"
-        self.output_launcher_log(f"系统平台 {self.system_type}")
+        self.output_log(f"系统平台 {self.system_type}")
+        # 显式发送进度事件，确保前端能收到
+        try:
+            from ...common.state import _safe_emit
+            _safe_emit("game:launch_progress", {"phase": "building_args", "percent": 65})
+        except ImportError:
+            pass
 
         if self.system_type == "Windows":  # 判断是否为Windows
             run_script_suffix = ".bat"
@@ -163,22 +159,28 @@ class ECLauncherCore:
         if custom_jvm_params:
             jvm_params_list.extend(custom_jvm_params)  # 添加自定义Jvm
 
-        version_data = json.loads(version_json.read_text("utf-8"))
+        # Authlib 外置登录 JVM 参数
+        if authlib_injector_path and authlib_server:
+            jvm_params_list.append(f"-javaagent:{authlib_injector_path}={authlib_server}")
+            jvm_params_list.append("-Dauthlibinjector.noLogFile=true")
+            self.output_log(f"已添加 Authlib-Injector 参数: {authlib_server}")
+
+        version_data = json.loads(version_json_path.read_text("utf-8"))
 
         if "arguments" in version_data:
             if "jvm" in version_data["arguments"]:
-                for arguments_jvm in version_data["arguments"]["jvm"]:  # 遍历Json中的Jvm参数
+                for arguments_jvm in version_data["arguments"]["jvm"]:
                     if type(arguments_jvm) is not str:
                         continue
-                    if "${classpath_separator}" in arguments_jvm:  # 这个判断针对NeoForged的,为-p参数的依赖两边加双引号
-                        jvm_params_list.append(f'"{arguments_jvm.replace(" ", "")}"')
+                    if "${classpath_separator}" in arguments_jvm:
+                        jvm_params_list.append(f'"{arguments_jvm}"')
                     else:
-                        jvm_params_list.append(arguments_jvm.replace(" ", ""))
+                        jvm_params_list.append(arguments_jvm)
             if "game" in version_data["arguments"]:
-                for arguments_game in version_data["arguments"]["game"]:  # 遍历Json中的Jvm参数
+                for arguments_game in version_data["arguments"]["game"]:
                     if type(arguments_game) is not str:
                         continue
-                    jvm_params_list.append(arguments_game.replace(" ", ""))
+                    jvm_params_list.append(arguments_game)
         elif "minecraftArguments" in version_data:
             jvm_params_list.extend(
                 ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", version_data["minecraftArguments"]]
@@ -221,20 +223,18 @@ class ECLauncherCore:
             game_json, version_path = game_json
             if "arguments" in game_json:
                 if "jvm" in game_json["arguments"]:
-                    for arguments_jvm in game_json["arguments"]["jvm"]:  # 遍历Json中的Jvm参数
+                    for arguments_jvm in game_json["arguments"]["jvm"]:
                         if type(arguments_jvm) is not str:
                             continue
-                        arguments_jvm = arguments_jvm.replace(" ", "")
                         if arguments_jvm in jvm_params_list:
-                            continue  # 防止重复添加
+                            continue
                         jvm_params_list.append(arguments_jvm)
                 if "game" in game_json["arguments"]:
-                    for arguments_game in game_json["arguments"]["game"]:  # 遍历Json中的Jvm参数
+                    for arguments_game in game_json["arguments"]["game"]:
                         if type(arguments_game) is not str:
                             continue
-                        arguments_game = arguments_game.replace(" ", "")
                         if arguments_game in jvm_params_list:
-                            continue  # 防止重复添加
+                            continue
                         jvm_params_list.append(arguments_game)
             elif "minecraftArguments" not in version_data and "minecraftArguments" in game_json:
                 jvm_params_list.extend(
@@ -283,6 +283,17 @@ class ECLauncherCore:
         class_path_list.append(str(version_jar))
         jvm_params = f'"{java_path}" {" ".join(jvm_params_list)}'
         class_path = f'"{cp_delimiter.join(class_path_list)}" {version_data["mainClass"]}'
+        # DEBUG: 输出 classpath 构建信息
+        logger.debug(f"[DEBUG] mainClass: {version_data['mainClass']}")
+        logger.debug(f"[DEBUG] classpath jars count: {len(class_path_list)}")
+        logger.debug(f"[DEBUG] class_path (first 200): {class_path[:200]}")
+        logger.debug(f"[DEBUG] class_path (last 200): {class_path[-200:]}")
+        # 显式发送进度事件，确保前端能收到
+        try:
+            from ...common.state import _safe_emit
+            _safe_emit("game:launch_progress", {"phase": "args_built", "percent": 75})
+        except ImportError:
+            pass
         if self._pause_with_cancel(2.0, "启动参数构建完成，即将解压原生库..."):
             return
         natives_path = game_path / "versions" / version_name / "natives"
@@ -298,12 +309,18 @@ class ECLauncherCore:
             is_set_lang = True
             natives_path.mkdir(parents=True, exist_ok=True)
 
-        self.output_launcher_log(f"需要解压 {len(natives_path_list)} 个文件")
+        self.output_log(f"需要解压 {len(natives_path_list)} 个文件")
         for a_natives in natives_path_list:
             if self.is_canceled():  # 解压前检查取消标志
                 return
             C_Libs.unzip(a_natives, natives_path)
 
+        # 显式发送进度事件，确保前端能收到
+        try:
+            from ...common.state import _safe_emit
+            _safe_emit("game:launch_progress", {"phase": "natives_done", "percent": 85})
+        except ImportError:
+            pass
         if self._pause_with_cancel(2.0, "原生库解压完成，即将启动游戏..."):
             return
 
@@ -314,11 +331,11 @@ class ECLauncherCore:
                 options_contents = options_path.read_text("utf-8")
                 options_contents = re.sub(r"^lang:\S+$", lang, options_contents, flags=re.MULTILINE)
             options_path.write_text(options_contents, "utf-8")
-            self.output_launcher_log(f"设置游戏语言为 {lang}")
+            self.output_log(f"设置游戏语言为 {lang}")
 
         if user_type == "legacy":  # 离线模式设置唯一标识id
             auth_uuid = C_Libs.name_to_uuid(player_name).hex
-            self.output_launcher_log(f"未设置 UUID, 生成 UUID 为 {auth_uuid}")
+            self.output_log(f"未设置 UUID, 生成 UUID 为 {auth_uuid}")
 
         jvm_params = C_Libs.replace_last(
             jvm_params.replace("${classpath}", class_path)  # 把-cp参数内容换成拼接好的依赖路径
@@ -347,24 +364,44 @@ class ECLauncherCore:
         ).replace("${version_name}", version_name)  # 特殊处理占位符,替换为游戏版本名称
 
         if self.is_canceled():
-            self.output_launcher_log("启动已取消")
+            self.output_log("启动已取消")
             return
 
+        # 显式发送进度事件，确保前端能收到
+        try:
+            from ...common.state import _safe_emit
+            _safe_emit("game:launch_progress", {"phase": "about_to_launch", "percent": 92})
+        except ImportError:
+            pass
         if self._pause_with_cancel(2.0, "即将启动游戏进程..."):
             return
 
         if write_run_script:
             run_script_path = Path(run_script_path) / f"run{run_script_suffix}"
-            self.output_launcher_log(f"生成的启动脚本在 {run_script_path}")
+            self.output_log(f"生成的启动脚本在 {run_script_path}")
             run_script_path.write_text(jvm_params, "utf-8")
         if output_jvm_params:
-            self.output_launcher_log("输出启动参数")
-            self.output_jvm_params(jvm_params)
+            self.output_log("输出启动参数")
+            self.output_log(jvm_params)
         else:
             if self.is_canceled():
-                self.output_launcher_log("启动已取消")
+                self.output_log("启动已取消")
                 return
-            self.output_launcher_log(f"正在启动游戏 [{version_name}]")
+            self.output_log(f"正在启动游戏 [{version_name}]")
+            # 显式发送进度事件，确保前端能收到
+            try:
+                from ...common.state import _safe_emit
+                _safe_emit("game:launch_progress", {"phase": "launching", "percent": 95})
+            except ImportError:
+                pass
+            # DEBUG: 输出完整的 jvm_params 中 -cp 附近的内容
+            cp_idx = jvm_params.find("-cp ")
+            if cp_idx >= 0:
+                logger.debug(f"[DEBUG] jvm_params around -cp (+250): {jvm_params[cp_idx:cp_idx+250]}")
+            else:
+                logger.debug(f"[DEBUG] jvm_params NO -cp found! params list: {jvm_params_list[:10]}...")
+            logger.debug(f"[DEBUG] jvm_params total length: {len(jvm_params)}")
+            logger.debug(f"[DEBUG] cwd: {game_path / 'versions' / version_name}")
             self.instances_manager.create_instance(
                 instance_name=version_name,
                 instance_type="MinecraftClient",

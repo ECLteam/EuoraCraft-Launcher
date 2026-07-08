@@ -183,7 +183,7 @@ class ModManager:
             # 解析元数据
             try:
                 meta = ModManager._parse_jar_metadata(jar_path)
-            except Exception:
+            except (zipfile.BadZipFile, OSError):
                 meta = {"name": "", "version": "", "author": "", "loader_type": "未知", "game_version": ""}
 
             # 如果元数据缺失，使用文件名

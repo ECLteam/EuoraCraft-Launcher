@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import importlib
 import importlib.util
@@ -740,7 +738,7 @@ class PluginFramework:
 
     def shutdown(self) -> None:
         self._shutting_down = True
-        logger.info("[plugin-framework] 开始 shutdown...")
+        logger.info("开始关闭插件框架...")
 
         enabled = [n for n, p in self._plugins.items() if p._status == PluginStatus.ENABLED]
         loaded = [n for n, p in self._plugins.items() if p._status in (PluginStatus.LOADED, PluginStatus.DISABLED)]
@@ -766,7 +764,7 @@ class PluginFramework:
         for name in all_plugins:
             visit(name)
 
-        logger.info(f"[plugin-framework] 关闭顺序: {order}")
+        logger.info(f"关闭顺序: {order}")
 
         # 1. 按拓扑顺序 disable（依赖者先 disable）
         for name in order:

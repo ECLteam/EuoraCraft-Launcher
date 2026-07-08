@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import RootModel
@@ -44,6 +42,22 @@ _emitter_instance = EventEmitter()
 
 # 门面函数（保持旧接口兼容）
 emit = _emitter_instance.emit
+
+
+def emit_direct(event: str, payload: dict[str, Any] | None = None) -> None:
+    # 直接从主线程发射事件，绕过 run_on_main_thread
+    # 仅应在确定当前处于主线程时调用（如 asyncio 事件循环 / drain_progress_events）
+    # 在子线程中调用会导致 pyo3 unsendable panic
+    if EventEmitter._exiting:
+        return
+    app_handle = get_app_handle_obj()
+    if app_handle is None:
+        return
+    try:
+        payload_obj = _EventPayload(payload or {})
+        Emitter.emit(app_handle, event, payload_obj)
+    except (RuntimeError, OSError, ValueError) as e:
+        logger.warning(f"直接事件发送失败 [{event}]: {e}")
 
 
 def emit_plugin_event(event: str, *args: Any, _framework: Any | None = None, **kwargs: Any) -> list[Any]:

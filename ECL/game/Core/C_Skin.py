@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import base64
 import hashlib
 import json
@@ -10,14 +8,10 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from ...common.env import get_runtime_dir
+
 import requests
-
-try:
-    from PIL import Image
-
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
+from PIL import Image
 
 from ...common.logger import get_logger
 
@@ -25,27 +19,21 @@ logger = get_logger("skin")
 
 SKIN_CACHE_DIR_NAME = "ECL_Libs/Cache/Skin"
 _SKIN_DOWNLOAD_LOCK = threading.Lock()
-_SKIN_INDEX_LOCK = threading.Lock()  # 皮肤索引文件读写锁
+_SKIN_INDEX_LOCK = threading.Lock()
 
 
 def _get_project_root() -> Path:
-    # 使用当前工作目录，与 launcher.py 保持一致
-    return Path.cwd()
+    return get_runtime_dir()
 
 
 def _get_default_skin_path(skin_type: str) -> Path:
-    """获取默认皮肤文件的路径"""
-    # 优先从 ECL_Libs/Skins/ 目录获取
     ecl_libs_path = _get_project_root() / "ECL_Libs" / "Skins" / f"{skin_type}.png"
     if ecl_libs_path.exists():
         return ecl_libs_path
 
-    # 如果不存在，尝试从 ui/dist/Skins/ 获取
     ui_dist_path = _get_project_root() / "ui" / "dist" / "Skins" / f"{skin_type}.png"
     if ui_dist_path.exists():
         return ui_dist_path
-
-    # 如果还不存在，尝试从开发时的public目录获取
     dev_path = _get_project_root() / ".." / "EuoraCraft-UI" / "public" / "Skins" / f"{skin_type}.png"
     if dev_path.exists():
         return dev_path
@@ -95,8 +83,6 @@ def _cache_skin_address(uuid: str, type_name: str, skin_url: str) -> None:
     parser["skins"][uuid_key] = skin_url
     _save_skin_index(parser, type_name)
 
-
-# 基于 128 画布的皮肤裁剪数据（与前端 JS 保持一致）
 _SKIN_DATA = {
     "old": {
         "rightLeg": {"cropBox": (8, 40, 8, 24), "mirror": False},
@@ -127,8 +113,6 @@ _SKIN_DATA = {
     },
 }
 
-# 基于 1000x1000 画布的操作列表（与前端 JS 保持一致）
-# 每个操作: (cropBox, mirror, scaleFactor, pastePosition)
 _MINIMAL_OPERATIONS = {
     "head": [
         (_SKIN_DATA["new"]["head"]["cropBox"], _SKIN_DATA["new"]["head"]["mirror"], 37.5, (200, 200)),
@@ -183,7 +167,6 @@ _MINIMAL_OPERATIONS = {
 
 
 def _preprocess_skin_image(skin_img: Image.Image) -> Image.Image:
-    """皮肤预处理：与前端 JS preprecessSkinImage 保持一致"""
     w, h = skin_img.size
     if w == 64 and h == 32:
         return skin_img.resize((128, 64), Image.NEAREST)
@@ -196,7 +179,6 @@ def _process_image(
     mirror: bool,
     scale_factor: float,
 ) -> Image.Image:
-    """处理图像部分（裁剪、缩放、镜像），对应前端 JS processImage"""
     x, y, cw, ch = crop_box
     part = skin_img.crop((x, y, x + cw, y + ch))
     new_w = int(cw * scale_factor)
@@ -209,7 +191,6 @@ def _process_image(
 
 
 def _get_operations(avatar_type: str, original_size: tuple[int, int]) -> list:
-    """根据头像类型和皮肤尺寸获取操作列表，对应前端 JS getOperations"""
     if not _MINIMAL_OPERATIONS:
         return []
     if avatar_type == "head":
@@ -221,7 +202,6 @@ def _get_operations(avatar_type: str, original_size: tuple[int, int]) -> list:
 
 
 def _calculate_canvas_size(operations: list) -> tuple[int, int]:
-    """根据操作列表计算刚好能放下所有内容的最小画布尺寸"""
     max_x = 0
     max_y = 0
     for crop_box, _, scale_factor, (px, py) in operations:
@@ -233,14 +213,12 @@ def _calculate_canvas_size(operations: list) -> tuple[int, int]:
 
 
 def _render_avatar_js(skin_img: Image.Image, avatar_type: str, target_size: int) -> Image.Image:
-    """基于前端 JS 逻辑的精确渲染实现（画布按需分配，无多余留白）"""
     original_size = skin_img.size
     skin_img = _preprocess_skin_image(skin_img)
     if skin_img.mode != "RGBA":
         skin_img = skin_img.convert("RGBA")
 
     if avatar_type in ("big-head", "big_head"):
-        # 先渲染 full，再放大截取
         full_ops = _get_operations("full", original_size)
         canvas_w, canvas_h = _calculate_canvas_size(full_ops)
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
@@ -258,20 +236,15 @@ def _render_avatar_js(skin_img: Image.Image, avatar_type: str, target_size: int)
         for crop_box, mirror, scale_factor, paste_pos in operations:
             part = _process_image(skin_img, crop_box, mirror, scale_factor)
             canvas.paste(part, paste_pos, part)
-
-    # 裁剪掉透明边界，只保留实际内容
     bbox = canvas.getbbox()
     if bbox:
         canvas = canvas.crop(bbox)
-
-    # 缩放到目标尺寸
     if target_size != canvas.width or target_size != canvas.height:
         canvas = canvas.resize((target_size, target_size), Image.NEAREST)
     return canvas
 
 
 def _cache_offline_avatar(uuid: str, skin_type: str, size: int, avatar_type: str = "head") -> None:
-    """缓存离线玩家或默认皮肤的头像数据"""
     cache_dir = _get_skin_cache_dir()
     filename = f"{uuid.lower()}-{skin_type}-{avatar_type}-{size}.png"
     file_path = cache_dir / filename
@@ -292,7 +265,6 @@ def _cache_offline_avatar(uuid: str, skin_type: str, size: int, avatar_type: str
 
 
 def _get_cached_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int) -> Path | None:
-    """检查在线皮肤的渲染缓存，命中则返回路径，否则返回 None"""
     cache_dir = _get_skin_cache_dir()
     cache_name = f"{uuid.lower()}-{skin_path.stem}-{avatar_type}-{size}.png"
     cache_path = cache_dir / cache_name
@@ -300,7 +272,6 @@ def _get_cached_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int) 
 
 
 def _cache_online_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int, result: Image.Image) -> None:
-    """缓存在线皮肤的渲染结果"""
     try:
         cache_dir = _get_skin_cache_dir()
         cache_name = f"{uuid.lower()}-{skin_path.stem}-{avatar_type}-{size}.png"
@@ -310,7 +281,6 @@ def _cache_online_avatar(uuid: str, skin_path: Path, avatar_type: str, size: int
 
 
 def _img_to_data_url(img_path: Path) -> str:
-    """从缓存文件读取并转为 base64 data URL"""
     with Image.open(img_path) as img:
         buffer = BytesIO()
         img.save(buffer, format="PNG")
@@ -339,20 +309,14 @@ def _build_skin_server_url(type_name: str, custom_server: str | None = None) -> 
 
 def _fetch_profile_json(url: str, timeout: int = 10) -> dict[str, Any]:
     headers = {"User-Agent": "EuoraCraft Launcher", "Accept": "application/json"}
-
-    # 调试：打印请求URL
     logger.debug(f"请求皮肤URL: {url}")
 
     response = requests.get(url, timeout=timeout, headers=headers)
-
-    # 处理 204 No Content 响应（用户不存在）
     if response.status_code == 204:
-        logger.debug("Mojang API 返回 204 No Content，用户不存在")
+        logger.debug("用户不存在")
         raise ValueError("用户不存在或未设置皮肤")
 
     response.raise_for_status()
-
-    # 调试：查看响应内容
     content = response.text
     logger.debug(f"响应状态码: {response.status_code}")
     logger.debug(f"响应内容前200字符: {content[:200]}")
@@ -462,20 +426,6 @@ def get_avatar_data_url(
     use_default_skin: bool = False,
     avatar_type: str = "head",
 ) -> str:
-    """
-    获取玩家头像的 base64 data URL
-    支持 head（头部）、full（全身）、big-head（大头）三种渲染模式
-
-    Args:
-        uuid: 玩家UUID
-        type_name: 皮肤服务器类型 (Mojang, Nide, Auth)
-        custom_server: 自定义服务器地址
-        size: 头像尺寸
-        use_default_skin: 是否强制使用默认皮肤
-        avatar_type: 头像类型 (head, full, big-head)
-    """
-    if not HAS_PIL:
-        raise ImportError("PIL (Pillow) 库未安装，无法处理头像")
 
     if not uuid:
         raise ValueError("UUID 为空")
@@ -483,8 +433,6 @@ def get_avatar_data_url(
     logger.debug(
         f"获取头像参数: uuid={uuid}, type_name={type_name}, avatar_type={avatar_type}, use_default_skin={use_default_skin}"
     )
-
-    # 根据参数决定使用默认皮肤还是API获取
     if use_default_skin:
         skin_type = get_skin_sex(uuid)
         skin_path = _get_default_skin_path(skin_type)

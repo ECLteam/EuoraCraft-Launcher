@@ -14,21 +14,13 @@ class InstancesManager:
         self.instances: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-        self._log_callback: Callable[[str], None] = print  # 默认输出到控制台
+        self.output_log: Callable[[str], None] = print  # 默认输出到控制台
         self._exit_callback: Callable[[int], None] = print
 
-    def set_log_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        设置全局日志输出回调（用于接收所有实例的输出行）
-        :param callback: 接受一个字符串参数的函数
-        """
-        self._log_callback = callback
+    def set_output_log(self, callback: Callable[[str], None]) -> None:
+        self.output_log = callback
 
     def set_exit_callback(self, callback: Callable[[int], None]) -> None:
-        """
-        设置全局退出码回调（用于接收所有实例的退出码）
-        :param callback: 接受一个字符串参数的函数
-        """
         self._exit_callback = callback
 
     def _read_stream(
@@ -39,10 +31,6 @@ class InstancesManager:
         exit_callback: Callable[[int], None] | None = None,
         instance_id: str = "",
     ) -> None:
-        """
-        在线程中读取一个流，逐行回调
-        stdout 流循环结束后触发退出回调
-        """
         try:
             for line in iter(stream.readline, ""):
                 if line:
@@ -93,8 +81,19 @@ class InstancesManager:
             encoding="utf-8",
             errors="ignore",
         )
+        # DEBUG: 输出实际传给 Popen 的 args
+        logger.debug(f"[DEBUG Popen] args type: {type(args).__name__}")
+        if isinstance(args, str):
+            cp_idx = args.find("-cp ")
+            if cp_idx >= 0:
+                logger.debug(f"[DEBUG Popen] args around -cp (+250): {args[cp_idx:cp_idx+250]}")
+            else:
+                logger.debug(f"[DEBUG Popen] args NO -cp! first 300: {args[:300]}")
+        else:
+            logger.debug(f"[DEBUG Popen] args list len: {len(args)}, first 5: {args[:5]}")
+        logger.debug(f"[DEBUG Popen] cwd: {cwd}")
 
-        callback = log_callback or self._log_callback
+        callback = log_callback or self.output_log
         exit_callback = exit_callback or self._exit_callback
 
         instance_id = uuid4().hex

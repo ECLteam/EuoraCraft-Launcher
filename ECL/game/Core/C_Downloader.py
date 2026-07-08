@@ -36,7 +36,7 @@ class Downloader:
             total = len(total_files)
             done = len(downloaded_files)
             if total > 0:
-                print(f"下载进度: {done}/{total} ({done / total * 100:.1f}%)")
+                self.output_log(f"下载进度: {done}/{total} ({done / total * 100:.1f}%)")
 
     def set_output_progress(self, output_function: Callable[[list, list], None]) -> None:
         def safe_output(total: list, done: list):
@@ -53,7 +53,6 @@ class Downloader:
             self.download_status = set_status
 
     def __get_file_size(self, url: str) -> int | None:
-        """获取文件大小，支持重试"""
         for attempt in range(self.max_retries):
             try:
                 response = self.session.head(url, timeout=10, allow_redirects=True)
@@ -80,7 +79,6 @@ class Downloader:
         return None
 
     def __download_stream(self, url: str, file_path: Path, start_byte: int = 0) -> bool:
-        """流式下载文件"""
         for attempt in range(self.max_retries):
             try:
                 headers = {}
@@ -120,13 +118,11 @@ class Downloader:
         return False
 
     def __download_single_file(self, download_url: str, save_path: str) -> bool:
-        """下载单个文件"""
         save_file_path = Path(save_path)
         temp_path = save_file_path.with_name(save_file_path.name + ".tmp")
 
         # self.output_log(f"开始下载: {download_url} -> {save_path}")
 
-        # 1. 确保父目录存在
         try:
             save_file_path.parent.mkdir(parents=True, exist_ok=True)
             # self.output_log(f"创建目录: {save_file_path.parent}")
@@ -134,7 +130,6 @@ class Downloader:
             self.output_log(f"创建目录失败 {save_file_path.parent}: {e!s}")
             return False
 
-        # 2. 获取文件大小（如果失败，尝试直接下载）
         file_size = self.__get_file_size(download_url)
         if file_size is None:
             # self.output_log(f"无法获取文件大小，尝试直接下载: {download_url}")
@@ -143,7 +138,6 @@ class Downloader:
 
         # self.output_log(f"文件大小: {file_size} bytes")
 
-        # 3. 检查是否已部分下载
         downloaded_size = 0
         if temp_path.exists():
             try:
@@ -160,7 +154,6 @@ class Downloader:
                 temp_path.unlink(missing_ok=True)
                 downloaded_size = 0
 
-        # 4. 下载文件
         success = self.__download_stream(download_url, temp_path, downloaded_size)
 
         if not success:
@@ -168,7 +161,6 @@ class Downloader:
             # 保留临时文件以便续传
             return False
 
-        # 5. 验证文件大小
         try:
             final_size = temp_path.stat().st_size
             if 0 < file_size != final_size:
@@ -177,7 +169,6 @@ class Downloader:
         except Exception as e:
             self.output_log(f"验证文件大小失败: {e!s}")
 
-        # 6. 重命名临时文件
         try:
             # 如果目标文件已存在，先删除
             if save_file_path.exists():
@@ -195,13 +186,9 @@ class Downloader:
             self.download_status = False
 
     def download_manager(self, download_list: list[tuple[str, str]], max_threads: int) -> bool:
-        """下载管理器"""
         if not download_list or max_threads <= 0:
             self.output_log("下载列表为空或线程数无效")
             return False
-
-        with self.lock:
-            self.download_status = True  # 每次启动下载时重置状态
 
         self.output_log(f"开始下载 {len(download_list)} 个文件，使用 {max_threads} 个线程")
 
@@ -247,7 +234,7 @@ class Downloader:
                                         }
                                     )
                                 except Exception as e:
-                                    print(f"事件回调异常: {e}")
+                                    self.output_log(f"事件回调异常: {e}")
                         else:
                             self.output_log(f"失败下载: {save_path}")
 

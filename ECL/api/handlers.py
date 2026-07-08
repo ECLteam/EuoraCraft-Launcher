@@ -16,6 +16,7 @@ import keyring
 import pyperclip
 import requests
 
+from ..common.env import get_runtime_dir
 from ..common.logger import get_logger
 from ..common.state import AppState
 from ..game.Core import get_avatar_data_url as get_avatar_func
@@ -61,14 +62,18 @@ class Api:
         config = self._config_manager.get_game_config()
         paths = config.get("minecraft_paths", [])
         if not paths:
-            return "./.minecraft"
+            return self._config_manager._get_default_minecraft_path()
         first = paths[0]
-        return first if isinstance(first, str) else first.get("path", "./.minecraft")
+        path = first if isinstance(first, str) else first.get("path", self._config_manager._get_default_minecraft_path())
+        return str(Path(path).resolve())
 
     # ── 通用配置存取 ─────────────────────────────────────────────────
     def config_get(self, section: str) -> dict[str, Any]:
         # 获取指定配置分区
         try:
+            if section == "game":
+                return self.get_game_config()
+
             cfg = self._config_manager.config
             if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
                 return {"success": False, "message": "配置为空", "data": None}
@@ -155,6 +160,7 @@ class Api:
             "get_avatar_data_url",
             "load_image_from_local",
             "select_local_image",
+            "select_file",
             "get_game_config",
             "update_game_config",
             "get_java_list",
@@ -220,6 +226,57 @@ class Api:
         return {"success": True, "data": {"status": "ok", "message": "API连接正常"}, "message": "Pong"}
 
     def frontend_ready(self) -> dict[str, Any]:
+        from ..api.events import emit
+
+        # 推送完整配置
+        config = self._state.config_manager.config[0]
+        emit("config:init", {
+            "launcher": config.get("launcher", {}),
+            "game": config.get("game", {}),
+            "download": config.get("download", {}),
+            "ui": config.get("ui", {}),
+        })
+
+        # 推送版本提醒
+        cfg = config.get("launcher", {})
+        version = cfg.get("version", "未知")
+        version_type = cfg.get("version_type", "unknown")
+        if version_type == "dev":
+            emit("launcher:notify", {
+                "type": "warning",
+                "title": "开发版本提醒",
+                "message": f"当前运行的是开发版本 v{version}，可能存在不稳定因素",
+            })
+        elif version_type == "beta":
+            emit("launcher:notify", {
+                "type": "info",
+                "title": "测试版本提醒",
+                "message": f"当前运行的是测试版本 v{version}，可能存在一些问题",
+            })
+
+        # 推送主密码需求
+        try:
+            auth = self._state.account_manager._auth
+            if auth is not None and auth.encryption is not None and auth.encryption.needs_password():
+                emit("keyring:password_required", {})
+        except (AttributeError, RuntimeError, ValueError, OSError):
+            pass
+
+        # 推送用户协议检查
+        core_dir = self._state.config_manager.config_path.parent / "ECL_Libs"
+        agreement_file = core_dir / "user_agreement.json"
+        if not agreement_file.exists():
+            emit("launcher:agreement_required", {})
+        else:
+            try:
+                with agreement_file.open(encoding="utf-8") as f:
+                    data = json.load(f)
+                if not data.get("accepted", False):
+                    emit("launcher:agreement_required", {})
+            except (OSError, ValueError):
+                emit("launcher:agreement_required", {})
+
+        # 触发插件前端就绪
         fw = self._state.plugin_framework
         if fw is not None:
             try:
@@ -230,7 +287,8 @@ class Api:
 
     def get_user_agreement_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
+            core_dir = self._state.config_manager.config_path.parent / "ECL_Libs"
+            agreement_file = core_dir / "user_agreement.json"
             if agreement_file.exists():
                 with agreement_file.open(encoding="utf-8") as f:
                     data = json.load(f)
@@ -246,7 +304,8 @@ class Api:
 
     def save_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
+            core_dir = self._state.config_manager.config_path.parent / "ECL_Libs"
+            agreement_file = core_dir / "user_agreement.json"
             agreement_file.parent.mkdir(parents=True, exist_ok=True)
             data = kwargs.get("data")
             if data is None and args:
@@ -264,7 +323,8 @@ class Api:
 
     def clear_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
+            core_dir = self._state.config_manager.config_path.parent / "ECL_Libs"
+            agreement_file = core_dir / "user_agreement.json"
             if agreement_file.exists():
                 agreement_file.unlink()
             return {"success": True, "message": "用户协议已清除"}
@@ -272,6 +332,16 @@ class Api:
             logger.error(f"清除用户协议失败: {e}")
             return {"success": False, "message": str(e)}
 
+    def _unimplemented_window_op(self, op_name: str, data: Any = None) -> dict[str, Any]:
+        return {"success": False, "message": "窗口控制功能待对接（建议通过前端 Tauri API 实现）", "data": data}
+        try:
+            agreement_file = Path("ECL_Libs") / "user_agreement.json"
+            if agreement_file.exists():
+                agreement_file.unlink()
+            return {"success": True, "message": "用户协议已清除"}
+        except (OSError, PermissionError) as e:
+            logger.error(f"清除用户协议失败: {e}")
+            return {"success": False, "message": str(e)}
     def _unimplemented_window_op(self, op_name: str, data: Any = None) -> dict[str, Any]:
         return {"success": False, "message": "窗口控制功能待对接（建议通过前端 Tauri API 实现）", "data": data}
 
@@ -369,7 +439,7 @@ class Api:
 
             ext = content_type.split("/")[-1] if "/" in content_type else "jpg"
 
-            app_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
+            app_dir = get_runtime_dir()
 
             background_dir = app_dir / "backgrounds"
             background_dir.mkdir(exist_ok=True)
@@ -550,6 +620,72 @@ class Api:
             return self.load_image_from_local(result["data"]["path"])
         return result
 
+    def select_file(self) -> dict[str, Any]:
+        """选择文件（通用，用于导入 Mod 等）"""
+        from tkinter import filedialog
+
+        return self._ask_file_dialog(
+            filedialog.askopenfilename,
+            "选择文件",
+            [("JAR files", "*.jar"), ("ZIP files", "*.zip"), ("All files", "*.*")],
+        )
+
+    @staticmethod
+    def _calculate_auto_memory() -> int:
+        # 根据系统总内存自动计算推荐分配值（MB）
+        total_mb = ApiHandler._get_system_total_memory_mb()
+        if total_mb <= 0:
+            return 4096
+        if total_mb <= 4096:
+            return 2048
+        if total_mb <= 8192:
+            return max(2048, int(total_mb * 0.5))
+        # > 8GB：分配一半，上限 8GB
+        return min(int(total_mb * 0.5), 8192)
+
+    @staticmethod
+    def _get_system_total_memory_mb() -> int:
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                import ctypes.wintypes
+
+                class MEMORYSTATUSEX(ctypes.Structure):
+                    _fields_ = [
+                        ("dwLength", ctypes.wintypes.DWORD),
+                        ("dwMemoryLoad", ctypes.wintypes.DWORD),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                    ]
+
+                m = MEMORYSTATUSEX()
+                m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+                return int(m.ullTotalPhys // (1024 * 1024))
+            except (OSError, AttributeError, ValueError):
+                pass
+        elif sys.platform == "darwin":
+            try:
+                import subprocess
+                result = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
+                return int(int(result.stdout.strip()) // (1024 * 1024))
+            except (OSError, ValueError):
+                pass
+        else:
+            try:
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            return int(line.split()[1]) // 1024  # kB -> MB
+            except (OSError, ValueError):
+                pass
+        return 0
+
     def get_game_config(self) -> dict[str, Any]:
         try:
             config = self._config_manager.get_game_config()
@@ -560,16 +696,18 @@ class Api:
                         {"name": "默认路径", "path": config.pop("minecraft_path"), "protected": True}
                     ]
                 else:
-                    config["minecraft_paths"] = [{"name": "默认路径", "path": "./.minecraft", "protected": True}]
+                    default_path = self._config_manager._get_default_minecraft_path()
+                    config["minecraft_paths"] = [{"name": "默认路径", "path": default_path, "protected": True}]
 
             formatted_paths = []
+            default_path = self._config_manager._get_default_minecraft_path()
             for i, p in enumerate(config["minecraft_paths"]):
                 if isinstance(p, dict):
                     path_obj = {"name": p.get("name", f"路径{i + 1}"), "path": p.get("path", "")}
                 else:
                     path_obj = {"name": f"路径{i + 1}", "path": p}
 
-                if path_obj["path"] == "./.minecraft":
+                if path_obj["path"] == default_path:
                     path_obj["name"] = "默认路径"
 
                 formatted_paths.append(path_obj)
@@ -585,10 +723,14 @@ class Api:
         try:
             if "minecraft_paths" in game_config:
                 paths = game_config["minecraft_paths"]
-                has_default = any((p.get("path", "") if isinstance(p, dict) else p) == "./.minecraft" for p in paths)
+                default_path = self._config_manager._get_default_minecraft_path()
+                has_default = any(
+                    (p.get("path", "") if isinstance(p, dict) else p) == default_path
+                    for p in paths
+                )
                 if not has_default:
                     logger.warning("检测到默认路径被删除，自动恢复")
-                    paths.insert(0, {"name": "默认路径", "path": "./.minecraft", "protected": True})
+                    paths.insert(0, {"name": "默认路径", "path": default_path, "protected": True})
 
             self._config_manager.update_game_config(game_config)
             return {"success": True, "message": "游戏配置更新成功"}
@@ -652,10 +794,12 @@ class Api:
     def scan_versions_in_path(self, path: str | list[str] | list[dict[str, str]]) -> dict[str, Any]:
         try:
             paths = path if isinstance(path, list) else [path]
+            # 路径去重
+            raw_paths = [p.get("path", "") if isinstance(p, dict) else p for p in paths]
+            unique_paths = list(dict.fromkeys(raw_paths))
             scan_results = []
-            for p in paths:
-                if isinstance(p, dict):
-                    p = p.get("path", "")
+            seen_ids = set()
+            for p in unique_paths:
                 versions_dir = Path(p) / "versions"
                 if not versions_dir.is_dir():
                     continue
@@ -664,12 +808,13 @@ class Api:
                         folder_name = vjson.parent.name
                         data = json.loads(vjson.read_text("utf-8"))
                         inherits_from = data.get("inheritsFrom")
-                        jar_path = vjson.parent / (folder_name + ".jar")
+                        json_id = data.get("id", folder_name)
+                        vanilla_version = data.get("vanillaVersion")  # 合并后的 JSON 标记
 
                         # 判断 mod loader 类型
                         primary_loader = "vanilla"
                         has_forge = has_neoforge = has_fabric = has_quilt = False
-                        jar_name_lower = folder_name.lower()
+                        jar_name_lower = json_id.lower()
                         if "forge" in jar_name_lower:
                             primary_loader = "forge"
                             has_forge = True
@@ -697,15 +842,30 @@ class Api:
                                 primary_loader = "quilt"
                                 has_quilt = True
 
-                        is_broken = not jar_path.exists()
+                        if primary_loader != "vanilla":
+                            if inherits_from:
+                                # 有 inheritsFrom：检查继承的原版 JAR
+                                vanilla_jar = versions_dir / inherits_from / (inherits_from + ".jar")
+                                is_broken = not vanilla_jar.exists()
+                            else:
+                                # 合并后的 JSON（无 inheritsFrom）：JAR 在自身文件夹内
+                                jar_path = vjson.parent / (folder_name + ".jar")
+                                is_broken = not jar_path.exists()
+                        else:
+                            # 原版：检查自身 JAR
+                            jar_path = vjson.parent / (folder_name + ".jar")
+                            is_broken = not jar_path.exists()
 
+                        if json_id in seen_ids:
+                            continue
+                        seen_ids.add(json_id)
                         scan_results.append(
                             {
-                                "id": folder_name,
-                                "versionId": folder_name,
-                                "displayName": data.get("displayName", folder_name),
+                                "id": json_id,
+                                "versionId": json_id,
+                                "displayName": data.get("displayName", json_id),
                                 "primaryLoader": primary_loader,
-                                "vanillaName": inherits_from or data.get("id", folder_name),
+                                "vanillaName": inherits_from or vanilla_version or json_id,
                                 "hasForge": has_forge,
                                 "hasNeoForge": has_neoforge,
                                 "hasFabric": has_fabric,
@@ -721,6 +881,7 @@ class Api:
             emit_plugin_event(
                 "version:scanned", {"count": len(scan_results), "versions": [v["id"] for v in scan_results]}
             )
+
             return {"success": True, "data": scan_results}
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             logger.error(f"扫描版本失败: {e}")
@@ -914,6 +1075,7 @@ class Api:
         version_id = params.get("version_id", "")
         version_name = params.get("version_name", version_id)
         loader_type = params.get("loader_type", "vanilla")
+        task_id = params.get("task_id", "")
         fabric_version = params.get("fabric_version")
         forge_version = params.get("forge_version")
         neoforge_version = params.get("neoforge_version")
@@ -939,20 +1101,24 @@ class Api:
         try:
             from ..api.events import emit, emit_plugin_event
 
+            # 设置当前安装任务 ID，下载回调会携带到进度事件中
+            if task_id:
+                self._state._current_install_task["task_id"] = task_id
+
+            def _emit_progress(phase, done=0, total=1, message="", subtask=""):
+                payload = {"phase": phase, "done": done, "total": total, "message": message}
+                if task_id:
+                    payload["task_id"] = task_id
+                if subtask:
+                    payload["subtask"] = subtask
+                emit("game:install_progress", payload)
+
             # 插件事件：下载开始
             emit_plugin_event("download:start", {"task_id": version_id, "total_size": 0})
 
             if loader_type == "fabric" and fabric_version:
                 logger.info(f"[install] → download_fabric({version_id}, {fabric_version})")
-                emit(
-                    "game:install_progress",
-                    {
-                        "phase": "install",
-                        "done": 0,
-                        "total": 2,
-                        "message": f"安装 Fabric {fabric_version} for {version_id}",
-                    },
-                )
+                _emit_progress("install", 0, 2, f"安装 Fabric {fabric_version} for {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_fabric,
                     game_path=game_path,
@@ -963,15 +1129,7 @@ class Api:
                 )
             elif loader_type == "forge" and forge_version:
                 logger.info(f"[install] → download_forge({version_id}, {forge_version})")
-                emit(
-                    "game:install_progress",
-                    {
-                        "phase": "install",
-                        "done": 0,
-                        "total": 2,
-                        "message": f"安装 Forge {forge_version} for {version_id}",
-                    },
-                )
+                _emit_progress("install", 0, 2, f"安装 Forge {forge_version} for {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_forge,
                     game_path=game_path,
@@ -982,15 +1140,7 @@ class Api:
                 )
             elif loader_type == "neoforge" and neoforge_version:
                 logger.info(f"[install] → download_neoforge({version_id}, {neoforge_version})")
-                emit(
-                    "game:install_progress",
-                    {
-                        "phase": "install",
-                        "done": 0,
-                        "total": 2,
-                        "message": f"安装 NeoForge {neoforge_version} for {version_id}",
-                    },
-                )
+                _emit_progress("install", 0, 2, f"安装 NeoForge {neoforge_version} for {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_neoforge,
                     game_path=game_path,
@@ -1001,15 +1151,7 @@ class Api:
                 )
             elif loader_type == "optifine" and optifine_version:
                 logger.info(f"[install] → download_optifine({version_id}, {optifine_version})")
-                emit(
-                    "game:install_progress",
-                    {
-                        "phase": "install",
-                        "done": 0,
-                        "total": 2,
-                        "message": f"安装 OptiFine {optifine_version} for {version_id}",
-                    },
-                )
+                _emit_progress("install", 0, 2, f"安装 OptiFine {optifine_version} for {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_optifine,
                     game_path=game_path,
@@ -1022,15 +1164,7 @@ class Api:
                 )
             elif loader_type == "quilt" and quilt_version:
                 logger.info(f"[install] → download_quilt({version_id}, {quilt_version})")
-                emit(
-                    "game:install_progress",
-                    {
-                        "phase": "install",
-                        "done": 0,
-                        "total": 2,
-                        "message": f"安装 Quilt {quilt_version} for {version_id}",
-                    },
-                )
+                _emit_progress("install", 0, 2, f"安装 Quilt {quilt_version} for {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_quilt,
                     game_path=game_path,
@@ -1041,10 +1175,7 @@ class Api:
                 )
             else:
                 logger.info(f"[install] → download_minecraft vanilla ({version_id}), no loader version matched")
-                emit(
-                    "game:install_progress",
-                    {"phase": "install", "done": 0, "total": 1, "message": f"下载原版 {version_id}"},
-                )
+                _emit_progress("install", 0, 1, f"下载原版 {version_id}", "download_json")
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_minecraft,
                     game_path=game_path,
@@ -1055,14 +1186,17 @@ class Api:
 
             logger.info(f"[install] result: ok={ok}")
             if ok:
-                emit("game:install_progress", {"phase": "done", "done": 1, "total": 1, "message": "安装完成"})
+                _emit_progress("done", 1, 1, "安装完成")
                 emit_plugin_event("download:complete", {"task_id": version_id})
                 emit_plugin_event("version:installed", {"version_id": version_id, "loader_type": loader_type})
                 return {"success": True, "message": f"版本 {version_id} 安装成功"}
+            _emit_progress("error", 0, 1, f"版本 {version_id} 安装失败")
             emit_plugin_event("download:error", {"task_id": version_id, "error": "安装失败"})
             return {"success": False, "message": f"版本 {version_id} 安装失败"}
         except (OSError, ValueError, RuntimeError, asyncio.CancelledError) as e:
             logger.error(f"安装版本失败: {e}")
+            if task_id:
+                emit("game:install_progress", {"phase": "error", "task_id": task_id, "message": str(e)})
             emit_plugin_event("download:error", {"task_id": version_id, "error": str(e)})
             return {"success": False, "message": str(e)}
 
@@ -1240,6 +1374,8 @@ class Api:
             from ..api.events import emit_plugin_event
 
             result = self._account_manager.add_authlib_account(server_url, email, password)
+            if not result.get("success"):
+                return {"success": False, "message": result.get("message", "添加外置登录账户失败")}
             emit_plugin_event("account:login", {"account_type": "authlib", "server_url": server_url, "email": email})
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "添加成功")}
         except (ValueError, KeyError, OSError, RuntimeError) as e:
@@ -1392,23 +1528,47 @@ class Api:
             # 推送启动进度：准备阶段
             emit("game:launch_progress", {"phase": "preparing", "message": f"正在准备启动 {version_id}..."})
 
-            await asyncio.to_thread(
-                self._state.launcher_core.launch_minecraft,
-                java_path=java_path,
-                game_path=game_path,
-                version_name=version_id,
-                max_use_ram=params.get("memory", 2048),
-                player_name=player_name,
-                user_type=user_type,
-                auth_uuid=auth_uuid,
-                access_token=access_token,
-                window_width=params.get("width", 854),
-                window_height=params.get("height", 480),
-                custom_jvm_params=params.get("jvm_args"),
-                download_max_thread=params.get("download_threads", 32),
-                authlib_injector_path=authlib_injector_path,
-                authlib_server=authlib_server,
-            )
+            # 启动游戏（在子线程中执行），同时轮询进度事件队列
+            from ..common.state import drain_progress_events
+
+            # 计算内存分配
+            game_config = self._config_manager.get_game_config()
+            if params.get("memory"):
+                max_use_ram = int(params["memory"])
+            elif game_config.get("memory_auto"):
+                max_use_ram = self._calculate_auto_memory()
+            else:
+                max_use_ram = int(game_config.get("memory_size", 4096))
+
+            async def _launch_async():
+                await asyncio.to_thread(
+                    self._state.launcher_core.launch_minecraft,
+                    java_path=java_path,
+                    game_path=game_path,
+                    version_name=version_id,
+                    max_use_ram=max_use_ram,
+                    player_name=player_name,
+                    user_type=user_type,
+                    auth_uuid=auth_uuid,
+                    access_token=access_token,
+                    window_width=params.get("width", 854),
+                    window_height=params.get("height", 480),
+                    custom_jvm_params=params.get("jvm_args"),
+                    download_max_thread=params.get("download_threads", 32),
+                    authlib_injector_path=authlib_injector_path,
+                    authlib_server=authlib_server,
+                )
+
+            launch_task = asyncio.create_task(_launch_async())
+
+            # 轮询进度事件队列，每 50ms 消费一次
+            while not launch_task.done():
+                drain_progress_events()
+                await asyncio.sleep(0.05)
+
+            # 消费剩余事件
+            drain_progress_events()
+            await launch_task
 
             # 检查是否被取消
             if self._state.launcher_core.is_canceled():
@@ -1522,7 +1682,7 @@ class Api:
 
     def plugin_reload(self, plugin_name: str, cascade: bool = False) -> dict[str, Any]:
         return self._plugin_action(
-            plugin_name, "reload", lambda fw: fw.reload_plugin(plugin_name, cascade=cascade), cascade=cascade
+            plugin_name, "reload", lambda fw: fw.reload_plugin(plugin_name, cascade=cascade)
         )
 
     def plugin_install(self, plugin_path: str) -> dict[str, Any]:
@@ -1752,6 +1912,7 @@ class Api:
                 "select_directory": "select_directory",
                 "select_java": "select_java_executable",
                 "select_image": "select_local_image",
+                "select_file": "select_file",
                 "avatar_data_url": "get_avatar_data_url",
                 "instances_list": "get_game_instances",
                 "launch_instance": "launch_instance",
@@ -1867,8 +2028,6 @@ class Api:
         except (RuntimeError, OSError, ValueError, TypeError) as e:
             logger.error(f"exec_action 调用失败: {e}")
             return {"success": False, "message": str(e)}
-
-    # ── OnlineModSearch 委托方法 ──
 
     def _get_cf_api_key(self) -> str:
         # 从配置中获取 CurseForge API Key

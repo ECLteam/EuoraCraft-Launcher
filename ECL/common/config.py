@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .env import convert_env_value, get_env_loader
+from .env import convert_env_value, get_env_loader, get_runtime_dir, is_frozen
 from .logger import get_logger
 from .version import __version__, __version_type__
 
@@ -16,7 +16,12 @@ logger = get_logger("config")
 class ConfigManager:
     DEFAULT_CONFIG = [
         {
-            "launcher": {"version": __version__, "version_type": __version_type__, "debug": False},
+            "launcher": {
+                "version": __version__,
+                "version_type": __version_type__,
+                "debug": False,
+                "launcher_uuid": "",
+            },
             "ui": {
                 "width": 900,
                 "height": 600,
@@ -32,22 +37,25 @@ class ConfigManager:
                 },
             },
             "game": {
-                "minecraft_paths": ["./.minecraft"],
+                "minecraft_paths": ["__DEFAULT_MINECRAFT_PATH__"],
                 "java_auto": True,
                 "java_path": "",
                 "memory_auto": True,
                 "memory_size": 4096,
+                "fullscreen": False,
+                "last_install_path": "",
             },
             "download": {"mirror_source": "official", "download_threads": 4},
         }
     ]
 
     def __init__(self, config_path: str = "setting.json"):
-        self._config_path = Path(config_path).resolve()
+        self._config_path = (get_runtime_dir() / config_path).resolve()
         self.config: list[dict[str, Any]] = []
         self._instances: list[dict[str, Any]] = []
         self._env_loader = get_env_loader()
         self.load()
+        self._ensure_launcher_uuid()
         logger.info("配置管理器初始化完成")
 
     @property
@@ -82,7 +90,15 @@ class ConfigManager:
             logger.info(f"环境变量覆盖配置: [{section}][{key}]")
 
     def _get_default_config(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self.DEFAULT_CONFIG)
+        config = copy.deepcopy(self.DEFAULT_CONFIG)
+        for item in config:
+            game = item.get("game", {})
+            paths = game.get("minecraft_paths", [])
+            if paths and paths[0] == "__DEFAULT_MINECRAFT_PATH__":
+                default_path = self._get_default_minecraft_path()
+                paths[0] = {"name": "默认路径", "path": default_path, "protected": True}
+                self._init_single_path(default_path)
+        return config
 
     def _auto_complete_missing_config(self) -> None:
         if not self.config or not isinstance(self.config, list) or len(self.config) == 0:
@@ -108,6 +124,15 @@ class ConfigManager:
                             current_config[section][key] = default_value
                             config_updated = True
 
+        # 替换 game.minecraft_paths 中的占位符
+        game_cfg = current_config.get("game", {})
+        paths = game_cfg.get("minecraft_paths", [])
+        if paths and isinstance(paths, list) and paths[0] == "__DEFAULT_MINECRAFT_PATH__":
+            default_path = self._get_default_minecraft_path()
+            paths[0] = {"name": "默认路径", "path": default_path, "protected": True}
+            self._init_single_path(default_path)
+            config_updated = True
+
         # 始终以 version.py 为版本权威来源，每次启动同步到 setting.json
         launcher_cfg = current_config.get("launcher", {})
         if launcher_cfg.get("version") != __version__ or launcher_cfg.get("version_type") != __version_type__:
@@ -117,25 +142,29 @@ class ConfigManager:
             config_updated = True
             logger.info(f"版本号已同步至配置文件: v{__version__} ({__version_type__})")
 
+        # 迁移 minecraft_path（单数）→ minecraft_paths（复数）
+        game = current_config.get("game", {})
+        if "minecraft_path" in game and "minecraft_paths" not in game:
+            old_path = game.pop("minecraft_path")
+            if isinstance(old_path, str):
+                game["minecraft_paths"] = [{"name": "默认路径", "path": old_path, "protected": True}]
+            elif isinstance(old_path, list):
+                game["minecraft_paths"] = old_path
+            current_config["game"] = game
+            config_updated = True
+            logger.info("已迁移 minecraft_path → minecraft_paths")
+
+        # 迁移旧格式路径为 dict 格式
+        paths = game.get("minecraft_paths", [])
+        if paths:
+            normalized = self._ensure_default_minecraft_path(paths)
+            if normalized != paths:
+                game["minecraft_paths"] = normalized
+                current_config["game"] = game
+                config_updated = True
+
         if config_updated:
             logger.info("检测到配置变更，已自动更新")
-            self.save(self.config)
-
-    def _migrate_game_paths(self) -> None:
-        # 将旧的相对路径 ./ .minecraft 迁移为绝对路径
-        game_config = self.config[0].get("game", {})
-        paths = game_config.get("minecraft_paths", [])
-        default_abs = self._get_default_minecraft_path()
-        needs_save = False
-        for p in paths:
-            if not isinstance(p, dict):
-                continue
-            path_str = p.get("path", "")
-            if path_str in ("./.minecraft", ".minecraft"):
-                p["path"] = default_abs
-                needs_save = True
-        if needs_save:
-            logger.info(f"已将相对路径迁移为绝对路径: {default_abs}")
             self.save(self.config)
 
     def load(self) -> list[dict[str, Any]]:
@@ -150,7 +179,6 @@ class ConfigManager:
                     self.config = json.load(f)
                 logger.info("配置文件读取完成")
                 self._auto_complete_missing_config()
-                self._migrate_game_paths()
             except (json.JSONDecodeError, OSError) as e:
                 logger.error(f"读取配置文件失败: {e}")
                 raise
@@ -188,7 +216,21 @@ class ConfigManager:
         return None
 
     def get_launcher_config(self) -> dict[str, Any]:
-        return self.config[0].get("launcher", {}) if self.config else {}
+        cfg = self.config[0].get("launcher", {}) if self.config else {}
+        cfg["is_dev"] = not is_frozen()
+        return cfg
+
+    def get_launcher_uuid(self) -> str:
+        launcher_cfg = self.config[0].get("launcher", {}) if self.config else {}
+        return launcher_cfg.get("launcher_uuid", "")
+
+    def _ensure_launcher_uuid(self) -> None:
+        launcher_cfg = self.config[0].get("launcher", {}) if self.config else {}
+        if not launcher_cfg.get("launcher_uuid"):
+            launcher_cfg["launcher_uuid"] = str(uuid.uuid4())
+            self.config[0]["launcher"] = launcher_cfg
+            self.save(self.config)
+            logger.info(f"已生成启动器 UUID: {launcher_cfg['launcher_uuid']}")
 
     def get_ui_config(self) -> dict[str, Any]:
         return self.ui
@@ -238,19 +280,19 @@ class ConfigManager:
 
     def init_game_paths(self) -> None:
         game_config = self.config[0].get("game", {})
-        paths = game_config.get("minecraft_paths", ["./.minecraft"])
+        paths = game_config.get("minecraft_paths", [self._get_default_minecraft_path()])
         for path in paths:
             if isinstance(path, dict):
-                path = path.get("path", "./.minecraft")
+                path = path.get("path", self._get_default_minecraft_path())
             self._init_single_path(path)
 
     def check_game_paths_exist(self) -> list[dict[str, Any]]:
         game_config = self.config[0].get("game", {})
-        paths = game_config.get("minecraft_paths", ["./.minecraft"])
+        paths = game_config.get("minecraft_paths", [self._get_default_minecraft_path()])
         results = []
         for p in paths:
             if isinstance(p, dict):
-                path_str = p.get("path", "./.minecraft")
+                path_str = p.get("path", self._get_default_minecraft_path())
                 name = p.get("name", "未命名路径")
             else:
                 path_str = p
@@ -262,30 +304,31 @@ class ConfigManager:
         return results
 
     def get_game_config(self, auto_init: bool = False) -> dict[str, Any]:
-        game_config = self.config[0].get("game", {"minecraft_paths": ["./.minecraft"]})
+        game_config = self.config[0].get("game", {"minecraft_paths": [self._get_default_minecraft_path()]})
         if "minecraft_path" in game_config and "minecraft_paths" not in game_config:
             game_config["minecraft_paths"] = [game_config.pop("minecraft_path")]
         elif "minecraft_paths" not in game_config:
-            game_config["minecraft_paths"] = ["./.minecraft"]
+            game_config["minecraft_paths"] = [self._get_default_minecraft_path()]
+        game_config["minecraft_paths"] = self._ensure_default_minecraft_path(game_config["minecraft_paths"])
         if auto_init:
             self.init_game_paths()
         return game_config
 
     def _get_default_minecraft_path(self) -> str:
-        return str((Path.cwd() / ".minecraft").resolve())
+        return str((self.config_path.parent / ".minecraft").resolve())
 
     def _ensure_default_minecraft_path(self, paths: list[dict[str, Any]]) -> list[dict[str, Any]]:
         default_path = self._get_default_minecraft_path()
-        for p in paths:
+        found = False
+        for i, p in enumerate(paths):
             path_str = p.get("path", "") if isinstance(p, dict) else p
-            if path_str not in ("./.minecraft", ".minecraft", default_path):
+            if path_str != default_path:
                 continue
-            if isinstance(p, dict):
-                p["protected"] = True
-                p["name"] = "默认路径"
-                p["path"] = default_path
-            return paths
-        paths.insert(0, {"name": "默认路径", "path": default_path, "protected": True})
+            paths[i] = {"name": "默认路径", "path": default_path, "protected": True}
+            found = True
+            break
+        if not found:
+            paths.insert(0, {"name": "默认路径", "path": default_path, "protected": True})
         return paths
 
     def update_game_config(self, game_config: dict[str, Any]) -> None:
@@ -298,7 +341,7 @@ class ConfigManager:
                 {"name": "默认路径", "path": updated_config.pop("minecraft_path"), "protected": True}
             ]
         elif "minecraft_paths" not in updated_config:
-            updated_config["minecraft_paths"] = [{"name": "默认路径", "path": "./.minecraft", "protected": True}]
+            updated_config["minecraft_paths"] = [{"name": "默认路径", "path": self._get_default_minecraft_path(), "protected": True}]
         updated_config["minecraft_paths"] = self._ensure_default_minecraft_path(updated_config["minecraft_paths"])
         old_paths = {
             p.get("path", "") if isinstance(p, dict) else p for p in current_game_config.get("minecraft_paths", [])
@@ -342,52 +385,6 @@ class ConfigManager:
 
     def get_instances_config(self) -> list[dict[str, Any]]:
         return self._instances
-
-    def add_instance(self, instance: dict[str, Any]) -> str:
-        instance_id = str(uuid.uuid4())
-        instance["id"] = instance_id
-        instance["created_at"] = datetime.now().isoformat()
-        self._instances.append(instance)
-        logger.info(f"实例已创建: {instance_id}")
-        try:
-            from ..api.events import emit_plugin_event
-
-            emit_plugin_event(
-                "instance:created",
-                {"instance_id": instance_id, "name": instance.get("name", ""), "version": instance.get("version", "")},
-            )
-        except ImportError:
-            pass
-        return instance_id
-
-    def update_instance(self, instance_id: str, updates: dict[str, Any]) -> bool:
-        for i, inst in enumerate(self._instances):
-            if inst.get("id") == instance_id:
-                self._instances[i].update(updates)
-                logger.info(f"实例已更新: {instance_id}")
-                return True
-        return False
-
-    def delete_instance(self, instance_id: str) -> bool:
-        for i, inst in enumerate(self._instances):
-            if inst.get("id") == instance_id:
-                name = inst.get("name", "")
-                self._instances.pop(i)
-                logger.info(f"实例已删除: {instance_id}")
-                try:
-                    from ..api.events import emit_plugin_event
-
-                    emit_plugin_event("instance:deleted", {"instance_id": instance_id, "name": name})
-                except ImportError:
-                    pass
-                return True
-        return False
-
-    def get_instance(self, instance_id: str) -> dict[str, Any] | None:
-        for inst in self._instances:
-            if inst.get("id") == instance_id:
-                return inst
-        return None
 
     def __repr__(self) -> str:
         return f"ConfigManager(config_path='{self.config_path!s}')"

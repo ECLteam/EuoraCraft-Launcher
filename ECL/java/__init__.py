@@ -1,4 +1,4 @@
-from .detector import JavaDetector, get_java_list
+from .detector import JavaDetector
 from .models import JavaInfo
 
-__all__ = ["JavaDetector", "JavaInfo", "get_java_list"]
+__all__ = ["JavaDetector", "JavaInfo"]

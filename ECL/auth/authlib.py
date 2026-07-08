@@ -8,12 +8,30 @@ from typing import Any
 
 import requests
 
+from ..common.env import get_runtime_dir
 from ..common.logger import get_logger
 
 logger = get_logger("auth.authlib")
 
 # Authlib-Injector 下载地址
 AUTHLIB_INJECTOR_META_URL = "https://authlib-injector.yushi.moe/artifact/latest.json"
+
+
+def _get_shared_launcher_uuid() -> str:
+    # 获取共享的启动器 UUID，用于 client_token
+    # 直接从 user_agreement.json 读取，避免通过 AppState() 造成循环依赖死锁
+    try:
+        config_path = get_runtime_dir() / "ECL_Libs" / "user_agreement.json"
+        if config_path.is_file():
+            import json as _json
+
+            data = _json.loads(config_path.read_text("utf-8"))
+            uuid_val = data.get("uuid", "")
+            if uuid_val:
+                return uuid_val
+    except (OSError, ValueError, KeyError):
+        pass
+    return str(uuid.uuid4())
 
 
 class AuthlibInjectorAccount:
@@ -33,7 +51,7 @@ class AuthlibInjectorAccount:
         self.password = password
         self.profile = profile or {}
         self._access_token: str = ""
-        self._client_token: str = str(uuid.uuid4())
+        self._client_token: str = _get_shared_launcher_uuid()
         self._token_expires_at: float = 0.0
 
     def login(self) -> bool:
@@ -114,7 +132,10 @@ class AuthlibInjectorAccount:
         if not self._access_token:
             self.login()
         elif time.time() > self._token_expires_at or not self.validate():
-            self.refresh()
+            if not self.refresh():
+                # 刷新失败（部分 Yggdrasil 实现不支持 refresh 端点），回退到完整登录
+                logger.info(f"令牌刷新失败，回退到完整登录: {self.email}")
+                self.login()
         return self._access_token
 
     def get_uuid(self) -> str:
@@ -145,7 +166,7 @@ class AuthlibInjectorAccount:
             profile=data.get("profile", {}),
         )
         acc._access_token = data.get("access_token", "")
-        acc._client_token = data.get("client_token", str(uuid.uuid4()))
+        acc._client_token = data.get("client_token", _get_shared_launcher_uuid())
         acc._token_expires_at = data.get("token_expires_at", 0.0)
         return acc
 

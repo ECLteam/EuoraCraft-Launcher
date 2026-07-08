@@ -107,14 +107,14 @@ class FilesChecker:
                 asset_index_path.parent.mkdir(parents=True, exist_ok=True)
                 asset_index_path.write_text(response.text, encoding="utf-8")
             except requests.exceptions.RequestException as e:
-                print(f"获取 asset index 失败: {e}")
+                self.output_log(f"获取 asset index 失败: {e}")
         if not asset_index_path.is_file():
             return download_list
         api_url = self.api_url.Assets
         try:
             asset_index_json = json.loads(asset_index_path.read_text("utf-8"))
         except json.JSONDecodeError as e:
-            print(f"解析 asset index 失败: {e}")
+            self.output_log(f"解析 asset index 失败: {e}")
             return download_list
         for assets in asset_index_json["objects"].values():
             if self.cancel_check():
@@ -132,6 +132,9 @@ class FilesChecker:
     def check_files(self, game_path: str | Path, version_name: str, download_max_thread: int):
         game_path = Path(game_path)
         self.output_log("正在检查文件请稍后...")
+        if self.cancel_check():
+            self.output_log("文件校验已取消")
+            return
         if not (game_path / "versions" / version_name / f"{version_name}.json").is_file():
             self.output_log(f"未找到游戏 {version_name}")
             return
@@ -141,18 +144,36 @@ class FilesChecker:
                 (game_path / "versions" / version_name / f"{version_name}.json").read_text("utf-8")
             )
         except json.JSONDecodeError as e:
-            print(f"解析版本 json 失败: {e}")
+            self.output_log(f"解析版本 json 失败: {e}")
+            return
+        if self.cancel_check():
+            self.output_log("文件校验已取消")
             return
         download_list.extend(self.__check_game_jar(game_path, version_name, version_json))
+        if self.cancel_check():
+            self.output_log("文件校验已取消")
+            return
         download_list.extend(self.__check_libraries(game_path, version_json))
+        if self.cancel_check():
+            self.output_log("文件校验已取消")
+            return
         download_list.extend(self.__check_assets(game_path, version_json))
         game_json = C_Libs.find_version(version_json, game_path)
         if game_json:
             download_list.extend(self.__check_game_jar(game_path, game_json[1].name, game_json[0]))
+            if self.cancel_check():
+                self.output_log("文件校验已取消")
+                return
             download_list.extend(self.__check_libraries(game_path, game_json[0]))
+            if self.cancel_check():
+                self.output_log("文件校验已取消")
+                return
             download_list.extend(self.__check_assets(game_path, game_json[0]))
         self.output_log(f"共有 {len(download_list)} 个文件需要下载")
         if len(download_list) < 1:
+            return
+        if self.cancel_check():
+            self.output_log("文件校验已取消")
             return
         self.output_log("开始下载文件...")
         return self.downloader.download_manager(download_list, download_max_thread)

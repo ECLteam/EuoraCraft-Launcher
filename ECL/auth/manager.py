@@ -30,8 +30,7 @@ class AccountManager:
             return
         self.client_id = get_env_loader().get("MICROSOFT_CLIENT_ID", "")
         self._auth: MultiAccountMinecraftAuth | None = None
-        self._log_callback: Callable[[str], None] | None = None
-        self._login_log_callback: Callable[[str], None] | None = None
+        self.output_log: Callable[[str], None] | None = None
         # Authlib 外置登录
         self._authlib_accounts: dict[str, AuthlibInjectorAccount] = {}
         self._authlib_current_account: AuthlibInjectorAccount | None = None
@@ -46,10 +45,8 @@ class AccountManager:
             return {"success": True, "needs_password": False}
         try:
             self._auth = MultiAccountMinecraftAuth(self.client_id)
-            if self._log_callback:
-                self._auth.set_output_log(self._log_callback)
-            if self._login_log_callback:
-                self._auth.set_output_login_log(self._login_log_callback)
+            if self.output_log:
+                self._auth.set_output_log(self.output_log)
             result = self._auth.initialize()
             if result:
                 logger.info("账户管理器初始化成功")
@@ -75,15 +72,10 @@ class AccountManager:
             logger.error(f"设置主密码失败: {e}")
             return False
 
-    def set_log_callback(self, callback: Callable[[str], None]) -> None:
-        self._log_callback = callback
+    def set_output_log(self, callback: Callable[[str], None]) -> None:
+        self.output_log = callback
         if self._auth:
             self._auth.set_output_log(callback)
-
-    def set_login_log_callback(self, callback: Callable[[str], None]) -> None:
-        self._login_log_callback = callback
-        if self._auth:
-            self._auth.set_output_login_log(callback)
 
     def _ensure_initialized(self) -> bool:
         if self._auth is not None:
@@ -376,10 +368,3 @@ class AccountManager:
 
 
 _account_manager: AccountManager | None = None
-
-
-def get_account_manager() -> AccountManager:
-    global _account_manager
-    if _account_manager is None:
-        _account_manager = AccountManager()
-    return _account_manager

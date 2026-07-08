@@ -1,3 +1,4 @@
+import asyncio
 import sys
 
 from .adapters.adapter import run_app
@@ -6,7 +7,7 @@ from .launcher import EuoraCraftLauncher
 
 def main() -> int:
     launcher = EuoraCraftLauncher()
-    if not launcher.init_launcher():
+    if not asyncio.run(launcher.init_launcher()):
         return 1
     return run_app(launcher)
 

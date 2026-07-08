@@ -6,6 +6,7 @@ from pathlib import Path
 
 import colorama
 
+from .common.env import get_app_dir, get_runtime_dir, is_frozen
 from .common.logger import LoggerManager, get_logger
 from .common.state import AppState
 
@@ -17,7 +18,7 @@ class EuoraCraftLauncher:
         self.config = None
         self.debug_mode = False
         self.system_type = sys.platform
-        self.work_dir = Path.cwd()
+        self.work_dir = get_runtime_dir()
         self.program_dir = Path(sys.executable).parent
         self.executable_path = Path(sys.executable)
         self.java_list = []
@@ -72,7 +73,7 @@ class EuoraCraftLauncher:
                 return
 
         # 查找源目录：打包模式(sys._MEIPASS) > 开发模式(resources/Skins)
-        source = self.__find_resource_dir(Path("resources") / "Skins")
+        source = self.state._find_resource_dir(Path("resources") / "Skins")
         if source is None:
             logger.warning("未找到默认皮肤资源目录，跳过皮肤初始化")
             return
@@ -92,18 +93,6 @@ class EuoraCraftLauncher:
                 logger.error(f"复制皮肤文件失败 {f.name}: {e}")
         logger.info(f"皮肤初始化完成: {copied} 个文件 -> {ecl_skins}")
 
-    def __find_resource_dir(self, relative) -> Path | None:
-        # 打包模式：从 PyInstaller 临时解压目录查找
-        if getattr(sys, "frozen", False):
-            base = Path(getattr(sys, "_MEIPASS", "."))
-            p = base / relative
-            if p.is_dir():
-                return p
-            return None
-
-        # 开发模式：从项目根目录查找
-        return self.work_dir / relative
-
     def __check_game_paths(self) -> None:
         logger.info("检查游戏目录...")
 
@@ -114,10 +103,11 @@ class EuoraCraftLauncher:
                 logger.info(f"游戏目录已就绪: {status['name']} ({status['path']})")
             else:
                 logger.info(f"游戏目录不存在，正在创建: {status['name']} ({status['raw_path']})")
-                self.state.config_manager.init_game_paths()
+                self.state.config_manager._init_single_path(status["raw_path"])
                 logger.info(f"游戏目录已创建: {status['path']}")
 
     def __setup_debug_mode(self) -> None:
+        # 设置调试模式
         launcher_cfg = self.state.config_manager.get_launcher_config()
         self.debug_mode = bool(launcher_cfg.get("debug", False))
         logger.info(f"调试模式: {self.debug_mode}")
@@ -130,7 +120,7 @@ class EuoraCraftLauncher:
                 logger.debug("完整配置内容：\n%s", _json.dumps(self.config, ensure_ascii=False, indent=2))
 
     async def __preload_version_list(self) -> None:
-        # 后台预加载 Minecraft 版本列表、最新 Fabric 版本和本地已安装版本，缓存到内存中
+        # 预加载 Minecraft 版本列表和 Fabric 版本列表
         try:
             logger.info("正在预加载 Minecraft 版本列表...")
             versions = await asyncio.to_thread(self.state.get_games.get_minecraft_versions)
@@ -150,7 +140,7 @@ class EuoraCraftLauncher:
                     fabric_count = len(fabric_versions.get("All", [])) if fabric_versions else 0
                     logger.info(f"Fabric 版本预加载完成，共 {fabric_count} 个")
                 except (OSError, RuntimeError, ValueError, ConnectionError) as e:
-                    logger.warning(f"Fabric 版本预加载失败（不影响启动）: {e}")
+                    logger.warning(f"Fabric 版本预加载失败: {e}")
 
             # 预扫描第一个游戏路径的已安装版本
             game_paths = self.state.config_manager.get_game_config().get("minecraft_paths", [])
@@ -181,87 +171,24 @@ class EuoraCraftLauncher:
                     self.state._cached_local_versions = cached_local
                     logger.info(f"已安装版本预扫描完成，共 {len(cached_local)} 个版本")
         except (OSError, RuntimeError, ValueError) as e:
-            logger.warning(f"版本列表预加载失败（不影响启动）: {e}")
+            logger.warning(f"版本列表预加载失败: {e}")
 
-    async def init_launcher_async(self):
-        logger.info("EuoraCraft Launcher 异步启动中...")
-
-        # Phase 1 串行：系统检测 + 目录创建 + 配置加载
-        try:
-            self.__init_system_test()
-            logger.info(f"当前工作目录：{self.work_dir}")
-            logger.info(f"执行文件路径：{self.executable_path}")
-            logger.info(f"程序目录：{self.program_dir}")
-
-            self.__check_launcher_coredir()
-        except (OSError, RuntimeError) as e:
-            logger.error(f"Phase 1 初始化失败: {e}")
-            return False
-
-        # Phase 2 并行：Java 扫描 + 账户初始化
-        state_result = await self.state.initialize_async()
-        self.config = self.state.config_manager.config
-
-        # 记录密码需求状态，供 adapter 在 app 就绪后推送事件
-        self._needs_password = state_result.get("needs_password", False)
-
-        # Phase 3 收尾：版本信息 + 游戏目录检查 + 预加载数据
-        try:
-            self.__handle_version_info()
-            self.__check_game_paths()
-
-            self.__setup_debug_mode()
-
-            # 后台预加载版本列表（不阻塞启动）
-            _ = asyncio.create_task(self.__preload_version_list()) # noqa: RUF006
-
-        except (OSError, RuntimeError, ValueError) as e:
-            logger.error(f"Phase 3 收尾阶段异常: {e}")
-
-        logger.info("EuoraCraft Launcher 异步初始化完成")
-        return True
-
-    def init_launcher(self) -> bool:
-        try:
-            return asyncio.run(self.init_launcher_async())
-        except RuntimeError:
-            # 已有事件循环在运行时回退到同步初始化
-            logger.warning("事件循环已存在，回退到同步初始化")
-            return self.__init_launcher_sync()
-
-    def __init_launcher_sync(self) -> bool:
+    async def init_launcher(self):
         logger.info("EuoraCraft Launcher 启动中...")
-
         try:
-            self.__init_system_test()
+            self.__init_system_test() # 检测系统环境
             logger.info(f"当前工作目录：{self.work_dir}")
             logger.info(f"执行文件路径：{self.executable_path}")
             logger.info(f"程序目录：{self.program_dir}")
-
-            self.__check_launcher_coredir()
-
-            state_result = self.state.initialize()
-            self.config = self.state.config_manager.config
-            self._needs_password = state_result.get("needs_password", False)
-            self.__handle_version_info()
-            self.__check_game_paths()
-
-            self.__setup_debug_mode()
-
-            return True
-
+            self.__check_launcher_coredir() # 检查核心目录
+            state_result = await self.state.initialize_async() # 初始化状态管理器
+            self.config = self.state.config_manager.config # 获取配置
+            self._needs_password = state_result.get("needs_password", False) # 获取是否需要密码
+            self.__handle_version_info() # 处理版本信息
+            self.__check_game_paths() # 检查游戏路径
+            self.__setup_debug_mode() # 设置调试模式
+            _ = asyncio.create_task(self.__preload_version_list()) # 后台预加载版本列表 # noqa: RUF006
         except (OSError, RuntimeError, ValueError) as e:
-            logger.error(f"初始化启动器时出错: {e}")
-            return False
-
-    def run(self) -> None:
-        if not self.init_launcher():
-            sys.exit(1)
-        try:
-            from .adapters.adapter import run_app
-
-            run_app(self)
-        except KeyboardInterrupt:
-            logger.info("收到中断信号，正在关闭...")
-        finally:
-            logger.info("程序已安全退出")
+            logger.error(f"初始化失败: {e}")
+        logger.info("EuoraCraft Launcher 初始化完成")
+        return True

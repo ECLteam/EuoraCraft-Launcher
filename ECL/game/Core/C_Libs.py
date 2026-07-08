@@ -6,6 +6,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
+from ...common.logger import get_logger
+
+logger = get_logger("libs")
+
 
 def replace_last(text: str, old: str, new: str) -> str:  # 替换字符串最后一个匹配项, 到底是为什么适配的呢?好难猜啊
     return new.join(text.rsplit(old, 1))
@@ -48,7 +52,7 @@ def unzip(zip_path: str | Path, unzip_path: str | Path) -> bool:  # 解压文件
                     continue  # 跳过不安全路径
                 zip_object.extract(file, unzip_path)
     except (zipfile.BadZipFile, FileNotFoundError) as e:
-        print(f"解压失败: {e}")
+        logger.warning(f"解压失败: {e}")
         return False
     return True
 
@@ -94,11 +98,12 @@ class ApiUrl:  # Api数据结构
     Libraries: str = "https://libraries.minecraft.net"
     Assets: str = "https://resources.download.minecraft.net"
     Forge: str = "https://files.minecraftforge.net/maven"
-    ForgeMeta: str = "https://bmclapi2.bangbang93.com"  # BMCLAPI 镜像（Forge/OptiFine 版本列表）
+    ForgeMaven: str = "https://bmclapi2.bangbang93.com/maven"
+    ForgeMeta: str = "https://bmclapi2.bangbang93.com"
     Fabric: str = "https://maven.fabricmc.net"
     FabricMeta: str = "https://meta.fabricmc.net"
     NeoForged: str = "https://maven.neoforged.net/releases"
-    OptiFine: str = "https://bmclapi2.bangbang93.com"  # OptiFine 下载（BMCLAPI）
+    OptiFine: str = "https://bmclapi2.bangbang93.com"
     Quilt: str = "https://maven.quiltmc.org"
     QuiltMeta: str = "https://meta.quiltmc.org"
 
@@ -122,19 +127,8 @@ class ApiUrl:  # Api数据结构
                 setattr(self, api_name.name, api_url_dict[api_name.name].strip("/"))
 
 
-def parse_datetime(time_str: str):  # 前端不建议用
-    """
-    解析时间字符串，提取日期、时间、时区，并转换为UTC+8(偏移8h)
-
-    Args:
-        time_str: ISO格式时间字符串，如 "2025-12-16T12:42:29+00:00"(Minecraft 26.1-snapshot-1)
-
-    Returns:
-       dict[str, dict[str, datetime | date | time | tzinfo | None | str | timedelta]]
-    """
-    # 解析时间字符串
+def parse_datetime(time_str: str):
     original_dt = datetime.fromisoformat(time_str)
-    # 转换为UTC+8时间
     converted_dt = original_dt.astimezone(timezone(timedelta(hours=8)))
     return {
         "Original": {

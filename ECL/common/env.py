@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import os
+import sys
 from functools import cached_property
 from pathlib import Path
 
@@ -9,9 +8,35 @@ from .logger import get_logger
 logger = get_logger("env")
 
 
-class EnvLoader:
-    # 支持 .env 文件与 os.environ 的层级覆盖
+def is_frozen() -> bool:
+    # 检测是否为 PyInstaller 打包环境
+    return getattr(sys, "frozen", False)
 
+
+def is_dev() -> bool:
+    # 检测是否为开发环境（未打包运行）
+    return not is_frozen()
+
+
+def get_app_dir() -> Path:
+    # 获取应用根目录
+    # 打包环境：返回 _MEIPASS（PyInstaller 临时解压目录）
+    # 开发环境：返回当前工作目录
+    if is_frozen():
+        return Path(getattr(sys, "_MEIPASS", "."))
+    return Path.cwd()
+
+
+def get_runtime_dir() -> Path:
+    # 获取运行时目录（可写数据的目录）
+    # 打包环境：返回 exe 所在目录（用户安装目录）
+    # 开发环境：返回当前工作目录
+    if is_frozen():
+        return Path(sys.executable).parent
+    return Path.cwd()
+
+
+class EnvLoader:
     def __init__(self, env_paths=None):
         self.__env_paths = env_paths or [".env.dev", ".env"]
 
@@ -87,7 +112,6 @@ def convert_env_value(raw, target):
 
 
 def singleton(cls):
-    # 类装饰器，确保只有一个实例
     _instances = {}
     _lock = __import__("threading").Lock()
 
@@ -102,11 +126,8 @@ def singleton(cls):
 
 @singleton
 class GlobalEnv(EnvLoader):
-    # 全局单例环境变量加载器
     pass
 
-
-# 模块级单例（保持旧接口兼容）
 _default_loader = None
 
 

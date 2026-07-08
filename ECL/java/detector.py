@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import os
 import platform
@@ -51,9 +49,6 @@ class JavaDetector:
 
         logger.info(f"扫描完成，共找到 {len(self.java_list)} 个有效 Java")
         return self.java_list
-
-    async def detect_all_async(self):
-        return await asyncio.to_thread(self.detect_all)
 
     async def detect_all_parallel(self):
         logger.debug("开始并行扫描 Java...")
@@ -249,35 +244,3 @@ class JavaDetector:
         return JavaInfo(
             path=path, version=version_str, major_version=major, java_type=java_type, arch=arch, sources=[source]
         )
-
-    def get_recommended_java(self, mc_version: str) -> JavaInfo | None:
-        if not self.java_list:
-            return None
-
-        parts = mc_version.split(".")
-        if len(parts) < 2:
-            return self.java_list[0]
-
-        major = int(parts[1])
-        minor = int(parts[2]) if len(parts) > 2 else 0
-
-        if (major == 20 and minor >= 5) or major >= 21:
-            required = [21, 25]
-        elif major >= 17:
-            required = [17]
-        elif major >= 12:
-            required = [8]
-        else:
-            required = [8]
-
-        for req in required:
-            for java in self.java_list:
-                if java.major_version == req:
-                    return java
-
-        logger.warning(f"未找到适合 MC {mc_version} 的 Java {required}，使用最新版本（可能不兼容！）")
-        return self.java_list[0]
-
-
-def get_java_list() -> list[JavaInfo] | None:
-    return JavaDetector().detect_all() or None

@@ -17,5 +17,7 @@ csp = "default-src 'self'; connect-src 'self' https:; img-src 'self' asset: http
 title = "EuoraCraft Launcher"
 width = 1000
 height = 700
+minWidth = 900
+minHeight = 600
 decorations = false
 visible = true

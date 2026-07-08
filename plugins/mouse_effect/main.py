@@ -1,9 +1,23 @@
+import base64
+from pathlib import Path
+
 from ECL.common.logger import get_logger
 from ECL.plugin.plugin import Plugin
 
 logger = get_logger("mouse_effect")
 
-MOUSE_EFFECT_IFRAME = '<iframe src="/mouse-effect.html" class="mouse-effect-iframe" frameborder="0" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99998;"></iframe>'
+_RESOURCE_DIR = Path(__file__).parent / "resources"
+
+
+def _build_iframe_html() -> str:
+    html_path = _RESOURCE_DIR / "mouse-effect.html"
+    if not html_path.is_file():
+        logger.error(f"mouse-effect.html 不存在: {html_path}")
+        return '<div style="display:none;"></div>'
+    raw = html_path.read_text("utf-8")
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    src = f"data:text/html;base64,{encoded}"
+    return f'<iframe src="{src}" class="mouse-effect-iframe" frameborder="0" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99998;"></iframe>'
 
 BRIDGE_SCRIPT = r"""
 const sdk = window.__plugin_sdk__
@@ -119,5 +133,5 @@ class MouseEffectPlugin(Plugin):
             return
 
         self._framework.clear_plugin_slots(self._name)
-        self.inject_html("page-bottom", MOUSE_EFFECT_IFRAME)
+        self.inject_html("page-bottom", _build_iframe_html())
         self.inject_typescript(BRIDGE_SCRIPT)

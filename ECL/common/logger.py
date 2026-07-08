@@ -58,7 +58,7 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
                 f_out.writelines(f_in)
             Path(filepath).unlink()
         except (OSError, EOFError) as e:
-            print(f"压缩日志文件失败 {filepath}: {e}")
+            logging.warning(f"压缩日志文件失败 {filepath}: {e}")
 
     def _cleanup_old_logs(self) -> None:
         try:

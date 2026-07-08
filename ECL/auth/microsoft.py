@@ -24,8 +24,7 @@ class MultiAccountMinecraftAuth:
         self.client_id = client_id
         self.data_dir = Path(data_dir).expanduser()
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._log_callback: Callable[[str], None] = logger.info
-        self._login_log_callback: Callable[[str], None] = logger.info
+        self.output_log: Callable[[str], None] = logger.info
         self._login_callback: Callable[[dict], None] = self._login_print
         self.encryption: EncryptionManager | None = None
         self.accounts: dict[str, MinecraftAccount] = {}
@@ -45,28 +44,24 @@ class MultiAccountMinecraftAuth:
         self._poll_executor: ThreadPoolExecutor | None = None
 
     def set_output_log(self, func: Callable[[str], None]) -> None:
-        self._log_callback = func
-
-    def set_output_login_log(self, func: Callable[[str], None]) -> None:
-        self._login_log_callback = func
+        self.output_log = func
 
     def set_login_callback(self, func: Callable[[dict], None]) -> None:
         self._login_callback = func
 
     def _log(self, msg: str) -> None:
-        self._log_callback(msg)
+        self.output_log(msg)
 
-    @staticmethod
-    def _login_print(flow: dict):
-        print(flow)
-        print(f"请在浏览器访问：{flow['verification_uri']}，并在其中输入：{flow['user_code']}")
+    def _login_print(self, flow: dict):
+        self.output_log(str(flow))
+        self.output_log(f"请在浏览器访问：{flow['verification_uri']}，并在其中输入：{flow['user_code']}")
 
     def initialize(self) -> bool:
         if self._initialized:
             self._log("已经初始化过，跳过")
             return True
         try:
-            self.encryption = EncryptionManager(log_callback=self._log_callback)
+            self.encryption = EncryptionManager(log_callback=self.output_log)
             if self.encryption.needs_password():
                 self._log("需要设置主密码")
                 return False
@@ -182,11 +177,11 @@ class MultiAccountMinecraftAuth:
         account_info = None
         email = None
         if accounts:
-            self._login_log_callback("尝试静默获取令牌...")
+            self.output_log("尝试静默获取令牌...")
             account_info = accounts[0]
             result = app.acquire_token_silent(scopes=scope, account=account_info)
         if not result:
-            self._login_log_callback("开始设备代码流登录...")
+            self.output_log("开始设备代码流登录...")
             try:
                 flow = app.initiate_device_flow(scopes=scope)
                 if "user_code" not in flow:
@@ -197,15 +192,15 @@ class MultiAccountMinecraftAuth:
                     id_claims = result["id_token_claims"]
                     email = id_claims.get("preferred_username") or id_claims.get("email")
             except (ValueError, KeyError, TypeError, json.JSONDecodeError, requests.exceptions.RequestException) as e:
-                self._login_log_callback(f"设备代码流失败: {e}")
+                self.output_log(f"设备代码流失败: {e}")
                 return None, None, None
         if "access_token" in result:
-            self._login_log_callback("微软令牌获取成功")
+            self.output_log("微软令牌获取成功")
             self._save_cache(token_cache)
             account_id = account_info.get("home_account_id") if account_info else None
             return result["access_token"], account_id, email
         else:
-            self._login_log_callback(f"认证失败: {result.get('error')}")
+            self.output_log(f"认证失败: {result.get('error')}")
             return None, None, None
 
     def _get_xbox_chain_tokens(self, msft_access_token: str) -> tuple[str | None, str | None]:
@@ -225,12 +220,12 @@ class MultiAccountMinecraftAuth:
                 headers=headers,
             )
             if resp.status_code != 200:
-                self._login_log_callback(f"Xbox Live 令牌获取失败: {resp.status_code}")
+                self.output_log(f"Xbox Live 令牌获取失败: {resp.status_code}")
                 return None, None
             xbox_live_data = resp.json()
             xbox_live_token = xbox_live_data["Token"]
             user_hash = xbox_live_data["DisplayClaims"]["xui"][0]["uhs"]
-            self._login_log_callback("Xbox Live 令牌获取成功")
+            self.output_log("Xbox Live 令牌获取成功")
             resp = requests.post(
                 "https://xsts.auth.xboxlive.com/xsts/authorize",
                 json={
@@ -241,13 +236,13 @@ class MultiAccountMinecraftAuth:
                 headers=headers,
             )
             if resp.status_code != 200:
-                self._login_log_callback(f"XSTS 令牌获取失败: {resp.status_code}")
+                self.output_log(f"XSTS 令牌获取失败: {resp.status_code}")
                 return None, None
             xsts_token = resp.json()["Token"]
-            self._login_log_callback("XSTS 令牌获取成功")
+            self.output_log("XSTS 令牌获取成功")
             return xsts_token, user_hash
         except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
-            self._login_log_callback(f"Xbox 认证链失败: {e}")
+            self.output_log(f"Xbox 认证链失败: {e}")
             return None, None
 
     def _get_minecraft_token(self, xsts_token: str, user_hash: str) -> tuple[str | None, int]:
@@ -258,13 +253,13 @@ class MultiAccountMinecraftAuth:
                 headers={"Content-Type": "application/json"},
             )
             if resp.status_code != 200:
-                self._login_log_callback(f"Minecraft 令牌获取失败: {resp.status_code}")
+                self.output_log(f"Minecraft 令牌获取失败: {resp.status_code}")
                 return None, 0
             data = resp.json()
-            self._login_log_callback("Minecraft 令牌获取成功")
+            self.output_log("Minecraft 令牌获取成功")
             return data["access_token"], data.get("expires_in", 86400)
         except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
-            self._login_log_callback(f"Minecraft 令牌获取失败: {e}")
+            self.output_log(f"Minecraft 令牌获取失败: {e}")
             return None, 0
 
     def _check_minecraft_ownership(self, mc_access_token: str) -> tuple[bool, dict | None]:
@@ -275,16 +270,16 @@ class MultiAccountMinecraftAuth:
             )
             if resp.status_code == 200:
                 profile = resp.json()
-                self._login_log_callback(f"Minecraft 所有权验证成功: {profile['name']}")
+                self.output_log(f"Minecraft 所有权验证成功: {profile['name']}")
                 return True, profile
             elif resp.status_code == 404:
-                self._login_log_callback("该账户未购买 Minecraft Java 版")
+                self.output_log("该账户未购买 Minecraft Java 版")
                 return False, None
             else:
-                self._login_log_callback(f"验证失败: {resp.status_code}")
+                self.output_log(f"验证失败: {resp.status_code}")
                 return False, None
         except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
-            self._login_log_callback(f"验证失败: {e}")
+            self.output_log(f"验证失败: {e}")
             return False, None
 
     def add_account(self) -> bool:
@@ -364,13 +359,6 @@ class MultiAccountMinecraftAuth:
         self._log(f"离线账户 '{username}' 添加成功")
         return {"success": True, "message": f"离线账户 '{username}' 添加成功"}
 
-    def list_accounts(self) -> list | None:
-        self._ensure_initialized()
-        if not self.accounts:
-            self._log("暂无已保存的账户")
-            return None
-        return list(self.accounts.items())
-
     def get_current_account(self) -> MinecraftAccount | None:
         return self.current_account
 
@@ -403,27 +391,6 @@ class MultiAccountMinecraftAuth:
         self._log(f"账户 '{target_account.alias}' 已移除")
         return True
 
-    def get_account_id_by_alias(self, alias: str) -> str | None:
-        self._ensure_initialized()
-        for account_id, account in self.accounts.items():
-            if account.alias == alias:
-                return account_id
-        return None
-
-    def switch_account_by_alias(self, account_alias: str) -> bool:
-        account_id = self.get_account_id_by_alias(account_alias)
-        if account_id:
-            return self.switch_account(account_id)
-        self._log(f"未找到账户: {account_alias}")
-        return False
-
-    def remove_account_by_alias(self, account_alias: str) -> bool:
-        account_id = self.get_account_id_by_alias(account_alias)
-        if account_id:
-            return self.remove_account(account_id)
-        self._log(f"未找到账户: {account_alias}")
-        return False
-
     def get_account_by_id(self, account_id: str) -> MinecraftAccount | None:
         self._ensure_initialized()
         return self.accounts.get(account_id)
@@ -445,19 +412,19 @@ class MultiAccountMinecraftAuth:
         self._log(f"正在为账户 {self.current_account.alias} 获取 Minecraft 令牌...")
         ms_token, _, _ = self._get_microsoft_token(self.current_account.cache_file)
         if not ms_token:
-            self._login_log_callback("获取微软令牌失败")
+            self.output_log("获取微软令牌失败")
             return None
         xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
         if not xsts_token:
-            self._login_log_callback("Xbox 认证链失败")
+            self.output_log("Xbox 认证链失败")
             return None
         mc_token, expires_in = self._get_minecraft_token(xsts_token, user_hash)
         if not mc_token:
-            self._login_log_callback("获取 Minecraft 令牌失败")
+            self.output_log("获取 Minecraft 令牌失败")
             return None
         is_valid, profile = self._check_minecraft_ownership(mc_token)
         if not is_valid:
-            self._login_log_callback("Minecraft 令牌验证失败")
+            self.output_log("Minecraft 令牌验证失败")
             return None
         if profile and profile["name"] != self.current_account.alias:
             self._log(f"玩家 ID 变化: {self.current_account.alias} -> {profile['name']}")
@@ -477,7 +444,7 @@ class MultiAccountMinecraftAuth:
             self._log(f"刷新账户档案: {account.alias}")
             ms_token, _, _ = self._get_microsoft_token(account.cache_file)
             if not ms_token:
-                self._login_log_callback("获取微软令牌失败")
+                self.output_log("获取微软令牌失败")
                 return False
             xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
             if not xsts_token:
@@ -542,26 +509,6 @@ class MultiAccountMinecraftAuth:
         self._save_accounts()
         self._log(f"主密码更改完成，成功重新加密 {success}/{total} 个账户")
         return True
-
-    def get_current_account_profile(self, refresh: bool = False) -> dict | None:
-        self._ensure_initialized()
-        if not self.current_account:
-            self._log("未选择任何账户")
-            return None
-        if refresh:
-            if self.refresh_account_profile(self.current_account.alias):
-                return self.current_account.profile
-            return None
-        return self.current_account.profile
-
-    def get_all_accounts_profiles(self, refresh: bool = False) -> dict[str, dict]:
-        self._ensure_initialized()
-        profiles = {}
-        if refresh:
-            self.refresh_all_account_profiles()
-        for alias, account in self.accounts.items():
-            profiles[alias] = account.profile
-        return profiles
 
     def get_all_accounts_info(self) -> list[dict]:
         self._ensure_initialized()

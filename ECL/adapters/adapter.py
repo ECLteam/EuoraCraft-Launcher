@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 import inspect
-import json
+import sys as _sys
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +8,7 @@ from pytauri import Commands
 from pytauri_wheel.lib import builder_factory, context_factory
 
 from ..api.handlers import Api
+from ..common.env import get_app_dir, is_frozen
 from ..common.logger import get_logger
 
 logger = get_logger("adapter")
@@ -28,7 +27,7 @@ class TauriAdapter:
     def get_launcher(self):
         return self._launcher
 
-    # app handle (AppHandle，可跨线程安全使用)
+    # app handle
     @property
     def app_handle_obj(self):
         return self._app_handle_obj
@@ -65,72 +64,36 @@ class TauriAdapter:
             return {"success": False, "message": f"调用失败: {e}"}
 
     def resolve_dev_server(self):
-        # 解析前端开发服务器地址，复用 ConfigManager 的 EnvLoader 实例
+        # 解析前端开发服务器地址
         env = self._launcher.state.config_manager._env_loader
         dev_server = env.get("FRONTEND_DEV_SERVER")
         if dev_server:
-            logger.info(f"环境变量覆盖: FRONTEND_DEV_SERVER -> {dev_server!s}")
+            logger.info(f"检测到前端开发服务器: {dev_server!s}")
             return dev_server
         logger.info("使用本地前端文件")
         return None
 
     def resolve_frontend_path(self):
-        # 解析前端静态文件路径，默认 PyTauri 使用 frontend/ 目录
+        # 解析前端静态文件路径
+        # 打包环境：从 _MEIPASS 中读取 frontend 目录
+        # 开发环境：可通过 FRONTEND_PATH 环境变量指定
         env = self._launcher.state.config_manager._env_loader
         frontend_path = env.get("FRONTEND_PATH")
         if frontend_path:
-            logger.info(f"环境变量覆盖: FRONTEND_PATH -> {frontend_path!s}")
+            logger.info(f"检测到前端静态文件路径: {frontend_path!s}")
             return frontend_path
+        if is_frozen():
+            app_dir = get_app_dir()
+            default_frontend = app_dir / "frontend"
+            if default_frontend.is_dir():
+                logger.info(f"使用打包前端文件: {default_frontend!s}")
+                return str(default_frontend)
         return None
 
     def post_init_events(self):
-        # app 就绪后向前端推送初始化事件
-        from ..api.events import emit
-
-        # 初始化插件框架（必须在 AppHandle 就绪后加载，否则 emit 会被丢弃）
+        # 初始化插件框架
         if self._launcher.state.plugin_framework is None:
             self._launcher.state._init_plugin_framework()
-
-        # 主密码需求
-        if self._launcher._needs_password:
-            emit("keyring:password_required", {})
-
-        # 版本类型提醒
-        cfg = self._launcher.state.config_manager.get_launcher_config()
-        version = cfg.get("version", "未知")
-        version_type = cfg.get("version_type", "unknown")
-        if version_type == "dev":
-            emit(
-                "launcher:notify",
-                {
-                    "type": "warning",
-                    "title": "开发版本提醒",
-                    "message": f"当前运行的是开发版本 v{version}，可能存在不稳定因素",
-                },
-            )
-        elif version_type == "beta":
-            emit(
-                "launcher:notify",
-                {
-                    "type": "info",
-                    "title": "测试版本提醒",
-                    "message": f"当前运行的是测试版本 v{version}，可能存在一些问题",
-                },
-            )
-
-        # 用户协议检查
-        config_dir = self._launcher.state.config_manager.config_path.parent
-        agreement_file = config_dir / "user_agreement.json"
-        if not agreement_file.exists():
-            emit("launcher:agreement_required", {})
-        else:
-            try:
-                with agreement_file.open(encoding="utf-8") as f:
-                    data = json.load(f)
-                if not data.get("accepted", False):
-                    emit("launcher:agreement_required", {})
-            except (OSError, ValueError):
-                emit("launcher:agreement_required", {})
 
         # 插件事件：启动器初始化完成
         fw = self._launcher.state.plugin_framework
@@ -161,12 +124,11 @@ class TauriAdapter:
             )
             self.set_app_handle(app)
 
-            # app 就绪后推送初始化事件（用户协议、版本提醒等）
+            # app 就绪后推送初始化事件
             self.post_init_events()
 
             exit_code = app.run_return()
             logger.info("应用已退出，开始清理资源...")
-            import sys as _sys
 
             _sys.stdout.flush()
             _sys.stderr.flush()
@@ -176,26 +138,14 @@ class TauriAdapter:
             return exit_code
 
 
-# 模块级单例
+# 单例
 _adapter_instance = TauriAdapter()
-
-
-# --- 门面函数（保持旧接口兼容）---
-
 
 def get_app_handle_obj():
     return _adapter_instance.app_handle_obj
 
 
-def set_launcher_instance(launcher):
-    _adapter_instance.set_launcher(launcher)
-
-
-def _get_launcher():
-    return _adapter_instance.get_launcher()
-
-
-# PyTauri 命令注册（保持模块级，装饰器限制）
+# PyTauri 命令注册
 commands = Commands()
 
 

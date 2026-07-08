@@ -1,6 +1,6 @@
 from .authlib import AuthlibInjectorAccount, AuthlibInjectorManager
 from .crypto import EncryptionManager, SmartKeyringManager
-from .manager import AccountManager, get_account_manager
+from .manager import AccountManager
 from .microsoft import MultiAccountMinecraftAuth
 from .models import MinecraftAccount
 
@@ -12,5 +12,4 @@ __all__ = [
     "MinecraftAccount",
     "MultiAccountMinecraftAuth",
     "SmartKeyringManager",
-    "get_account_manager",
 ]

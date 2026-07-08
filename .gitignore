@@ -71,3 +71,6 @@ dep_cache/
 .uploads/
 
 .plugin_config/
+
+plugins/
+
