@@ -1,35 +1,37 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import sys
 from pathlib import Path
 from typing import Any
 
 from ..auth.manager import AccountManager
+from ..common.env import singleton
 from ..game.Core.C_GetGames import GetGames
 from ..game.Core.ECLauncherCore import ECLauncherCore
 from ..java.detector import JavaDetector
 from ..java.models import JavaInfo
 from .config import ConfigManager
-from ..common.env import singleton
 from .logger import get_logger
 
 try:
     from ..api.events import emit as _emit
+
     def _safe_emit(event: str, data: dict) -> None:
-        try:
+        with contextlib.suppress(RuntimeError, ValueError, TypeError, ConnectionError, OSError):
             _emit(event, data)
-        except (RuntimeError, ValueError, TypeError, ConnectionError, OSError):
-            pass
 except ImportError:
+
     def _safe_emit(event: str, data: dict) -> None:
         pass
+
 
 logger = get_logger("state")
 
 
 @singleton
 class AppState:
-
     def __init__(self):
         if hasattr(self, "_initialized") and self._initialized:
             return
@@ -52,7 +54,9 @@ class AppState:
             if "正在启动游戏" in msg:
                 _safe_emit("game:launch_progress", {"phase": "launching", "message": msg, "percent": 95})
             elif "系统平台" in msg:
-                _safe_emit("game:launch_progress", {"phase": "building_args", "message": "构建启动参数...", "percent": 90})
+                _safe_emit(
+                    "game:launch_progress", {"phase": "building_args", "message": "构建启动参数...", "percent": 90}
+                )
             elif "文件校验完成" in msg:
                 _safe_emit("game:launch_progress", {"phase": "files_checked", "message": msg, "percent": 50})
             elif "启动参数构建完成" in msg:
@@ -61,6 +65,7 @@ class AppState:
                 _safe_emit("game:launch_progress", {"phase": "natives_done", "message": msg, "percent": 85})
             elif "即将启动游戏进程" in msg:
                 _safe_emit("game:launch_progress", {"phase": "about_to_launch", "message": msg, "percent": 92})
+
         self.launcher_core.set_output_launcher_log(_on_launcher_log)
         self.launcher_core.set_output_jvm_params(lambda msg: logger.info(f"[Core] {msg}"))
         self.get_games.set_output_log(lambda msg: logger.info(f"[Core] {msg}"))
@@ -69,6 +74,7 @@ class AppState:
         def _on_files_check_log(msg: str) -> None:
             logger.info(f"[FilesCheck] {msg}")
             _safe_emit("game:launch_progress", {"phase": "checking", "message": msg})
+
         self.launcher_core.files_checker.set_output_log(_on_files_check_log)
         self.launcher_core.files_checker.set_cancel_check(lambda: self.launcher_core.is_canceled())
 
@@ -80,29 +86,39 @@ class AppState:
             t = len(total)
             d = len(done)
             pct = int(d / t * 100) if t > 0 else 0
-            _safe_emit("game:launch_progress", {
-                "phase": "downloading",
-                "message": f"下载资源 ({d}/{t})",
-                "done": d,
-                "total": t,
-                "percent": pct,
-            })
+            _safe_emit(
+                "game:launch_progress",
+                {
+                    "phase": "downloading",
+                    "message": f"下载资源 ({d}/{t})",
+                    "done": d,
+                    "total": t,
+                    "percent": pct,
+                },
+            )
+
         self.launcher_core.downloader.set_output_progress(_on_download_progress)
 
         # 下载事件回调 → 推送详细进度
         def _on_download_event(event_data: dict) -> None:
-            _safe_emit("game:launch_progress", {
-                "phase": "downloading",
-                "message": f"下载资源 ({event_data.get('done', 0)}/{event_data.get('total', 0)})",
-                "done": event_data.get("done", 0),
-                "total": event_data.get("total", 0),
-                "percent": int(event_data.get("done", 0) / max(event_data.get("total", 1), 1) * 100),
-            })
+            _safe_emit(
+                "game:launch_progress",
+                {
+                    "phase": "downloading",
+                    "message": f"下载资源 ({event_data.get('done', 0)}/{event_data.get('total', 0)})",
+                    "done": event_data.get("done", 0),
+                    "total": event_data.get("total", 0),
+                    "percent": int(event_data.get("done", 0) / max(event_data.get("total", 1), 1) * 100),
+                },
+            )
+
         self.launcher_core.downloader.event_callback = _on_download_event
 
         # 游戏实例日志/退出回调：不打印到终端，仅记录到日志文件
         self.launcher_core.instances_manager.set_log_callback(lambda msg: logger.debug(f"[Game] {msg}"))
-        self.launcher_core.instances_manager.set_exit_callback(lambda code: logger.info(f"[Game] 进程退出，返回码: {code}"))
+        self.launcher_core.instances_manager.set_exit_callback(
+            lambda code: logger.info(f"[Game] 进程退出，返回码: {code}")
+        )
 
         # 插件框架（延迟初始化，在 initialize 中创建）
         self.plugin_framework = None
@@ -219,7 +235,8 @@ class AppState:
             return
         self._shutdown_done = True
         logger.info("正在关闭应用全局状态...")
-        from ..api.events import EventEmitter, emit_plugin_event
+        from ..api.events import EventEmitter
+
         EventEmitter.set_exiting(True)
         try:
             # 先取消正在进行的启动流程，让 check_files 等尽快退出
@@ -240,23 +257,43 @@ class AppState:
             # 关闭 Java 检测线程池
             try:
                 from ..java.detector import JavaDetector
+
                 JavaDetector.shutdown_executor()
             except (RuntimeError, OSError):
                 pass
         finally:
             logger.info("应用全局状态已关闭")
 
+    def __find_resource_dir(self, relative: Path) -> Path | None:
+        # 打包模式：从 PyInstaller 临时解压目录查找
+        if getattr(sys, "frozen", False):
+            base = Path(getattr(sys, "_MEIPASS", "."))
+            p = base / relative
+            if p.is_dir():
+                return p
+            return None
+        # 开发模式：从当前工作目录查找
+        return Path.cwd() / relative
+
     def _init_plugin_framework(self) -> None:
         try:
             from ..plugin import PluginFramework
+
             plugins_dir = Path.cwd() / "plugins"
             cache_root = Path.cwd() / "dep_cache"
             deps_meta = Path.cwd() / "deps_meta.json"
+            # 计算系统插件目录
+            system_plugins_dir = Path.cwd() / "resources" / "system_plugins"
+            if not system_plugins_dir.is_dir():
+                system_plugins_dir = self.__find_resource_dir(Path("resources") / "system_plugins")
             self.plugin_framework = PluginFramework(
                 plugins_dir=plugins_dir,
                 cache_root=cache_root,
                 deps_meta_path=deps_meta,
+                system_plugins_dir=system_plugins_dir,
             )
+            # 加载系统插件
+            self.plugin_framework._load_system_plugins()
             # 扫描并加载所有插件
             plugins = self.plugin_framework.scan_plugins()
             for p in plugins:

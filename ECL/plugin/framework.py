@@ -18,15 +18,23 @@ logger = get_logger("plugin.framework")
 
 
 class PluginFramework:
-
-    def __init__(self, plugins_dir: str | Path, cache_root: str | Path | None = None, deps_meta_path: str | Path | None = None, config_root: str | Path | None = None):
+    def __init__(
+        self,
+        plugins_dir: str | Path,
+        cache_root: str | Path | None = None,
+        deps_meta_path: str | Path | None = None,
+        config_root: str | Path | None = None,
+        system_plugins_dir: str | Path | None = None,
+    ):
         self._plugins_dir = Path(plugins_dir)
         self._cache_root = Path(cache_root) if cache_root else self._plugins_dir.parent / "dep_cache"
         self._deps_meta_path = Path(deps_meta_path) if deps_meta_path else self._plugins_dir.parent / "deps_meta.json"
         self._config_root = Path(config_root) if config_root else self._plugins_dir.parent / "plugin_config"
+        self._system_plugins_dir = Path(system_plugins_dir) if system_plugins_dir else None
 
         self._plugins: dict[str, Plugin] = {}
         self._plugin_dirs: dict[str, Path] = {}
+        self._system_plugins: set[str] = set()
         self._service_registry = ServiceRegistry()
         self._event_registry = EventRegistry()
         self._importer = PluginImporter(self._cache_root)
@@ -58,6 +66,29 @@ class PluginFramework:
             self._deps_meta_path.write_text(json.dumps(self._deps_meta, ensure_ascii=False, indent=2), "utf-8")
         except OSError as e:
             logger.error(f"保存依赖元数据失败: {e}")
+
+    def _load_system_plugins(self) -> None:
+        if self._system_plugins_dir is None or not self._system_plugins_dir.is_dir():
+            return
+        for d in sorted(self._system_plugins_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            manifest = d / "plugin.json"
+            if not manifest.exists():
+                continue
+            try:
+                data = json.loads(manifest.read_text("utf-8"))
+                name = data.get("name", d.name)
+            except (json.JSONDecodeError, OSError):
+                logger.warning(f"解析系统插件 {d.name} 的 manifest 失败")
+                continue
+            # 检查是否被禁用
+            config = self._load_plugin_config(name)
+            if config.get("_system_disabled"):
+                logger.info(f"系统插件已禁用，跳过: {name}")
+                continue
+            self._system_plugins.add(name)
+            logger.info(f"发现系统插件: {name}")
 
     def _get_plugin_config_path(self, plugin_name: str) -> Path:
         return self._config_root / f"{plugin_name}.json"
@@ -191,6 +222,7 @@ class PluginFramework:
                     "icon": data.get("icon", ""),
                     "status": "unloaded",
                     "error": None,
+                    "is_system": False,
                 }
                 plugin = self._plugins.get(info["name"])
                 if plugin:
@@ -199,7 +231,45 @@ class PluginFramework:
                 result.append(info)
             except (json.JSONDecodeError, OSError, KeyError) as e:
                 logger.warning(f"解析插件 {d.name} 的 manifest 失败: {e}")
-                result.append({"name": d.name, "title": d.name, "version": "0.0.0", "status": "error", "error": str(e)})
+                result.append(
+                    {
+                        "name": d.name,
+                        "title": d.name,
+                        "version": "0.0.0",
+                        "status": "error",
+                        "error": str(e),
+                        "is_system": False,
+                    }
+                )
+
+        # 纳入系统插件
+        for name in sorted(self._system_plugins):
+            # 避免重复：如果同名普通插件已存在，跳过
+            if any(p["name"] == name for p in result):
+                continue
+            self._load_plugin_config(name)
+            info = {
+                "name": name,
+                "title": name,
+                "version": "0.0.0",
+                "description": "",
+                "author": "",
+                "icon": "",
+                "status": "unloaded",
+                "error": None,
+                "is_system": True,
+            }
+            plugin = self._plugins.get(name)
+            if plugin:
+                info["title"] = plugin._meta.get("title", name)
+                info["version"] = plugin._version
+                info["description"] = plugin._meta.get("description", "")
+                info["author"] = plugin._meta.get("author", "")
+                info["icon"] = plugin._meta.get("icon", "")
+                info["status"] = plugin.status.value
+                info["error"] = plugin._error
+            result.append(info)
+
         return result
 
     def load_plugin(self, plugin_name: str) -> dict[str, Any]:
@@ -210,18 +280,24 @@ class PluginFramework:
         if plugin_name in self._plugins and self._plugins[plugin_name].status != PluginStatus.UNLOADED:
             return {"success": False, "message": f"插件 {plugin_name} 已加载"}
 
-        manifest_path = None
-        for d in self._plugins_dir.iterdir():
-            if d.is_dir():
-                m = d / "plugin.json"
-                if m.exists():
-                    try:
-                        data = json.loads(m.read_text("utf-8"))
-                        if data.get("name") == plugin_name:
-                            manifest_path = m
-                            break
-                    except (json.JSONDecodeError, OSError):
-                        continue
+        # 系统插件：从 system_plugins_dir 查找 manifest
+        if plugin_name in self._system_plugins:
+            manifest_path = self._system_plugins_dir / plugin_name / "plugin.json" if self._system_plugins_dir else None
+            if manifest_path is None or not manifest_path.exists():
+                return {"success": False, "message": f"未找到系统插件: {plugin_name}"}
+        else:
+            manifest_path = None
+            for d in self._plugins_dir.iterdir():
+                if d.is_dir():
+                    m = d / "plugin.json"
+                    if m.exists():
+                        try:
+                            data = json.loads(m.read_text("utf-8"))
+                            if data.get("name") == plugin_name:
+                                manifest_path = m
+                                break
+                        except (json.JSONDecodeError, OSError):
+                            continue
 
         if manifest_path is None:
             return {"success": False, "message": f"未找到插件: {plugin_name}"}
@@ -253,7 +329,7 @@ class PluginFramework:
             # 异步 on_load：fire-and-forget，不阻塞主流程
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._run_async_method(plugin, "async_on_load"))
+                _ =loop.create_task(self._run_async_method(plugin, "async_on_load")) # noqa: RUF006
             except RuntimeError:
                 pass
 
@@ -301,7 +377,7 @@ class PluginFramework:
             return {"success": True, "message": f"插件 {plugin_name} 已处于启用状态"}
 
         deps = plugin.meta.get("dependencies", {}).get("plugins", {})
-        for dep_name, constraint in deps.items():
+        for dep_name, _constraint in deps.items():
             dep = self._plugins.get(dep_name)
             if not dep or dep.status != PluginStatus.ENABLED:
                 if dep_name in _enabling:
@@ -316,6 +392,12 @@ class PluginFramework:
             plugin._bind_pending_handlers()
             plugin.on_enable()
             plugin._status = PluginStatus.ENABLED
+            # 系统插件启用后清除禁用标记
+            if plugin_name in self._system_plugins:
+                config = self._load_plugin_config(plugin_name)
+                if "_system_disabled" in config:
+                    del config["_system_disabled"]
+                    self._save_plugin_config(plugin_name, config)
             self._event_registry.emit("plugin:enabled", {"name": plugin_name, "version": plugin._version})
             logger.info(f"插件已启用: {plugin_name}")
             return {"success": True, "message": f"插件 {plugin_name} 已启用", "data": self._plugin_info(plugin)}
@@ -339,7 +421,9 @@ class PluginFramework:
             return {"success": True, "message": f"插件 {plugin_name} 当前状态无需禁用"}
 
         dependents = self._get_dependents(plugin_name)
-        enabled_deps = [d for d in dependents if self._plugins.get(d) and self._plugins[d].status == PluginStatus.ENABLED]
+        enabled_deps = [
+            d for d in dependents if self._plugins.get(d) and self._plugins[d].status == PluginStatus.ENABLED
+        ]
 
         # 两阶段：预禁用通知
         if notify and enabled_deps:
@@ -353,10 +437,15 @@ class PluginFramework:
         try:
             plugin.on_disable()
             plugin._status = PluginStatus.DISABLED
+            # 系统插件禁用后持久化标记
+            if plugin_name in self._system_plugins:
+                config = self._load_plugin_config(plugin_name)
+                config["_system_disabled"] = True
+                self._save_plugin_config(plugin_name, config)
             logger.info(f"插件已禁用: {plugin_name}")
             # 两阶段：禁用完成通知
             if notify and enabled_deps:
-                for dep_name in enabled_deps:
+                for _dep_name in enabled_deps:
                     self._event_registry.emit("plugin:disabled", {"plugin": plugin_name})
             return {"success": True, "message": f"插件 {plugin_name} 已禁用", "data": self._plugin_info(plugin)}
         except (RuntimeError, OSError, ValueError, TypeError) as e:
@@ -370,6 +459,10 @@ class PluginFramework:
             return self._unload_plugin_internal(plugin_name)
 
     def _unload_plugin_internal(self, plugin_name: str) -> dict[str, Any]:
+        # 系统插件不可卸载
+        if plugin_name in self._system_plugins:
+            return {"success": False, "message": "系统插件不可卸载"}
+
         plugin = self._plugins.get(plugin_name)
         if not plugin:
             return {"success": False, "message": f"插件 {plugin_name} 未加载"}
@@ -515,6 +608,7 @@ class PluginFramework:
             return
         try:
             from ..api.events import emit
+
             emit(event, payload)
         except (ImportError, RuntimeError, OSError):
             pass
@@ -548,6 +642,7 @@ class PluginFramework:
             "dependencies": plugin._meta.get("dependencies", {}),
             "events": plugin._meta.get("events", {}),
             "services": list(plugin._services.keys()),
+            "is_system": plugin._name in self._system_plugins,
         }
 
     def _register_plugin_settings(self, plugin_name: str, schema: dict[str, Any]) -> None:
@@ -570,13 +665,16 @@ class PluginFramework:
         self._plugin_settings[plugin_name]["values"][key] = value
         # 持久化到磁盘
         self._save_plugin_config(plugin_name, self._plugin_settings[plugin_name]["values"])
-        self._event_registry.emit("plugin:settings_changed", {"plugin": plugin_name, "key": key, "old_value": old, "new_value": value})
-        self._emit_frontend("plugin:settings_changed", {"plugin": plugin_name, "key": key, "old_value": old, "new_value": value})
+        self._event_registry.emit(
+            "plugin:settings_changed", {"plugin": plugin_name, "key": key, "old_value": old, "new_value": value}
+        )
+        self._emit_frontend(
+            "plugin:settings_changed", {"plugin": plugin_name, "key": key, "old_value": old, "new_value": value}
+        )
 
     # ── HTML 插槽 ──
 
     def _inject_html(self, plugin_name: str, slot: str, html: str) -> None:
-        slot_key = f"{plugin_name}:{slot}"
         self._html_slots.setdefault(slot, []).append((plugin_name, html))
         self._emit_frontend("plugin:html_injected", {"plugin": plugin_name, "slot": slot, "html": html})
 
@@ -598,7 +696,9 @@ class PluginFramework:
     def _register_route(self, plugin_name: str, path: str, title: str, icon: str) -> None:
         key = f"{plugin_name}:{path}"
         self._plugin_routes[key] = {"plugin": plugin_name, "path": path, "title": title, "icon": icon}
-        self._emit_frontend("plugin:route_registered", {"plugin": plugin_name, "path": path, "title": title, "icon": icon})
+        self._emit_frontend(
+            "plugin:route_registered", {"plugin": plugin_name, "path": path, "title": title, "icon": icon}
+        )
 
     def _unregister_route(self, plugin_name: str, path: str) -> None:
         key = f"{plugin_name}:{path}"
@@ -697,6 +797,30 @@ class PluginFramework:
                         if key.startswith(prefix):
                             sys.modules.pop(key, None)
 
+        # 3. 卸载系统插件（绕过 _unload_plugin_internal 的保护）
+        for name in list(self._system_plugins):
+            plugin = self._plugins.get(name)
+            if not plugin:
+                continue
+            if plugin._status == PluginStatus.ENABLED:
+                plugin._status = PluginStatus.DISABLING
+                try:
+                    plugin.on_disable()
+                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                    logger.warning(f"关闭系统插件 {name} 禁用失败: {e}")
+            plugin._status = PluginStatus.UNLOADING
+            try:
+                plugin.on_unload()
+            except (RuntimeError, OSError, ValueError, TypeError) as e:
+                logger.warning(f"关闭系统插件 {name} 卸载失败: {e}")
+            isolated = getattr(plugin, "_isolated_module", None)
+            if isolated:
+                sys.modules.pop(isolated, None)
+                prefix = isolated + "."
+                for key in list(sys.modules.keys()):
+                    if key.startswith(prefix):
+                        sys.modules.pop(key, None)
+
         self._shutdown_cleanup()
         logger.info("插件框架已关闭")
 
@@ -722,7 +846,6 @@ class PluginFramework:
 
 
 class _RLock:
-
     def __init__(self):
         self._lock = threading.RLock()
 

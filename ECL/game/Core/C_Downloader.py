@@ -238,12 +238,14 @@ class Downloader:
                                 total = len(self.__download_total)
                                 done = len(self.__download_done)
                                 try:
-                                    self.event_callback({
-                                        "type": "download_progress",
-                                        "done": done,
-                                        "total": total,
-                                        "current_file": save_path,
-                                    })
+                                    self.event_callback(
+                                        {
+                                            "type": "download_progress",
+                                            "done": done,
+                                            "total": total,
+                                            "current_file": save_path,
+                                        }
+                                    )
                                 except Exception as e:
                                     print(f"事件回调异常: {e}")
                         else:

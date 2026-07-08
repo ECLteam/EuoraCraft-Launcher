@@ -94,9 +94,11 @@ class ApiUrl:  # Api数据结构
     Libraries: str = "https://libraries.minecraft.net"
     Assets: str = "https://resources.download.minecraft.net"
     Forge: str = "https://files.minecraftforge.net/maven"
+    ForgeMeta: str = "https://bmclapi2.bangbang93.com"  # BMCLAPI 镜像（Forge/OptiFine 版本列表）
     Fabric: str = "https://maven.fabricmc.net"
     FabricMeta: str = "https://meta.fabricmc.net"
     NeoForged: str = "https://maven.neoforged.net/releases"
+    OptiFine: str = "https://bmclapi2.bangbang93.com"  # OptiFine 下载（BMCLAPI）
     Quilt: str = "https://maven.quiltmc.org"
     QuiltMeta: str = "https://meta.quiltmc.org"
 

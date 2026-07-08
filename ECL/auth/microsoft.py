@@ -296,7 +296,7 @@ class MultiAccountMinecraftAuth:
         xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
         if not xsts_token:
             return False
-        mc_token, expires_in = self._get_minecraft_token(xsts_token, user_hash)
+        mc_token, _expires_in = self._get_minecraft_token(xsts_token, user_hash)
         if not mc_token:
             return False
         has_minecraft, profile = self._check_minecraft_ownership(mc_token)
@@ -773,5 +773,13 @@ class MultiAccountMinecraftAuth:
                 "message": f"账户 '{alias}' 添加成功",
                 "account": {"id": account_id, "alias": alias, "type": "microsoft", "email": email},
             }
-        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError, requests.exceptions.RequestException) as e:
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            TypeError,
+            RuntimeError,
+            requests.exceptions.RequestException,
+        ) as e:
             return {"success": False, "message": f"登录过程出错: {e}"}

@@ -2,7 +2,6 @@ from ECL.plugin.plugin import Plugin
 
 
 class HelloWorldPlugin(Plugin):
-
     def on_enable(self):
         # 初始化内部状态、注册服务等
         pass
@@ -10,6 +9,7 @@ class HelloWorldPlugin(Plugin):
     def on_frontend_ready(self):
         # 前端加载完成后向前端发送通知
         from ECL.api.events import emit
+
         emit("launcher:notify", {"message": "你好世界", "type": "info"})
 
     @Plugin.on("plugin:pre_disable")

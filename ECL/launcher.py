@@ -13,7 +13,6 @@ logger = get_logger("launcher")
 
 
 class EuoraCraftLauncher:
-
     def __init__(self):
         self.config = None
         self.debug_mode = False
@@ -95,8 +94,8 @@ class EuoraCraftLauncher:
 
     def __find_resource_dir(self, relative) -> Path | None:
         # 打包模式：从 PyInstaller 临时解压目录查找
-        if getattr(sys, 'frozen', False):
-            base = Path(getattr(sys, '_MEIPASS', '.'))
+        if getattr(sys, "frozen", False):
+            base = Path(getattr(sys, "_MEIPASS", "."))
             p = base / relative
             if p.is_dir():
                 return p
@@ -126,6 +125,7 @@ class EuoraCraftLauncher:
             LoggerManager().set_level(logging.DEBUG)
             logger.debug("调试模式已启用")
             import json as _json
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("完整配置内容：\n%s", _json.dumps(self.config, ensure_ascii=False, indent=2))
 
@@ -143,9 +143,7 @@ class EuoraCraftLauncher:
             if latest_release:
                 try:
                     logger.info(f"正在预加载 Fabric 版本: {latest_release}")
-                    fabric_versions = await asyncio.to_thread(
-                        self.state.get_games.get_fabric_versions, latest_release
-                    )
+                    fabric_versions = await asyncio.to_thread(self.state.get_games.get_fabric_versions, latest_release)
                     if fabric_versions:
                         fabric_versions["_game_version"] = latest_release
                     self.state.get_games._cached_fabric_versions = fabric_versions
@@ -161,20 +159,23 @@ class EuoraCraftLauncher:
                 first_path = first.get("path", "") if isinstance(first, dict) else str(first)
                 if first_path:
                     logger.info(f"正在预扫描已安装版本: {first_path}")
-                    from pathlib import Path as _Path
                     import json as _json
+                    from pathlib import Path as _Path
+
                     versions_dir = _Path(first_path) / "versions"
                     cached_local = []
                     if versions_dir.is_dir():
                         for vjson in versions_dir.glob("*/*.json"):
                             try:
                                 data = _json.loads(vjson.read_text("utf-8"))
-                                cached_local.append({
-                                    "id": vjson.parent.name,
-                                    "type": data.get("type", "unknown"),
-                                    "inheritsFrom": data.get("inheritsFrom"),
-                                    "path": str(vjson.parent),
-                                })
+                                cached_local.append(
+                                    {
+                                        "id": vjson.parent.name,
+                                        "type": data.get("type", "unknown"),
+                                        "inheritsFrom": data.get("inheritsFrom"),
+                                        "path": str(vjson.parent),
+                                    }
+                                )
                             except (OSError, ValueError, KeyError):
                                 pass
                     self.state._cached_local_versions = cached_local
@@ -212,7 +213,7 @@ class EuoraCraftLauncher:
             self.__setup_debug_mode()
 
             # 后台预加载版本列表（不阻塞启动）
-            asyncio.create_task(self.__preload_version_list())
+            _ = asyncio.create_task(self.__preload_version_list()) # noqa: RUF006
 
         except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"Phase 3 收尾阶段异常: {e}")
@@ -229,7 +230,7 @@ class EuoraCraftLauncher:
             return self.__init_launcher_sync()
 
     def __init_launcher_sync(self) -> bool:
-        logger.info("EuoraCraft Launcher 启动中（同步模式）...")
+        logger.info("EuoraCraft Launcher 启动中...")
 
         try:
             self.__init_system_test()

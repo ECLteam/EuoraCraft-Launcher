@@ -39,10 +39,13 @@ class GetGamesFabricInstallTests(unittest.TestCase):
             def fake_get(url: str, *args, **kwargs):
                 if "fabric" in url:
                     return FakeResponse('{"id": "fabric-profile"}', {"version": "0.11.2"})
-                return FakeResponse("", {
-                    "latest": {"release": "1.20.1", "snapshot": "1.20.1"},
-                    "versions": [{"id": "1.20.1", "type": "release"}],
-                })
+                return FakeResponse(
+                    "",
+                    {
+                        "latest": {"release": "1.20.1", "snapshot": "1.20.1"},
+                        "versions": [{"id": "1.20.1", "type": "release"}],
+                    },
+                )
 
             with patch("ECL.game.Core.C_GetGames.requests.get", side_effect=fake_get):
                 result = game.download_fabric(game_path, "1.20.1", "0.11.2", download_vanilla=False)

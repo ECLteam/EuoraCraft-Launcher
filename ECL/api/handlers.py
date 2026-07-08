@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import inspect
 import json
 import os
@@ -7,22 +8,21 @@ import re
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import keyring
+import pyperclip
 import requests
-
-try:
-    import pyperclip
-    HAS_PYPERCLIP = True
-except ImportError:
-    HAS_PYPERCLIP = False
 
 from ..common.logger import get_logger
 from ..common.state import AppState
 from ..game.Core import get_avatar_data_url as get_avatar_func
-
+from ..mods.manager import ModManager
+from ..mods.pack import ModpackManager
+from ..mods.search import OnlineModSearch
+from ..resources.manager import ResourceManager
 
 logger = get_logger("api")
 
@@ -34,10 +34,6 @@ _IMAGE_MIME_MAP = {
     ".jpeg": "image/jpeg",
     ".bmp": "image/bmp",
 }
-
-
-def _get_project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def make_json_safe(obj: Any) -> Any:
@@ -83,10 +79,12 @@ class Api:
         except (KeyError, TypeError, ValueError) as e:
             logger.error(f"config_get 失败: {e}")
             return {"success": False, "message": str(e), "data": None}
+
     def config_set(self, section: str, data: dict[str, Any]) -> dict[str, Any]:
         # 设置指定配置分区
         try:
             from ..api.events import emit_plugin_event
+
             cfg = self._config_manager.config
             if not cfg or not isinstance(cfg, list) or len(cfg) == 0:
                 cfg = self._config_manager._get_default_config()
@@ -121,6 +119,7 @@ class Api:
         except (KeyError, TypeError, ValueError) as e:
             logger.error(f"config_list 失败: {e}")
             return {"success": False, "message": str(e), "data": []}
+
     def config_get_many(self, sections: list[str]) -> dict[str, Any]:
         # 批量获取多个配置分区
         try:
@@ -163,8 +162,6 @@ class Api:
             "update_theme_config",
             "get_download_config",
             "update_download_config",
-            "get_mouse_effect_config",
-            "update_mouse_effect_config",
             "get_locale_config",
             "update_locale_config",
             "select_directory",
@@ -172,6 +169,10 @@ class Api:
             "scan_versions_in_path",
             "get_minecraft_versions",
             "get_fabric_versions",
+            "get_forge_versions",
+            "get_neoforge_versions",
+            "get_optifine_versions",
+            "get_quilt_versions",
             "install_version",
             "uninstall_version",
             "ping",
@@ -187,6 +188,8 @@ class Api:
             "switch_account",
             "remove_account",
             "refresh_account_profile",
+            "add_authlib_account",
+            "get_authlib_servers",
             "get_game_instances",
             "launch_instance",
             "get_launch_status",
@@ -206,6 +209,10 @@ class Api:
             "plugin_get_routes",
             "plugin_call_command",
             "plugin_get_slots",
+            "search_mods",
+            "get_mod_info",
+            "get_mod_versions",
+            "download_mod",
             "frontend_ready",
         ]
 
@@ -223,7 +230,7 @@ class Api:
 
     def get_user_agreement_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
+            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
             if agreement_file.exists():
                 with agreement_file.open(encoding="utf-8") as f:
                     data = json.load(f)
@@ -239,7 +246,7 @@ class Api:
 
     def save_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
+            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
             agreement_file.parent.mkdir(parents=True, exist_ok=True)
             data = kwargs.get("data")
             if data is None and args:
@@ -248,6 +255,7 @@ class Api:
             with agreement_file.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             from ..api.events import emit_plugin_event
+
             emit_plugin_event("user:agreed", {"uuid": data.get("uuid", "")})
             return {"success": True, "data": data, "message": "用户协议已保存"}
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
@@ -256,7 +264,7 @@ class Api:
 
     def clear_user_agreement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
-            agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
+            agreement_file = self._config_manager.config_path.parent / "user_agreement.json"
             if agreement_file.exists():
                 agreement_file.unlink()
             return {"success": True, "message": "用户协议已清除"}
@@ -534,8 +542,9 @@ class Api:
         from tkinter import filedialog
 
         result = self._ask_file_dialog(
-            filedialog.askopenfilename, "选择图片",
-            [("Image files", "*.jpg;*.jpeg;*.png;*.gif;*.webp"), ("All files", "*.*")]
+            filedialog.askopenfilename,
+            "选择图片",
+            [("Image files", "*.jpg;*.jpeg;*.png;*.gif;*.webp"), ("All files", "*.*")],
         )
         if result["success"]:
             return self.load_image_from_local(result["data"]["path"])
@@ -609,14 +618,6 @@ class Api:
         self._config_manager.update_download_config(download_config)
         return {"success": True, "message": "下载配置更新成功"}
 
-    def get_mouse_effect_config(self) -> dict[str, Any]:
-        config = self._config_manager.get_mouse_effect_config()
-        return {"success": True, "message": "鼠标点击效果配置获取成功", "data": config}
-
-    def update_mouse_effect_config(self, mouse_effect_config: dict[str, Any]) -> dict[str, Any]:
-        self._config_manager.update_mouse_effect_config(mouse_effect_config)
-        return {"success": True, "message": "鼠标点击效果配置已更新"}
-
     def get_locale_config(self) -> dict[str, Any]:
         config = self._config_manager.get_locale_config()
         return {"success": True, "data": config, "message": "获取成功"}
@@ -638,11 +639,13 @@ class Api:
         from tkinter import filedialog
 
         result = self._ask_file_dialog(
-            filedialog.askopenfilename, "选择 Java 可执行文件",
-            [("Java Executable", "*.exe;java"), ("All files", "*.*")]
+            filedialog.askopenfilename,
+            "选择 Java 可执行文件",
+            [("Java Executable", "*.exe;java"), ("All files", "*.*")],
         )
         if result.get("success") and result.get("data", {}).get("path"):
             from ..api.events import emit_plugin_event
+
             emit_plugin_event("java:selected", {"path": result["data"]["path"]})
         return result
 
@@ -696,23 +699,28 @@ class Api:
 
                         is_broken = not jar_path.exists()
 
-                        scan_results.append({
-                            "id": folder_name,
-                            "versionId": folder_name,
-                            "displayName": data.get("displayName", folder_name),
-                            "primaryLoader": primary_loader,
-                            "vanillaName": inherits_from or data.get("id", folder_name),
-                            "hasForge": has_forge,
-                            "hasNeoForge": has_neoforge,
-                            "hasFabric": has_fabric,
-                            "hasQuilt": has_quilt,
-                            "isBroken": is_broken,
-                            "jsonPath": str(vjson),
-                        })
+                        scan_results.append(
+                            {
+                                "id": folder_name,
+                                "versionId": folder_name,
+                                "displayName": data.get("displayName", folder_name),
+                                "primaryLoader": primary_loader,
+                                "vanillaName": inherits_from or data.get("id", folder_name),
+                                "hasForge": has_forge,
+                                "hasNeoForge": has_neoforge,
+                                "hasFabric": has_fabric,
+                                "hasQuilt": has_quilt,
+                                "isBroken": is_broken,
+                                "jsonPath": str(vjson),
+                            }
+                        )
                     except (OSError, ValueError):
                         continue
             from ..api.events import emit_plugin_event
-            emit_plugin_event("version:scanned", {"count": len(scan_results), "versions": [v["id"] for v in scan_results]})
+
+            emit_plugin_event(
+                "version:scanned", {"count": len(scan_results), "versions": [v["id"] for v in scan_results]}
+            )
             return {"success": True, "data": scan_results}
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             logger.error(f"扫描版本失败: {e}")
@@ -739,11 +747,13 @@ class Api:
                     vid = v.get("id")
                     if not vid:
                         continue
-                    versions.append({
-                        "id": vid,
-                        "type": mapped_type,
-                        "releaseTime": v.get("releaseTime"),
-                    })
+                    versions.append(
+                        {
+                            "id": vid,
+                            "type": mapped_type,
+                            "releaseTime": v.get("releaseTime"),
+                        }
+                    )
 
             if filter_type and filter_type != "all":
                 versions = [v for v in versions if v["type"] == filter_type]
@@ -760,11 +770,14 @@ class Api:
             # 若缓存命中且版本号匹配，直接返回
             cached = self._state.get_games._cached_fabric_versions
             if cached and cached.get("_game_version") == game_version:
-                return {"success": True, "data": {
-                    "all": cached.get("All", []),
-                    "stable": cached.get("Stable", []),
-                    "unstable": cached.get("NotStable", []),
-                }}
+                return {
+                    "success": True,
+                    "data": {
+                        "all": cached.get("All", []),
+                        "stable": cached.get("Stable", []),
+                        "unstable": cached.get("NotStable", []),
+                    },
+                }
             result = self._state.get_games.get_fabric_versions(game_version)
             if result is None:
                 # 可能是版本号不被 Fabric 支持（如远古版本），返回空列表不算失败
@@ -779,14 +792,143 @@ class Api:
             logger.error(f"获取 Fabric 版本列表失败: {e}")
             return {"success": False, "message": str(e), "data": None}
 
+    def get_forge_versions(self, game_version: str | None = None) -> dict[str, Any]:
+        """获取指定 Minecraft 版本对应的 Forge 加载器版本列表。"""
+        if not game_version:
+            return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+        try:
+            cached = self._state.get_games._cached_forge_versions
+            if cached and cached.get("_game_version") == game_version:
+                return {
+                    "success": True,
+                    "data": {
+                        "all": cached.get("All", []),
+                        "stable": cached.get("Stable", []),
+                        "unstable": cached.get("NotStable", []),
+                    },
+                }
+            result = self._state.get_games.get_forge_versions(game_version)
+            if result is None:
+                return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+            # 标记缓存对应的游戏版本
+            result["_game_version"] = game_version
+            data = {
+                "all": result.get("All", []),
+                "stable": result.get("Stable", []),
+                "unstable": result.get("NotStable", []),
+            }
+            return {"success": True, "data": data}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取 Forge 版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    def get_neoforge_versions(self, game_version: str | None = None) -> dict[str, Any]:
+        """获取指定 Minecraft 版本对应的 NeoForge 加载器版本列表。"""
+        if not game_version:
+            return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+        try:
+            cached = self._state.get_games._cached_neoforge_versions
+            if cached and cached.get("_game_version") == game_version:
+                return {
+                    "success": True,
+                    "data": {
+                        "all": cached.get("All", []),
+                        "stable": cached.get("Stable", []),
+                        "unstable": cached.get("NotStable", []),
+                    },
+                }
+            result = self._state.get_games.get_neoforge_versions(game_version)
+            if result is None:
+                return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+            result["_game_version"] = game_version
+            data = {
+                "all": result.get("All", []),
+                "stable": result.get("Stable", []),
+                "unstable": result.get("NotStable", []),
+            }
+            return {"success": True, "data": data}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取 NeoForge 版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    def get_optifine_versions(self, game_version: str | None = None) -> dict[str, Any]:
+        """获取指定 Minecraft 版本对应的 OptiFine 版本列表。"""
+        if not game_version:
+            return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+        try:
+            cached = self._state.get_games._cached_optifine_versions
+            if cached and cached.get("_game_version") == game_version:
+                return {
+                    "success": True,
+                    "data": {
+                        "all": cached.get("All", []),
+                        "stable": cached.get("Stable", []),
+                        "unstable": cached.get("NotStable", []),
+                    },
+                }
+            result = self._state.get_games.get_optifine_versions(game_version)
+            if result is None:
+                return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+            result["_game_version"] = game_version
+            data = {
+                "all": result.get("All", []),
+                "stable": result.get("Stable", []),
+                "unstable": result.get("NotStable", []),
+            }
+            return {"success": True, "data": data}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取 OptiFine 版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
+    def get_quilt_versions(self, game_version: str | None = None) -> dict[str, Any]:
+        """获取指定 Minecraft 版本对应的 Quilt 加载器版本列表。"""
+        if not game_version:
+            return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+        try:
+            cached = self._state.get_games._cached_quilt_versions
+            if cached and cached.get("_game_version") == game_version:
+                return {
+                    "success": True,
+                    "data": {
+                        "all": cached.get("All", []),
+                        "stable": cached.get("Stable", []),
+                        "unstable": cached.get("NotStable", []),
+                    },
+                }
+            result = self._state.get_games.get_quilt_versions(game_version)
+            if result is None:
+                return {"success": True, "data": {"all": [], "stable": [], "unstable": []}}
+            result["_game_version"] = game_version
+            data = {
+                "all": result.get("All", []),
+                "stable": result.get("Stable", []),
+                "unstable": result.get("NotStable", []),
+            }
+            return {"success": True, "data": data}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            logger.error(f"获取 Quilt 版本列表失败: {e}")
+            return {"success": False, "message": str(e), "data": None}
+
     async def install_version(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params = params or {}
         version_id = params.get("version_id", "")
         version_name = params.get("version_name", version_id)
         loader_type = params.get("loader_type", "vanilla")
         fabric_version = params.get("fabric_version")
+        forge_version = params.get("forge_version")
+        neoforge_version = params.get("neoforge_version")
+        optifine_version = params.get("optifine_version")
+        optifine_type = params.get("optifine_type", "")
+        optifine_patch = params.get("optifine_patch", "")
+        quilt_version = params.get("quilt_version")
         game_path = params.get("game_path")
         download_threads = params.get("download_threads", 32)
+
+        logger.info(
+            f"[install] params: version_id={version_id}, loader={loader_type}, "
+            f"fabric={fabric_version}, forge={forge_version}, neoforge={neoforge_version}, "
+            f"quilt={quilt_version}, name={version_name}, path={game_path}"
+        )
 
         if not version_id:
             return {"success": False, "message": "缺少 version_id 参数"}
@@ -801,7 +943,16 @@ class Api:
             emit_plugin_event("download:start", {"task_id": version_id, "total_size": 0})
 
             if loader_type == "fabric" and fabric_version:
-                emit("game:install_progress", {"phase": "install", "done": 0, "total": 2, "message": f"安装 Fabric {fabric_version} for {version_id}"})
+                logger.info(f"[install] → download_fabric({version_id}, {fabric_version})")
+                emit(
+                    "game:install_progress",
+                    {
+                        "phase": "install",
+                        "done": 0,
+                        "total": 2,
+                        "message": f"安装 Fabric {fabric_version} for {version_id}",
+                    },
+                )
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_fabric,
                     game_path=game_path,
@@ -810,8 +961,90 @@ class Api:
                     save_version_name=version_name,
                     download_max_thread=download_threads,
                 )
+            elif loader_type == "forge" and forge_version:
+                logger.info(f"[install] → download_forge({version_id}, {forge_version})")
+                emit(
+                    "game:install_progress",
+                    {
+                        "phase": "install",
+                        "done": 0,
+                        "total": 2,
+                        "message": f"安装 Forge {forge_version} for {version_id}",
+                    },
+                )
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_forge,
+                    game_path=game_path,
+                    game_version_id=version_id,
+                    forge_version=forge_version,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
+            elif loader_type == "neoforge" and neoforge_version:
+                logger.info(f"[install] → download_neoforge({version_id}, {neoforge_version})")
+                emit(
+                    "game:install_progress",
+                    {
+                        "phase": "install",
+                        "done": 0,
+                        "total": 2,
+                        "message": f"安装 NeoForge {neoforge_version} for {version_id}",
+                    },
+                )
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_neoforge,
+                    game_path=game_path,
+                    game_version_id=version_id,
+                    neoforge_version=neoforge_version,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
+            elif loader_type == "optifine" and optifine_version:
+                logger.info(f"[install] → download_optifine({version_id}, {optifine_version})")
+                emit(
+                    "game:install_progress",
+                    {
+                        "phase": "install",
+                        "done": 0,
+                        "total": 2,
+                        "message": f"安装 OptiFine {optifine_version} for {version_id}",
+                    },
+                )
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_optifine,
+                    game_path=game_path,
+                    game_version_id=version_id,
+                    optifine_version=optifine_version,
+                    optifine_type=optifine_type,
+                    optifine_patch=optifine_patch,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
+            elif loader_type == "quilt" and quilt_version:
+                logger.info(f"[install] → download_quilt({version_id}, {quilt_version})")
+                emit(
+                    "game:install_progress",
+                    {
+                        "phase": "install",
+                        "done": 0,
+                        "total": 2,
+                        "message": f"安装 Quilt {quilt_version} for {version_id}",
+                    },
+                )
+                ok = await asyncio.to_thread(
+                    self._state.get_games.download_quilt,
+                    game_path=game_path,
+                    game_version_id=version_id,
+                    quilt_version=quilt_version,
+                    save_version_name=version_name,
+                    download_max_thread=download_threads,
+                )
             else:
-                emit("game:install_progress", {"phase": "install", "done": 0, "total": 1, "message": f"下载原版 {version_id}"})
+                logger.info(f"[install] → download_minecraft vanilla ({version_id}), no loader version matched")
+                emit(
+                    "game:install_progress",
+                    {"phase": "install", "done": 0, "total": 1, "message": f"下载原版 {version_id}"},
+                )
                 ok = await asyncio.to_thread(
                     self._state.get_games.download_minecraft,
                     game_path=game_path,
@@ -820,6 +1053,7 @@ class Api:
                     download_max_thread=download_threads,
                 )
 
+            logger.info(f"[install] result: ok={ok}")
             if ok:
                 emit("game:install_progress", {"phase": "done", "done": 1, "total": 1, "message": "安装完成"})
                 emit_plugin_event("download:complete", {"task_id": version_id})
@@ -835,6 +1069,7 @@ class Api:
     def uninstall_version(self, version_id: str, game_path: str | None = None) -> dict[str, Any]:
         try:
             from shutil import rmtree
+
             from ..api.events import emit_plugin_event
 
             if not game_path:
@@ -871,6 +1106,7 @@ class Api:
     def add_offline_account(self, username: str) -> dict[str, Any]:
         try:
             from ..api.events import emit_plugin_event
+
             result = self._account_manager.add_offline_account(username)
             emit_plugin_event("account:login", {"account_type": "offline", "player_name": username})
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "添加成功")}
@@ -882,11 +1118,18 @@ class Api:
         try:
             result = self._account_manager.start_microsoft_login()
 
+            if result.get("needs_client_id"):
+                return {
+                    "success": True,
+                    "data": {"needs_client_id": True},
+                    "message": "需要配置 Microsoft 登录 Client ID",
+                }
+
             if result.get("status") == "pending":
                 verification_uri = result.get("verificationUri", "")
                 user_code = result.get("userCode", "")
 
-                if user_code and HAS_PYPERCLIP:
+                if user_code:
                     try:
                         pyperclip.copy(user_code)
                         logger.info(f"授权码已自动复制: {user_code}")
@@ -922,10 +1165,18 @@ class Api:
     def complete_microsoft_login(self) -> dict[str, Any]:
         try:
             from ..api.events import emit_plugin_event
+
             result = self._account_manager.complete_microsoft_login()
             if result.get("success"):
                 account = result.get("account", {})
-                emit_plugin_event("account:login", {"account_type": "microsoft", "player_name": account.get("alias", ""), "uuid": account.get("uuid", "")})
+                emit_plugin_event(
+                    "account:login",
+                    {
+                        "account_type": "microsoft",
+                        "player_name": account.get("alias", ""),
+                        "uuid": account.get("uuid", ""),
+                    },
+                )
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "登录成功")}
         except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"完成微软登录失败: {e}")
@@ -934,14 +1185,18 @@ class Api:
     def switch_account(self, account_id: str) -> dict[str, Any]:
         try:
             from ..api.events import emit_plugin_event
+
             old = self._account_manager.get_current_account()
             result = self._account_manager.switch_account(account_id)
             new = self._account_manager.get_current_account()
-            emit_plugin_event("account:switch", {
-                "from_type": old.get("type", "") if old else "",
-                "to_type": new.get("type", "") if new else "",
-                "player_name": new.get("alias", "") if new else "",
-            })
+            emit_plugin_event(
+                "account:switch",
+                {
+                    "from_type": old.get("type", "") if old else "",
+                    "to_type": new.get("type", "") if new else "",
+                    "player_name": new.get("alias", "") if new else "",
+                },
+            )
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "切换成功")}
         except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"切换账户失败: {e}")
@@ -950,9 +1205,12 @@ class Api:
     def remove_account(self, account_id: str) -> dict[str, Any]:
         try:
             from ..api.events import emit_plugin_event
+
             account = self._account_manager.get_account_by_id(account_id)
             result = self._account_manager.remove_account(account_id)
-            emit_plugin_event("account:logout", {"account_type": account.get("type", "") if account else "", "account_id": account_id})
+            emit_plugin_event(
+                "account:logout", {"account_type": account.get("type", "") if account else "", "account_id": account_id}
+            )
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "移除成功")}
         except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"移除账户失败: {e}")
@@ -962,15 +1220,39 @@ class Api:
         try:
             result = self._account_manager.refresh_account_profile(account_id)
             from ..api.events import emit_plugin_event
+
             account = self._account_manager.get_account_by_id(account_id)
-            emit_plugin_event("account:profile_refreshed", {
-                "account_type": account.get("type", "") if account else "",
-                "player_name": account.get("alias", "") if account else "",
-            })
+            emit_plugin_event(
+                "account:profile_refreshed",
+                {
+                    "account_type": account.get("type", "") if account else "",
+                    "player_name": account.get("alias", "") if account else "",
+                },
+            )
             return {"success": True, "data": make_json_safe(result), "message": result.get("message", "刷新成功")}
         except (ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"刷新账户档案失败: {e}")
             return {"success": False, "message": str(e)}
+
+    def add_authlib_account(self, server_url: str, email: str, password: str) -> dict[str, Any]:
+        """添加外置登录（Authlib-Injector）账户。"""
+        try:
+            from ..api.events import emit_plugin_event
+
+            result = self._account_manager.add_authlib_account(server_url, email, password)
+            emit_plugin_event("account:login", {"account_type": "authlib", "server_url": server_url, "email": email})
+            return {"success": True, "data": make_json_safe(result), "message": result.get("message", "添加成功")}
+        except (ValueError, KeyError, OSError, RuntimeError) as e:
+            logger.error(f"添加外置登录账户失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    def get_authlib_servers(self) -> dict[str, Any]:
+        """返回预设的 Authlib-Injector 外置登录服务器列表。"""
+        servers = [
+            {"name": "LittleSkin", "url": "https://littleskin.cn/api/yggdrasil", "description": "LittleSkin 皮肤站"},
+            {"name": "Blessing Skin", "url": "", "description": "自建 Blessing Skin 皮肤站（请自行填写地址）"},
+        ]
+        return {"success": True, "data": servers}
 
     def get_game_instances(self) -> dict[str, Any]:
         try:
@@ -1026,13 +1308,10 @@ class Api:
                 return {"success": False, "message": "账户系统未初始化"}
 
             # 删除密钥环中的加密密钥
-            try:
+            with contextlib.suppress(RuntimeError, OSError, ValueError):
                 keyring.delete_password(auth.encryption.service_name, "encryption_key")
-            except (RuntimeError, OSError, ValueError):
-                pass
 
             # 删除本地 salt 文件和账户文件
-            data_dir = auth.encryption.data_dir
             salt_file = auth.encryption.salt_file
             accounts_file = auth.accounts_file
 
@@ -1086,8 +1365,22 @@ class Api:
             auth_uuid = current.get("uuid", "")
             access_token = self._state.account_manager.get_current_account_token() or "None"
 
+            # Authlib 外置登录参数
+            authlib_injector_path = None
+            authlib_server = None
+            if current.get("type") == "authlib":
+                am = self._state.account_manager
+                inj_manager = am.get_authlib_injector_manager()
+                authlib_injector_path = str(inj_manager.get_path())
+                authlib_server = current.get("auth_server", "")
+
             # 插件事件：游戏启动前（可取消）
-            pre_payload = {"version_id": version_id, "player_name": player_name, "user_type": user_type, "options": params}
+            pre_payload = {
+                "version_id": version_id,
+                "player_name": player_name,
+                "user_type": user_type,
+                "options": params,
+            }
             pre_results = emit_plugin_event("game:pre_launch", pre_payload)
             if any(r is False for r in pre_results):
                 emit("game:launch_progress", {"phase": "error", "message": "启动被插件阻止"})
@@ -1113,6 +1406,8 @@ class Api:
                 window_height=params.get("height", 480),
                 custom_jvm_params=params.get("jvm_args"),
                 download_max_thread=params.get("download_threads", 32),
+                authlib_injector_path=authlib_injector_path,
+                authlib_server=authlib_server,
             )
 
             # 检查是否被取消
@@ -1129,7 +1424,9 @@ class Api:
             logger.error(f"启动游戏失败: {e}")
             emit("game:launch_progress", {"phase": "error", "message": str(e)})
             # 插件事件：启动失败
-            emit_plugin_event("game:exit", {"version_id": params.get("version_id", ""), "exit_code": -1, "reason": str(e)})
+            emit_plugin_event(
+                "game:exit", {"version_id": params.get("version_id", ""), "exit_code": -1, "reason": str(e)}
+            )
             return {"success": False, "message": str(e)}
 
     # TODO: 实现启动进度查询功能
@@ -1139,6 +1436,7 @@ class Api:
     def stop_instance(self, instance_id: str) -> dict[str, Any]:
         try:
             from ..api.events import emit_plugin_event
+
             im = self._state.launcher_core.instances_manager
             running_instances = im.get_instances_info()
             if not any(inst["ID"] == instance_id for inst in running_instances):
@@ -1175,8 +1473,11 @@ class Api:
                 logger.info(f"[plugin-reload] 开始重载插件: {plugin_name}, cascade={kwargs.get('cascade', False)}")
             result = fw_method(fw, **kwargs)
             if action == "reload":
-                logger.info(f"[plugin-reload] 重载结果: {plugin_name} -> success={result.get('success')}, message={result.get('message', '')}")
+                logger.info(
+                    f"[plugin-reload] 重载结果: {plugin_name} -> success={result.get('success')}, message={result.get('message', '')}"
+                )
             from ..api.events import emit
+
             emit("plugin:status_changed", {"name": plugin_name, "action": action, "result": result})
             return result
         except (RuntimeError, OSError, ValueError, TypeError) as e:
@@ -1220,11 +1521,14 @@ class Api:
         return self._plugin_action(plugin_name, "unload", lambda fw: fw.unload_plugin(plugin_name))
 
     def plugin_reload(self, plugin_name: str, cascade: bool = False) -> dict[str, Any]:
-        return self._plugin_action(plugin_name, "reload", lambda fw: fw.reload_plugin(plugin_name, cascade=cascade), cascade=cascade)
+        return self._plugin_action(
+            plugin_name, "reload", lambda fw: fw.reload_plugin(plugin_name, cascade=cascade), cascade=cascade
+        )
 
     def plugin_install(self, plugin_path: str) -> dict[str, Any]:
-        import zipfile
         import shutil
+        import zipfile
+
         fw = self._get_plugin_framework()
         if fw is None:
             return {"success": False, "message": "插件框架未启用"}
@@ -1251,6 +1555,7 @@ class Api:
                 result = fw.load_plugin(plugin_name)
                 if result.get("success"):
                     from ..api.events import emit
+
                     emit("plugin:installed", {"name": plugin_name})
                 return result
             else:
@@ -1280,6 +1585,7 @@ class Api:
                 result = fw.load_plugin(plugin_name)
                 if result.get("success"):
                     from ..api.events import emit
+
                     emit("plugin:installed", {"name": plugin_name})
                 return result
         except (zipfile.BadZipFile, json.JSONDecodeError, OSError, KeyError, ValueError) as e:
@@ -1318,6 +1624,89 @@ class Api:
             return {"success": True, "data": {}}
         return {"success": True, "data": fw.get_html_slots()}
 
+    # ── ModManager 委托方法 ──
+
+    def get_mods(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return {"success": True, "data": ModManager.get_mods(path)}
+
+    def toggle_mod(self, game_path: str | None = None, filename: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModManager.toggle_mod(path, filename)
+
+    def add_mod(self, game_path: str | None = None, source_path: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModManager.add_mod(path, source_path)
+
+    def remove_mod(self, game_path: str | None = None, filename: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModManager.remove_mod(path, filename)
+
+    def open_mods_folder(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModManager.open_mods_folder(path)
+
+    # ── ModpackManager 委托方法 ──
+
+    def detect_modpack_type(self, file_path: str = "") -> dict[str, Any]:
+        return ModpackManager.detect_modpack_type(file_path)
+
+    def import_modpack(
+        self, file_path: str = "", game_path: str = "", version_name: str = "", download_threads: int = 32
+    ) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModpackManager.import_modpack(file_path, path, version_name, download_threads)
+
+    def export_modpack(
+        self,
+        game_path: str = "",
+        output_path: str = "",
+        format: str = "curseforge",
+        name: str = "",
+        version: str = "",
+        author: str = "",
+    ) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ModpackManager.export_modpack(path, output_path, format, name, version, author)
+
+    # ── ResourceManager 委托方法 ──
+
+    def list_resourcepacks(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return {"success": True, "data": ResourceManager.list_resourcepacks(path)}
+
+    def list_shaderpacks(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return {"success": True, "data": ResourceManager.list_shaderpacks(path)}
+
+    def list_saves(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return {"success": True, "data": ResourceManager.list_saves(path)}
+
+    def remove_resourcepack(self, game_path: str | None = None, filename: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.remove_resourcepack(path, filename)
+
+    def remove_shaderpack(self, game_path: str | None = None, filename: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.remove_shaderpack(path, filename)
+
+    def delete_save(self, game_path: str | None = None, save_name: str = "") -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.delete_save(path, save_name)
+
+    def open_resourcepacks_folder(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.open_resourcepacks_folder(path)
+
+    def open_shaderpacks_folder(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.open_shaderpacks_folder(path)
+
+    def open_saves_folder(self, game_path: str | None = None) -> dict[str, Any]:
+        path = game_path or self._get_first_game_path()
+        return ResourceManager.open_saves_folder(path)
+
     async def exec_action(self, payload: dict | None = None) -> dict[str, Any]:
         # 通用命令分发器，供前端 exec_action 调用。
         # 前端传入形如 { name: str, params: any } 的对象，本方法负责将 name 映射到具体的 Api 方法并调用。
@@ -1336,10 +1725,13 @@ class Api:
                 "java_list": "get_java_list",
                 "minecraft_versions": "get_minecraft_versions",
                 "fabric_versions": "get_fabric_versions",
+                "forge_versions": "get_forge_versions",
+                "neoforge_versions": "get_neoforge_versions",
+                "optifine_versions": "get_optifine_versions",
+                "quilt_versions": "get_quilt_versions",
                 "scan_versions": "scan_versions_in_path",
                 "install_version": "install_version",
                 "uninstall_version": "uninstall_version",
-
                 "accounts_list": "get_accounts",
                 "accounts_current": "get_current_account",
                 "accounts_add_offline": "add_offline_account",
@@ -1349,31 +1741,48 @@ class Api:
                 "accounts_switch": "switch_account",
                 "accounts_remove": "remove_account",
                 "accounts_refresh_profile": "refresh_account_profile",
-
+                "accounts_add_authlib": "add_authlib_account",
+                "authlib_servers": "get_authlib_servers",
                 "user_agreement_get": "get_user_agreement_status",
                 "user_agreement_save": "save_user_agreement",
                 "user_agreement_clear": "clear_user_agreement",
-
                 "image_fetch_data_url": "fetch_image_data_url",
                 "image_save_url": "load_image_from_url",
                 "image_read_file": "load_image_from_local",
-
                 "select_directory": "select_directory",
                 "select_java": "select_java_executable",
                 "select_image": "select_local_image",
                 "avatar_data_url": "get_avatar_data_url",
-
                 "instances_list": "get_game_instances",
                 "launch_instance": "launch_instance",
                 "cancel_launch": "cancel_launch",
                 "instance_stop": "stop_instance",
-
                 "launcher_info": "get_launcher_config",
                 "set_master_password": "set_master_password",
                 "get_keyring_info": "get_keyring_info",
                 "clear_keyring": "clear_keyring",
-
                 "frontend_ready": "frontend_ready",
+                "search_mods": "search_mods",
+                "get_mod_info": "get_mod_info",
+                "get_mod_versions": "get_mod_versions",
+                "download_mod": "download_mod",
+                "get_mods": "get_mods",
+                "toggle_mod": "toggle_mod",
+                "add_mod": "add_mod",
+                "remove_mod": "remove_mod",
+                "open_mods_folder": "open_mods_folder",
+                "detect_modpack_type": "detect_modpack_type",
+                "import_modpack": "import_modpack",
+                "export_modpack": "export_modpack",
+                "list_resourcepacks": "list_resourcepacks",
+                "list_shaderpacks": "list_shaderpacks",
+                "list_saves": "list_saves",
+                "remove_resourcepack": "remove_resourcepack",
+                "remove_shaderpack": "remove_shaderpack",
+                "delete_save": "delete_save",
+                "open_resourcepacks_folder": "open_resourcepacks_folder",
+                "open_shaderpacks_folder": "open_shaderpacks_folder",
+                "open_saves_folder": "open_saves_folder",
             }
 
             # 文件系统与路径相关命令单独实现
@@ -1452,9 +1861,49 @@ class Api:
                     return await result if inspect.iscoroutine(result) else result
                 except (RuntimeError, OSError, ValueError, TypeError) as e:
                     return {"success": False, "message": f"调用失败: {e}"}
-            except (RuntimeError, OSError, ValueError, TypeError) as e:
+            except (RuntimeError, OSError, ValueError) as e:
                 return {"success": False, "message": f"调用失败: {e}"}
 
         except (RuntimeError, OSError, ValueError, TypeError) as e:
             logger.error(f"exec_action 调用失败: {e}")
             return {"success": False, "message": str(e)}
+
+    # ── OnlineModSearch 委托方法 ──
+
+    def _get_cf_api_key(self) -> str:
+        # 从配置中获取 CurseForge API Key
+        try:
+            cfg = self._config_manager.config
+            if cfg and isinstance(cfg, list) and len(cfg) > 0:
+                return cfg[0].get("curseforge_api_key", "")
+        except (KeyError, TypeError, ValueError):
+            pass
+        return ""
+
+    def search_mods(
+        self,
+        query: str = "",
+        loader: str = "",
+        version: str = "",
+        limit: int = 20,
+        offset: int = 0,
+        source: str = "both",
+    ) -> dict[str, Any]:
+        cf_api_key = self._get_cf_api_key()
+        return OnlineModSearch.search_mods(query, loader, version, limit, offset, source, cf_api_key)
+
+    def get_mod_info(self, project_id: str = "", source: str = "") -> dict[str, Any]:
+        cf_api_key = self._get_cf_api_key()
+        return OnlineModSearch.get_mod_info(project_id, source, cf_api_key)
+
+    def get_mod_versions(
+        self, project_id: str = "", source: str = "", loader: str = "", game_version: str = ""
+    ) -> list[dict[str, Any]]:
+        cf_api_key = self._get_cf_api_key()
+        return OnlineModSearch.get_mod_versions(project_id, source, loader, game_version, cf_api_key)
+
+    def download_mod(
+        self, project_id: str = "", version_id: str = "", source: str = "", game_path: str = "", filename: str = ""
+    ) -> dict[str, Any]:
+        cf_api_key = self._get_cf_api_key()
+        return OnlineModSearch.download_mod(project_id, version_id, source, game_path, filename, cf_api_key)

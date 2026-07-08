@@ -21,7 +21,6 @@ class PluginStatus(enum.Enum):
 
 
 class Plugin:
-
     # 类级别待处理事件处理器和事件定义，按 qualname 存储
     _pending_handlers: dict[str, list[tuple[str, bool]]] = {}
     _pending_provided_events: dict[str, list[tuple[str, str, list[str]]]] = {}
@@ -94,6 +93,7 @@ class Plugin:
 
     def inject_css(self, css: str) -> None:
         from ..api.events import emit
+
         emit("plugin:css_injected", {"plugin": self._name, "css": css})
 
     def inject_html(self, slot: str, html: str) -> None:
@@ -110,7 +110,13 @@ class Plugin:
 
     def inject_script(self, js: str) -> None:
         from ..api.events import emit
+
         emit("plugin:script_injected", {"plugin": self._name, "script": js})
+
+    def inject_typescript(self, ts: str) -> None:
+        from ..api.events import emit
+
+        emit("plugin:typescript_injected", {"plugin": self._name, "script": ts})
 
     def emit(self, event: str, *args: Any, **kwargs: Any) -> None:
         if self._framework._shutting_down:
@@ -121,11 +127,10 @@ class Plugin:
         if self._framework._shutting_down:
             return
         import asyncio
+
         try:
-            loop = asyncio.get_running_loop()
-            asyncio.create_task(
-                self._framework._event_registry.emit_async(event, *args, **kwargs)
-            )
+            asyncio.get_running_loop()
+            _ = asyncio.create_task(self._framework._event_registry.emit_async(event, *args, **kwargs)) # noqa: RUF006
         except RuntimeError:
             pass
 
@@ -133,10 +138,13 @@ class Plugin:
     def provide_event(name: str, desc: str = "", params: list[str] | None = None):
         def decorator(func):
             Plugin._pending_provided_events.setdefault(func.__qualname__, []).append((name, desc, params or []))
+
             @functools.wraps(func)
             def wrapper(*a, **kw):
                 return func(*a, **kw)
+
             return wrapper
+
         return decorator
 
     def _provide_event(self, name: str, desc: str = "", params: list[str] | None = None):
@@ -147,30 +155,39 @@ class Plugin:
                 description=desc,
                 params=params or [],
             )
+
             @functools.wraps(func)
             def wrapper(*a, **kw):
                 return func(*a, **kw)
+
             return wrapper
+
         return decorator
 
     @staticmethod
     def on(event: str, async_handler: bool = False):
         def decorator(func):
             Plugin._pending_handlers.setdefault(func.__qualname__, []).append((event, async_handler))
+
             @functools.wraps(func)
             def wrapper(*a, **kw):
                 return func(*a, **kw)
+
             return wrapper
+
         return decorator
 
     def _on(self, event: str, async_handler: bool = False):
         def decorator(func):
             self._framework._event_registry.subscribe(event, func, self._name, async_handler)
             self._event_handlers.setdefault(event, []).append(func)
+
             @functools.wraps(func)
             def wrapper(*a, **kw):
                 return func(*a, **kw)
+
             return wrapper
+
         return decorator
 
     def _bind_pending_handlers(self) -> None:

@@ -74,6 +74,15 @@ class TauriAdapter:
         logger.info("使用本地前端文件")
         return None
 
+    def resolve_frontend_path(self):
+        # 解析前端静态文件路径，默认 PyTauri 使用 frontend/ 目录
+        env = self._launcher.state.config_manager._env_loader
+        frontend_path = env.get("FRONTEND_PATH")
+        if frontend_path:
+            logger.info(f"环境变量覆盖: FRONTEND_PATH -> {frontend_path!s}")
+            return frontend_path
+        return None
+
     def post_init_events(self):
         # app 就绪后向前端推送初始化事件
         from ..api.events import emit
@@ -91,21 +100,27 @@ class TauriAdapter:
         version = cfg.get("version", "未知")
         version_type = cfg.get("version_type", "unknown")
         if version_type == "dev":
-            emit("launcher:notify", {
-                "type": "warning",
-                "title": "开发版本提醒",
-                "message": f"当前运行的是开发版本 v{version}，可能存在不稳定因素",
-            })
+            emit(
+                "launcher:notify",
+                {
+                    "type": "warning",
+                    "title": "开发版本提醒",
+                    "message": f"当前运行的是开发版本 v{version}，可能存在不稳定因素",
+                },
+            )
         elif version_type == "beta":
-            emit("launcher:notify", {
-                "type": "info",
-                "title": "测试版本提醒",
-                "message": f"当前运行的是测试版本 v{version}，可能存在一些问题",
-            })
+            emit(
+                "launcher:notify",
+                {
+                    "type": "info",
+                    "title": "测试版本提醒",
+                    "message": f"当前运行的是测试版本 v{version}，可能存在一些问题",
+                },
+            )
 
         # 用户协议检查
-        from ..api.handlers import _get_project_root
-        agreement_file = _get_project_root() / "ECL_Libs" / "user_agreement.json"
+        config_dir = self._launcher.state.config_manager.config_path.parent
+        agreement_file = config_dir / "user_agreement.json"
         if not agreement_file.exists():
             emit("launcher:agreement_required", {})
         else:
@@ -127,6 +142,7 @@ class TauriAdapter:
 
         src_tauri_dir = Path(__file__).parent.parent.parent.absolute()
         dev_server = self.resolve_dev_server()
+        frontend_path = self.resolve_frontend_path()
 
         tauri_config = (
             {
@@ -135,7 +151,7 @@ class TauriAdapter:
                 },
             }
             if dev_server is not None
-            else None
+            else ({"build": {"frontendDist": frontend_path}} if frontend_path is not None else None)
         )
 
         with start_blocking_portal("asyncio") as portal:
@@ -151,6 +167,7 @@ class TauriAdapter:
             exit_code = app.run_return()
             logger.info("应用已退出，开始清理资源...")
             import sys as _sys
+
             _sys.stdout.flush()
             _sys.stderr.flush()
             if launcher is not None:
@@ -164,6 +181,7 @@ _adapter_instance = TauriAdapter()
 
 
 # --- 门面函数（保持旧接口兼容）---
+
 
 def get_app_handle_obj():
     return _adapter_instance.app_handle_obj

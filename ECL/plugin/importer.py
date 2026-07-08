@@ -12,7 +12,6 @@ logger = get_logger("plugin.importer")
 
 
 class PluginImporter:
-
     def __init__(self, cache_root: str | Path):
         self._cache_root = Path(cache_root)
         self._plugin_libs: dict[str, dict[str, Path]] = {}
@@ -65,7 +64,6 @@ class PluginImporter:
 
 
 class _PluginMetaPathFinder(importlib.abc.MetaPathFinder):
-
     def __init__(self, plugin_name: str, libs: dict[str, Path]):
         self.plugin_name = plugin_name
         self.libs = libs

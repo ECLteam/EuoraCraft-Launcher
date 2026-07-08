@@ -1,0 +1,10 @@
+{
+  "name": "crash_analyzer",
+  "version": "1.0.0",
+  "title": "崩溃分析",
+  "description": "分析 Minecraft 崩溃报告，诊断常见问题",
+  "author": "ECLTeam",
+  "entry_point": "main:CrashAnalyzerPlugin",
+  "dependencies": { "plugins": {}, "third_party": {} },
+  "events": { "provided": ["crash:detected", "crash:analyzed"], "required": [] }
+}

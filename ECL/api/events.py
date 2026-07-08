@@ -51,6 +51,7 @@ def emit_plugin_event(event: str, *args: Any, _framework: Any | None = None, **k
     try:
         if _framework is None:
             from ..common.state import AppState
+
             state = AppState()
             _framework = getattr(state, "plugin_framework", None)
         if _framework is None:

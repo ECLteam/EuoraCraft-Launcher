@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import hashlib
 import os
 from collections.abc import Callable
@@ -102,10 +103,8 @@ class SmartKeyringManager:
                     else:
                         self.key = Fernet.generate_key()
                         self.key_file.write_bytes(self.key)
-                        try:
+                        with contextlib.suppress(OSError):
                             self.key_file.chmod(0o600)
-                        except OSError:
-                            pass
                     self.fernet = Fernet(self.key)
 
                 def set_password(self, service: str, username: str, password: str) -> None:

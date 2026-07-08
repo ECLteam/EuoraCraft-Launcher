@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .env import EnvLoader, convert_env_value, get_env_loader
+from .env import convert_env_value, get_env_loader
 from .logger import get_logger
 from .version import __version__, __version_type__
 
@@ -23,8 +23,13 @@ class ConfigManager:
                 "title": "EuoraCraft Launcher",
                 "locale": "zh-CN",
                 "background": {"type": "default", "path": "", "opacity": 0.2, "blur": 0},
-                "theme": {"mode": "system", "primary_color": "#4A7FD9", "blur_amount": 6, "sidebar_collapsed": True, "titlebar_hidden": True},
-                "mouse_effect": {"enabled": False, "color": "45,175,255", "scale": 1.5, "opacity": 1.0, "speed": 1.0},
+                "theme": {
+                    "mode": "system",
+                    "primary_color": "#4A7FD9",
+                    "blur_amount": 6,
+                    "sidebar_collapsed": True,
+                    "titlebar_hidden": True,
+                },
             },
             "game": {
                 "minecraft_paths": ["./.minecraft"],
@@ -335,23 +340,6 @@ class ConfigManager:
         self.save(self.config)
         logger.info("下载配置已更新")
 
-    def get_mouse_effect_config(self) -> dict[str, Any]:
-        return self.ui.get(
-            "mouse_effect", {"enabled": False, "color": "45,175,255", "scale": 1.5, "opacity": 1.0, "speed": 1.0}
-        )
-
-    def update_mouse_effect_config(self, mouse_effect_config: dict[str, Any]) -> None:
-        ui = self._ensure_ui_section()
-        ui["mouse_effect"] = {
-            "enabled": mouse_effect_config.get("enabled", False),
-            "color": mouse_effect_config.get("color", "45,175,255"),
-            "scale": mouse_effect_config.get("scale", 1.5),
-            "opacity": mouse_effect_config.get("opacity", 1.0),
-            "speed": mouse_effect_config.get("speed", 1.0),
-        }
-        self.save(self.config)
-        logger.info("鼠标点击效果配置已更新")
-
     def get_instances_config(self) -> list[dict[str, Any]]:
         return self._instances
 
@@ -363,7 +351,11 @@ class ConfigManager:
         logger.info(f"实例已创建: {instance_id}")
         try:
             from ..api.events import emit_plugin_event
-            emit_plugin_event("instance:created", {"instance_id": instance_id, "name": instance.get("name", ""), "version": instance.get("version", "")})
+
+            emit_plugin_event(
+                "instance:created",
+                {"instance_id": instance_id, "name": instance.get("name", ""), "version": instance.get("version", "")},
+            )
         except ImportError:
             pass
         return instance_id
@@ -384,6 +376,7 @@ class ConfigManager:
                 logger.info(f"实例已删除: {instance_id}")
                 try:
                     from ..api.events import emit_plugin_event
+
                     emit_plugin_event("instance:deleted", {"instance_id": instance_id, "name": name})
                 except ImportError:
                     pass

@@ -100,7 +100,9 @@ class FilesChecker:
         index_file_sha1 = version_json["assetIndex"]["sha1"]
         if C_Libs.get_file_sha1(asset_index_path) != index_file_sha1:
             try:
-                response = requests.get(f"{self.api_url.Meta}/v1/packages/{index_file_sha1}/{asset_id}.json", timeout=30)
+                response = requests.get(
+                    f"{self.api_url.Meta}/v1/packages/{index_file_sha1}/{asset_id}.json", timeout=30
+                )
                 response.raise_for_status()
                 asset_index_path.parent.mkdir(parents=True, exist_ok=True)
                 asset_index_path.write_text(response.text, encoding="utf-8")
@@ -135,7 +137,9 @@ class FilesChecker:
             return
         download_list = []
         try:
-            version_json = json.loads((game_path / "versions" / version_name / f"{version_name}.json").read_text("utf-8"))
+            version_json = json.loads(
+                (game_path / "versions" / version_name / f"{version_name}.json").read_text("utf-8")
+            )
         except json.JSONDecodeError as e:
             print(f"解析版本 json 失败: {e}")
             return

@@ -1,9 +1,47 @@
-from ECL.plugin.plugin import Plugin
 from ECL.common.logger import get_logger
+from ECL.plugin.plugin import Plugin
 
 logger = get_logger("mouse_effect")
 
 MOUSE_EFFECT_IFRAME = '<iframe src="/mouse-effect.html" class="mouse-effect-iframe" frameborder="0" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99998;"></iframe>'
+
+BRIDGE_SCRIPT = r"""
+const sdk = window.__plugin_sdk__
+if (!sdk) {
+  console.error('[mouse_effect] plugin-sdk 未加载')
+} else {
+  let bridge = null
+
+  function initBridge() {
+    if (bridge) bridge.destroy()
+    bridge = sdk.createIframeBridge({
+      selector: '.mouse-effect-iframe',
+      onConfigUpdate: function(iframe, _config) {
+        // 设置变更时由 settings_changed 事件处理
+      }
+    })
+  }
+
+  function updateIframeConfig() {
+    // 通过 postMessage 发送配置到 iframe
+    const iframes = document.querySelectorAll('.mouse-effect-iframe')
+    if (iframes.length === 0) return
+    // 配置值由后端 settings 系统管理，iframe 内部通过 postMessage 接收
+    // 此处仅确保桥接就绪
+  }
+
+  initBridge()
+
+  sdk.listen(sdk.Events.SETTINGS_CHANGED, function(payload) {
+    if (payload && payload.plugin === 'mouse_effect') {
+      // 延迟等 DOM 更新
+      setTimeout(function() {
+        initBridge()
+      }, 100)
+    }
+  })
+}
+"""
 
 SETTINGS_SCHEMA = {
     "enabled": {
@@ -57,7 +95,6 @@ SETTINGS_SCHEMA = {
 
 
 class MouseEffectPlugin(Plugin):
-
     def on_load(self):
         self.register_settings(SETTINGS_SCHEMA)
         logger.info("mouse effect plugin loaded")
@@ -83,3 +120,4 @@ class MouseEffectPlugin(Plugin):
 
         self._framework.clear_plugin_slots(self._name)
         self.inject_html("page-bottom", MOUSE_EFFECT_IFRAME)
+        self.inject_typescript(BRIDGE_SCRIPT)

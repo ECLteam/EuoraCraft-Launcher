@@ -89,7 +89,7 @@ def convert_env_value(raw, target):
 def singleton(cls):
     # 类装饰器，确保只有一个实例
     _instances = {}
-    _lock = __import__('threading').Lock()
+    _lock = __import__("threading").Lock()
 
     def wrapper(*args, **kwargs):
         with _lock:

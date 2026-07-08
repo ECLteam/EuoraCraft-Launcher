@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..common.logger import get_logger
 
@@ -9,7 +10,6 @@ logger = get_logger("plugin.registry")
 
 
 class ServiceRegistry:
-
     def __init__(self):
         self._services: dict[str, tuple[Any, str]] = {}
         self._lock = threading.Lock()
@@ -29,10 +29,7 @@ class ServiceRegistry:
 
     def list_services(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [
-                {"name": name, "provider": provider}
-                for name, (_, provider) in self._services.items()
-            ]
+            return [{"name": name, "provider": provider} for name, (_, provider) in self._services.items()]
 
     def unregister_by_provider(self, provider: str) -> None:
         with self._lock:
@@ -42,7 +39,7 @@ class ServiceRegistry:
 
 
 class EventInfo:
-    __slots__ = ("name", "plugin_name", "description", "params")
+    __slots__ = ("description", "name", "params", "plugin_name")
 
     def __init__(self, name: str, plugin_name: str, description: str = "", params: list[str] | None = None):
         self.name = name
@@ -60,14 +57,15 @@ class EventInfo:
 
 
 class EventRegistry:
-
     def __init__(self):
         self._events: dict[str, EventInfo] = {}
         self._subscribers: dict[str, list[tuple[Callable, str, bool]]] = {}
         self._lock = threading.RLock()
         self._pending_tasks: set = set()
 
-    def register_event(self, event_name: str, plugin_name: str, description: str = "", params: list[str] | None = None) -> None:
+    def register_event(
+        self, event_name: str, plugin_name: str, description: str = "", params: list[str] | None = None
+    ) -> None:
         with self._lock:
             self._events[event_name] = EventInfo(event_name, plugin_name, description, params)
 
@@ -86,18 +84,14 @@ class EventRegistry:
             if event not in self._subscribers:
                 return
             if subscriber:
-                self._subscribers[event] = [
-                    (h, s, a) for h, s, a in self._subscribers[event] if s != subscriber
-                ]
+                self._subscribers[event] = [(h, s, a) for h, s, a in self._subscribers[event] if s != subscriber]
             else:
                 self._subscribers[event] = []
 
     def unsubscribe_all(self, subscriber: str) -> None:
         with self._lock:
             for event in list(self._subscribers.keys()):
-                self._subscribers[event] = [
-                    (h, s, a) for h, s, a in self._subscribers[event] if s != subscriber
-                ]
+                self._subscribers[event] = [(h, s, a) for h, s, a in self._subscribers[event] if s != subscriber]
 
     def emit(self, event: str, *args: Any, **kwargs: Any) -> list[Any]:
         with self._lock:
@@ -107,6 +101,7 @@ class EventRegistry:
             try:
                 if is_async:
                     import asyncio
+
                     try:
                         loop = asyncio.get_running_loop()
                         task = loop.create_task(handler(*args, **kwargs))

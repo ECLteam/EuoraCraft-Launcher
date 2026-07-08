@@ -62,3 +62,12 @@ htmlcov/
 
 # Independent UI repository (managed separately)
 EuoraCraftLauncher-UI/
+
+.trae/
+.trae-html-share-packages/
+
+dep_cache/
+
+.uploads/
+
+.plugin_config/
