@@ -24,6 +24,13 @@ jobs:
         with:
           version: 11
 
+      - name: Validate FRONTEND_REPO
+        run: |
+          if [ -z "${FRONTEND_REPO}" ]; then
+            echo "::error::FRONTEND_REPO repository variable is not set. Please set it in GitHub repository settings (Settings > Secrets and variables > Variables) to the frontend repository, e.g., owner/EuoraCraftLauncher-UI."
+            exit 1
+          fi
+
       - name: Checkout frontend repo
         uses: actions/checkout@v4
         with:
