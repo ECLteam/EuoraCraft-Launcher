@@ -8,14 +8,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+
 jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -23,24 +22,34 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
 
-      - name: Checkout repo
+      - name: Validate FRONTEND_REPO
+        run: |
+          if [ -z "${FRONTEND_REPO}" ]; then
+            echo "::error::FRONTEND_REPO repository variable is not set. Please set it in GitHub repository settings (Settings > Secrets and variables > Variables) to the frontend repository, e.g., owner/EuoraCraftLauncher-UI."
+            exit 1
+          fi
+
+      - name: Checkout frontend repo
         uses: actions/checkout@v4
         with:
-          submodules: true
+          repository: ${{ env.FRONTEND_REPO }}
+          path: EuoraCraftLauncher-UI
 
       - name: Install frontend dependencies
+        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
+        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm build
 
       - name: Upload frontend dist
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: frontend/dist
+          path: EuoraCraftLauncher-UI/dist
           retention-days: 1
 
   build-windows:
@@ -81,7 +90,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher" .env
+          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher.exe" .env
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
