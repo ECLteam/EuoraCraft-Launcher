@@ -664,7 +664,7 @@ class MultiAccountMinecraftAuth:
             xsts_token, user_hash = self._get_xbox_chain_tokens(ms_token)
             if not xsts_token:
                 return {"success": False, "message": "Xbox 认证失败"}
-            mc_token = self._get_minecraft_token(xsts_token, user_hash)
+            mc_token, _ = self._get_minecraft_token(xsts_token, user_hash)
             if not mc_token:
                 return {"success": False, "message": "Minecraft 认证失败"}
             has_minecraft, profile = self._check_minecraft_ownership(mc_token)
