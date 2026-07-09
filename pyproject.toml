@@ -7,7 +7,7 @@ name = "EuoraCraft-Launcher"
 version = "0.1.0"
 description = "EuoraCraft Launcher"
 authors = [
-    {name = "ECLTeam", email = "EuoraCraft-Studio@outlook.com."},
+    {name = "ECLTeam", email = "EuoraCraft-Studio@outlook.com"},
 ]
 dependencies = [
     "pytauri-wheel>=0.8.0",
