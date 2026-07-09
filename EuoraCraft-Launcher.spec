@@ -1,11 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('EuoraCraftLauncher-UI/dist', 'frontend'),('resources', 'resources')],
+    datas=[('frontend/dist', 'frontend'), ('resources', 'resources')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
