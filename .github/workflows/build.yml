@@ -8,13 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
-
 jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -22,34 +23,24 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 10
 
-      - name: Validate FRONTEND_REPO
-        run: |
-          if [ -z "${FRONTEND_REPO}" ]; then
-            echo "::error::FRONTEND_REPO repository variable is not set. Please set it in GitHub repository settings (Settings > Secrets and variables > Variables) to the frontend repository, e.g., owner/EuoraCraftLauncher-UI."
-            exit 1
-          fi
-
-      - name: Checkout frontend repo
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.FRONTEND_REPO }}
-          path: EuoraCraftLauncher-UI
+          submodules: true
 
       - name: Install frontend dependencies
-        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm build
 
       - name: Upload frontend dist
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: EuoraCraftLauncher-UI/dist
+          path: frontend/dist
           retention-days: 1
 
   build-windows:
@@ -73,12 +64,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install pyinstaller
-
       - name: Write .env for build
         shell: bash
         run: |
           echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
-
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
@@ -90,8 +79,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher.exe" .env
-
+          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher" .env
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -126,17 +114,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install pyinstaller
-
       - name: Write .env for build
         run: |
           echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
-
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
@@ -147,7 +132,6 @@ jobs:
         run: |
           cd dist
           tar -czf "../EuoraCraft-Launcher-linux-x64.tar.gz" "EuoraCraft Launcher" .env
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -183,11 +167,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install pyinstaller
-
       - name: Write .env for build
         run: |
           echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
-
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
@@ -198,7 +180,6 @@ jobs:
         run: |
           cd dist
           tar -czf "../EuoraCraft-Launcher-macos-x64.tar.gz" "EuoraCraft Launcher" .env
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -234,11 +215,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install pyinstaller
-
       - name: Write .env for build
         run: |
           echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
-
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
@@ -249,7 +228,6 @@ jobs:
         run: |
           cd dist
           tar -czf "../EuoraCraft-Launcher-macos-arm64.tar.gz" "EuoraCraft Launcher" .env
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
