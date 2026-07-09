@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import copy_metadata
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('frontend/dist', 'frontend'), ('resources', 'resources')],
+    datas=[
+        ('frontend/dist', 'frontend'),
+        ('resources', 'resources'),
+    ] + copy_metadata('pytauri-wheel'),
     hiddenimports=[
         'requests',
         'requests.adapters',
@@ -26,6 +30,9 @@ a = Analysis(
         'idna',
         'urllib3',
         'certifi',
+        'pytauri',
+        'pytauri.ffi',
+        'pytauri.ffi._ext_mod',
     ],
     hookspath=[],
     hooksconfig={},
