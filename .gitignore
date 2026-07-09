@@ -23,7 +23,7 @@ dist/
 !EuoraCraft-Launcher.spec
 
 # Frontend build output
-frontend/
+frontend/dist/
 
 # Tauri build output
 src-tauri/target/

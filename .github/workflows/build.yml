@@ -8,13 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
-
 jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -22,34 +23,24 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 10
 
-      - name: Validate FRONTEND_REPO
-        run: |
-          if [ -z "${FRONTEND_REPO}" ]; then
-            echo "::error::FRONTEND_REPO repository variable is not set. Please set it in GitHub repository settings (Settings > Secrets and variables > Variables) to the frontend repository, e.g., owner/EuoraCraftLauncher-UI."
-            exit 1
-          fi
-
-      - name: Checkout frontend repo
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.FRONTEND_REPO }}
-          path: EuoraCraftLauncher-UI
+          submodules: true
 
       - name: Install frontend dependencies
-        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
-        working-directory: ./EuoraCraftLauncher-UI
         run: pnpm build
 
       - name: Upload frontend dist
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: EuoraCraftLauncher-UI/dist
+          path: frontend/dist
           retention-days: 1
 
   build-windows:
