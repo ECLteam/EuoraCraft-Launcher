@@ -65,23 +65,30 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
-      - name: Write .env for build
+      - name: Inject MICROSOFT_CLIENT_ID
         shell: bash
+        env:
+          CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
         run: |
-          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+          python - <<'PY'
+          import os, re
+          path = "ECL/common/build_env.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          cid = os.environ["CLIENT_ID"]
+          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PY
 
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
-
-      - name: Copy .env to dist
-        shell: bash
-        run: cp .env dist/
 
       - name: Package artifact
         shell: bash
         run: |
           cd dist
-          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher.exe" .env
+          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -124,20 +131,28 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
-      - name: Write .env for build
+      - name: Inject MICROSOFT_CLIENT_ID
+        env:
+          CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
         run: |
-          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+          python - <<'PY'
+          import os, re
+          path = "ECL/common/build_env.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          cid = os.environ["CLIENT_ID"]
+          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PY
 
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
-      - name: Copy .env to dist
-        run: cp .env dist/
-
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-linux-x64.tar.gz" "EuoraCraft Launcher" .env
+          tar -czf "../EuoraCraft-Launcher-linux-x64.tar.gz" "EuoraCraft Launcher"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -175,20 +190,28 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
-      - name: Write .env for build
+      - name: Inject MICROSOFT_CLIENT_ID
+        env:
+          CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
         run: |
-          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+          python - <<'PY'
+          import os, re
+          path = "ECL/common/build_env.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          cid = os.environ["CLIENT_ID"]
+          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PY
 
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
-      - name: Copy .env to dist
-        run: cp .env dist/
-
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-macos-x64.tar.gz" "EuoraCraft Launcher" .env
+          tar -czf "../EuoraCraft-Launcher-macos-x64.tar.gz" "EuoraCraft Launcher"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -226,20 +249,28 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
-      - name: Write .env for build
+      - name: Inject MICROSOFT_CLIENT_ID
+        env:
+          CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
         run: |
-          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+          python - <<'PY'
+          import os, re
+          path = "ECL/common/build_env.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          cid = os.environ["CLIENT_ID"]
+          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PY
 
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
-      - name: Copy .env to dist
-        run: cp .env dist/
-
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-macos-arm64.tar.gz" "EuoraCraft Launcher" .env
+          tar -czf "../EuoraCraft-Launcher-macos-arm64.tar.gz" "EuoraCraft Launcher"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

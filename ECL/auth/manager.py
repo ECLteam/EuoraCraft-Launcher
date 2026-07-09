@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..common.build_env import MICROSOFT_CLIENT_ID as BUILD_CLIENT_ID
 from ..common.env import get_env_loader
 from ..common.logger import get_logger
 from .authlib import AuthlibInjectorAccount, AuthlibInjectorManager
@@ -28,7 +29,7 @@ class AccountManager:
     def __init__(self):
         if AccountManager._initialized:
             return
-        self.client_id = get_env_loader().get("MICROSOFT_CLIENT_ID", "")
+        self.client_id = BUILD_CLIENT_ID or get_env_loader().get("MICROSOFT_CLIENT_ID", "")
         self._auth: MultiAccountMinecraftAuth | None = None
         self.output_log: Callable[[str], None] | None = None
         # Authlib 外置登录
