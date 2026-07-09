@@ -1,20 +1,76 @@
+# Environment variables
 .env
 .env.dev
 
-build/
-dist/
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
 
-setting.json
-
-logs/
-
-.minecraft/
-
-.conda/
-
+# Python cache
 **/__pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+
+# Build & distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+*.spec
+!EuoraCraft-Launcher.spec
+
+# Frontend build output
+frontend/
+
+# Tauri build output
+src-tauri/target/
+
+# IDE & editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs & temp
 *.log
 *.tmp
-*.pyc
+logs/
+
+# Runtime generated data
+setting.json
+.minecraft/
+ECL_Libs/
+ECL_Core/
+
+# Testing & coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Package managers
+.conda/
+
+# Independent UI repository (managed separately)
+EuoraCraftLauncher-UI/
+
+.trae/
+.trae-html-share-packages/
+
+dep_cache/
+
+.uploads/
+
+.plugin_config/
+
+plugins/
+

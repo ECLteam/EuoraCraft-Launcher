@@ -1,0 +1,16 @@
+{
+  "name": "hello_world",
+  "version": "1.0.0",
+  "title": "Hello World",
+  "description": "启动器启动时向前端发送「你好世界」通知",
+  "author": "EuoraCraft",
+  "entry_point": "main:HelloWorldPlugin",
+  "dependencies": {
+    "third_party": {},
+    "plugins": {}
+  },
+  "events": {
+    "provided": [],
+    "required": []
+  }
+}
