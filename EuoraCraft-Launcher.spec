@@ -1,15 +1,36 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('frontend/dist', 'frontend'), ('resources', 'resources')],
-    hiddenimports=[],
+    hiddenimports=[
+        'requests',
+        'requests.adapters',
+        'requests.api',
+        'requests.auth',
+        'requests.certs',
+        'requests.compat',
+        'requests.cookies',
+        'requests.exceptions',
+        'requests.hooks',
+        'requests.models',
+        'requests.packages',
+        'requests.sessions',
+        'requests.status_codes',
+        'requests.structures',
+        'requests.utils',
+        'charset_normalizer',
+        'idna',
+        'urllib3',
+        'certifi',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['numpy', 'bcrypt', 'psutil', 'charset_normalizer', 'setuptools', 'wheel', 'pkg_resources'],
+    excludes=['numpy', 'bcrypt', 'psutil', 'setuptools', 'wheel', 'pkg_resources'],
     noarchive=False,
     optimize=2,
 )
