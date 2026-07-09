@@ -1,628 +1,622 @@
-# EuoraCraft Launcher 插件开发指南
+# EuoraCraft Launcher 插件开发文档
 
-## 目录
+## 概述
 
-1. [快速开始](#快速开始)
-2. [插件结构](#插件结构)
-3. [Manifest 格式](#manifest-格式)
-4. [Plugin 基类](#plugin-基类)
-5. [生命周期](#生命周期)
-6. [事件系统](#事件系统)
-7. [服务注册](#服务注册)
-8. [插件设置](#插件设置)
-9. [前端自由注入](#前端自由注入)
-10. [依赖管理](#依赖管理)
-11. [前端交互](#前端交互)
-12. [完整示例](#完整示例)
+EuoraCraft Launcher 提供完整的插件系统，允许第三方开发者扩展启动器功能。插件可以注册后端命令、添加前端页面、注入 UI 组件、监听系统事件、调用启动器 API。
+
+插件分为**后端插件**（Python）和**前端插件**（TypeScript/JavaScript）两部分。后端插件负责业务逻辑，前端插件负责 UI 扩展。后端插件通过 `plugin-sdk` 与前端通信。
+
+---
+
+## 插件架构
+
+```
+插件目录/
+├── plugin.json          # 插件元数据
+├── main.py              # 后端入口（Plugin 子类）
+└── frontend/            # 前端资源（可选）
+    ├── index.js         # 前端入口脚本
+    └── style.css        # 前端样式
+```
+
+插件通过 `PluginFramework` 加载，使用隔离命名空间避免插件间模块冲突。前端资源通过 `inject_css()` 和 `inject_html()` 注入到启动器界面。
 
 ---
 
 ## 快速开始
 
-一个最小插件只需要两个文件：
+### 创建插件目录
 
 ```
-plugins/my_plugin/
+plugins/my-first-plugin/
 ├── plugin.json
 └── main.py
 ```
 
-**main.py**
-
-```python
-from ECL.plugin.plugin import Plugin
-
-class MyPlugin(Plugin):
-
-    def on_enable(self):
-        pass
-
-    def on_frontend_ready(self):
-        from ECL.api.events import emit
-        emit("launcher:notify", {"message": "插件已加载", "type": "info"})
-```
-
-**plugin.json**
+### plugin.json
 
 ```json
 {
-  "name": "my_plugin",
+  "name": "my-first-plugin",
+  "title": "我的第一个插件",
   "version": "1.0.0",
-  "title": "我的插件",
-  "description": "这是一个示例插件",
-  "author": "你的名字",
-  "entry_point": "main:MyPlugin"
-}
-```
-
-重启启动器，插件会自动加载。
-
----
-
-## 插件结构
-
-插件存放在启动器根目录的 `plugins/` 下，每个插件是一个独立目录：
-
-```
-plugins/
-├── hello_world/
-│   ├── plugin.json
-│   └── main.py
-├── my_plugin/
-│   ├── plugin.json
-│   ├── main.py
-│   └── resources/
-│       └── icon.png
-```
-
----
-
-## Manifest 格式
-
-`plugin.json` 是插件的元数据文件，必需字段如下：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | 是 | 插件唯一标识，只能包含字母、数字、下划线 |
-| `version` | string | 是 | 版本号，建议用语义化版本 |
-| `title` | string | 否 | 显示名称，缺省使用 `name` |
-| `description` | string | 否 | 插件描述 |
-| `author` | string | 否 | 作者 |
-| `icon` | string | 否 | 图标路径（相对插件目录） |
-| `entry_point` | string | 是 | 入口点，格式 `module:ClassName` |
-| `dependencies` | object | 否 | 依赖声明 |
-
-### dependencies 格式
-
-```json
-{
+  "description": "一个示例插件",
+  "author": "Your Name",
+  "icon": "hugeicons:plugin",
+  "entry_point": "main:MyPlugin",
   "dependencies": {
-    "third_party": {
-      "requests": ">=2.28.0"
-    },
-    "plugins": {
-      "hello_world": ">=1.0.0"
-    }
+    "plugins": {},
+    "python": {}
   }
 }
 ```
 
-- `third_party`：第三方 Python 包，需预先放入 `dep_cache/` 目录
-- `plugins`：其他插件依赖，框架会自动按拓扑顺序加载
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | 是 | 插件唯一标识符，只能包含小写字母、数字、连字符和下划线 |
+| `title` | 是 | 插件显示名称 |
+| `version` | 是 | 语义化版本号 |
+| `description` | 否 | 插件描述 |
+| `author` | 否 | 作者 |
+| `icon` | 否 | Iconify 图标名称 |
+| `entry_point` | 是 | 入口声明，格式 `module:ClassName` |
+| `dependencies.plugins` | 否 | 依赖的其他插件及版本约束 |
+| `dependencies.python` | 否 | 依赖的 Python 包及版本约束 |
 
----
-
-## Plugin 基类
-
-所有插件必须继承 `ECL.plugin.plugin.Plugin`。
+### main.py
 
 ```python
 from ECL.plugin.plugin import Plugin
 
 class MyPlugin(Plugin):
-    ...
+    def on_enable(self):
+        self.logger.info("插件已启用")
+
+    def on_disable(self):
+        self.logger.info("插件已禁用")
 ```
 
-### 内置属性
+### 安装插件
 
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| `self.name` | str | 插件名称（来自 manifest） |
-| `self.version` | str | 插件版本 |
-| `self.status` | PluginStatus | 当前状态 |
-| `self.meta` | dict | 完整的 manifest 数据 |
-| `self.framework` | PluginFramework | 框架控制器 |
-
-### 内置方法
-
-| 方法 | 说明 |
-|------|------|
-| `self.register_service(name, handler)` | 注册服务 |
-| `self.unregister_service(name)` | 注销服务 |
-| `self.get_service(name)` | 获取其他插件的服务 |
-| `self.emit(event, *args, **kwargs)` | 发送同步事件 |
-| `self.emit_async(event, *args, **kwargs)` | 发送异步事件（后台执行） |
-| `self.require(package_name)` | 加载第三方包 |
+将插件目录放入 `plugins/` 目录，启动器会自动加载。
 
 ---
 
 ## 生命周期
 
-插件有完整的生命周期状态机：
+插件遵循严格的生命周期状态机：
 
 ```
-UNLOADED → LOADING → LOADED → ENABLING → ENABLED
-                              ↓
-                        DISABLING → DISABLED → UNLOADING → UNLOADED
+UNLOADED -> LOADING -> LOADED -> ENABLING -> ENABLED -> DISABLING -> DISABLED -> UNLOADING -> UNLOADED
 ```
 
-### 回调方法
+### 生命周期回调
 
-| 回调 | 触发时机 | 用途 |
+| 回调 | 调用时机 | 用途 |
 |------|----------|------|
-| `on_load()` | 插件被加载时 | 读取配置、准备资源 |
-| `async_on_load()` | `on_load()` 后异步执行 | 异步初始化 |
-| `on_enable()` | 插件被启用时 | 注册服务、订阅事件 |
-| `async_on_enable()` | `on_enable()` 后异步执行 | 异步启用逻辑 |
-| `on_frontend_ready()` | 前端 Vue 挂载完成后 | **向前端发送事件、UI 交互** |
-| `on_disable()` | 插件被禁用时 | 清理运行时状态 |
-| `async_on_disable()` | `on_disable()` 后异步执行 | 异步清理 |
-| `on_unload()` | 插件被卸载时 | 释放资源 |
-| `async_on_unload()` | `on_unload()` 后异步执行 | 异步释放 |
+| `on_load()` | 插件加载时 | 加载资源文件、初始化数据结构 |
+| `async_on_load()` | 插件加载时（异步） | 异步加载资源 |
+| `on_enable()` | 插件启用时 | 注册服务、注册命令、注册路由 |
+| `async_on_enable()` | 插件启用时（异步） | 异步初始化 |
+| `on_frontend_ready()` | 前端就绪后 | 注入 CSS/HTML、发送前端事件 |
+| `on_disable()` | 插件禁用时 | 清理运行时状态 |
+| `async_on_disable()` | 插件禁用时（异步） | 异步清理 |
+| `on_unload()` | 插件卸载时 | 释放所有资源 |
+| `async_on_unload()` | 插件卸载时（异步） | 异步释放资源 |
 
-### 重要约定
+每个回调都有同步和异步两个版本，框架会根据需要调用对应版本。`on_frontend_ready` 仅在插件已启用且前端已初始化后调用。
 
-- `on_enable` 只做**内部初始化**，不要向前端发事件（此时前端可能未就绪）
-- `on_frontend_ready` 是向前端发送通知的正确时机
-- `on_disable` / `on_unload` 中不要调用 `emit`（框架已标记为 shutting_down）
+### 完整示例
+
+```python
+from ECL.plugin.plugin import Plugin
+
+class MyPlugin(Plugin):
+    def on_load(self):
+        self._data = {}
+
+    def on_enable(self):
+        self.register_service("my_service", self.handle_service)
+        self.register_command("do_something", self.do_something, "执行操作")
+        self.register_settings({
+            "api_key": {"type": "string", "default": "", "label": "API Key"},
+            "max_items": {"type": "number", "default": 100, "label": "最大数量"},
+            "auto_refresh": {"type": "boolean", "default": True, "label": "自动刷新"}
+        })
+        self.register_route("/my-plugin", "我的插件", "hugeicons:plugin")
+
+    def on_frontend_ready(self):
+        self.inject_css("""
+            .my-plugin-page {
+                padding: 20px;
+            }
+        """)
+        self.inject_html("page-bottom", """
+            <div class="my-plugin-footer">
+                <span>Powered by MyPlugin v1.0.0</span>
+            </div>
+        """)
+
+    def on_disable(self):
+        self._data.clear()
+
+    def on_unload(self):
+        self._data = None
+
+    def handle_service(self, *args, **kwargs):
+        return {"status": "ok"}
+
+    def do_something(self, param1: str, param2: int = 0):
+        self.logger.info(f"执行操作: {param1}, {param2}")
+        return {"success": True, "data": f"处理了 {param1}"}
+```
 
 ---
 
-## 事件系统
+## 后端 API
 
-### 订阅事件
+### 注册服务
 
-使用类装饰器 `@Plugin.on(event_name)` 在类定义阶段声明事件处理器：
+插件可以向服务注册表注册服务，供其他插件调用：
 
 ```python
-class MyPlugin(Plugin):
+def on_enable(self):
+    self.register_service("my_service", self.handle_service)
 
-    @Plugin.on("game:launch_start")
-    def on_game_launch(self, payload):
-        print(f"游戏启动: {payload}")
-
-    @Plugin.on("some_event", async_handler=True)
-    async def on_some_event_async(self, payload):
-        await asyncio.sleep(1)
-        print("异步处理完成")
+def handle_service(self, *args, **kwargs):
+    # 处理服务请求
+    return {"result": "success"}
 ```
 
-- `@Plugin.on("event")` 在类定义时注册，插件 enable 时自动绑定到实例方法
-- `async_handler=True` 标记为异步处理器
+其他插件通过 `ServiceRegistry.get("my_service")` 获取服务处理器。
 
-### 声明提供的事件
+### 注册命令
 
-使用 `@Plugin.provide_event(name, desc, params)` 声明本插件提供的事件：
+插件可以注册后端命令，供前端或其他插件调用：
+
+```python
+def on_enable(self):
+    self.register_command("my_command", self.handle_command, "命令描述")
+
+def handle_command(self, param1: str, param2: int = 0):
+    return {"success": True, "data": f"处理了 {param1}"}
+```
+
+前端通过 `callCommand('my_plugin:my_command', { param1: 'hello', param2: 42 })` 调用。
+
+### 注册设置
+
+插件可以注册设置面板，用户可以在启动器设置中配置：
+
+```python
+def on_enable(self):
+    self.register_settings({
+        "api_key": {
+            "type": "string",
+            "default": "",
+            "label": "API Key",
+            "description": "用于 API 认证的密钥"
+        },
+        "max_items": {
+            "type": "number",
+            "default": 100,
+            "label": "最大数量",
+            "description": "单次请求的最大条目数"
+        },
+        "auto_refresh": {
+            "type": "boolean",
+            "default": True,
+            "label": "自动刷新"
+        },
+        "display_mode": {
+            "type": "select",
+            "default": "grid",
+            "label": "显示模式",
+            "options": [
+                {"value": "grid", "label": "网格"},
+                {"value": "list", "label": "列表"}
+            ]
+        }
+    })
+```
+
+在插件中读取设置：
+
+```python
+def on_enable(self):
+    settings = self.get_settings()
+    api_key = settings.get("api_key", "")
+    max_items = settings.get("max_items", 100)
+```
+
+当用户修改设置时，插件会收到 `settings_changed` 事件。
+
+### 注册前端路由
+
+插件可以注册前端页面路由：
+
+```python
+def on_enable(self):
+    self.register_route("/my-plugin", "我的插件", "hugeicons:plugin")
+```
+
+注册后，侧边栏会显示插件入口，点击后路由到 `/plugin/my_plugin/my-plugin`。前端在 `pluginRoutes` 中获取路由信息并动态渲染。
+
+### 注入前端资源
+
+插件可以注入 CSS 样式和 HTML 内容到启动器界面：
+
+```python
+def on_frontend_ready(self):
+    # 注入 CSS
+    self.inject_css("""
+        .my-plugin-container {
+            padding: 16px;
+            background: var(--bg2);
+            border-radius: 8px;
+        }
+    """)
+
+    # 注入 HTML 到指定插槽
+    self.inject_html("page-bottom", """
+        <div class="my-plugin-footer">Powered by MyPlugin</div>
+    """)
+
+    # 注入脚本
+    self.inject_script("""
+        console.log('MyPlugin 前端脚本已加载');
+        document.querySelector('.my-plugin-footer').addEventListener('click', () => {
+            alert('Hello from MyPlugin!');
+        });
+    """)
+```
+
+可用的 HTML 插槽：`page-bottom`、`page-top`、`sidebar-top`、`sidebar-bottom`。
+
+### 事件系统
+
+#### 声明事件
 
 ```python
 class MyPlugin(Plugin):
-
-    @Plugin.provide_event("my_plugin:custom_event", "自定义事件", ["data"])
-    def on_custom_event(self, payload):
+    @Plugin.provide_event("my_event", "事件描述", ["param1", "param2"])
+    def handle_my_event(self, param1, param2):
         pass
 ```
 
-### 发送事件
-
-```python
-# 同步发送（在当前线程立即执行所有同步处理器）
-self.emit("my_plugin:custom_event", {"key": "value"})
-
-# 异步发送（在有事件循环时后台执行）
-self.emit_async("my_plugin:custom_event", {"key": "value"})
-```
-
-### 系统内置事件
-
-#### 游戏生命周期
-
-| 事件 | 说明 | payload | 可取消 |
-|------|------|---------|--------|
-| `game:pre_launch` | 游戏启动前 | `{"version_id", "player_name", "user_type", "options"}` | 是（返回 False） |
-| `game:launch_start` | 游戏进程已启动 | `{"version_id", "player_name"}` | 否 |
-| `game:exit` | 游戏进程退出/停止 | `{"instance_id"?, "version_id"?, "exit_code", "reason"}` | 否 |
-
-#### 账户
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `account:login` | 用户登录成功 | `{"account_type", "player_name", "uuid"?}` |
-| `account:logout` | 用户登出/移除账户 | `{"account_type", "account_id"}` |
-| `account:switch` | 切换账户 | `{"from_type", "to_type", "player_name"}` |
-
-#### 下载
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `download:start` | 下载任务开始 | `{"task_id", "total_size"}` |
-| `download:complete` | 下载完成 | `{"task_id"}` |
-| `download:error` | 下载失败 | `{"task_id", "error"}` |
-
-#### 版本/实例
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `version:installed` | 版本安装完成 | `{"version_id", "loader_type"}` |
-| `version:uninstalled` | 版本卸载 | `{"version_id"}` |
-| `instance:created` | 实例创建 | `{"instance_id", "name", "version"}` |
-| `instance:deleted` | 实例删除 | `{"instance_id", "name"}` |
-
-#### 配置
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `config:changed` | 配置项变更 | `{"section", "old_value", "new_value"}` |
-
-#### 启动器生命周期
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `launcher:init_complete` | 启动器初始化完成 | `{}` |
-| `launcher:shutdown` | 启动器即将关闭 | `{}` |
-| `launcher:notify` | 向前端发送通知 | `{"message": "...", "type": "info/warning/error"}` |
-
-#### Java / 版本
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `java:selected` | 用户选择 Java | `{"path": "..."}` |
-| `version:scanned` | 版本扫描完成 | `{"count": N, "versions": [...]}` |
-
-#### 用户
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `user:agreed` | 用户同意协议 | `{"uuid": "..."}` |
-
-#### 插件
-
-| 事件 | 说明 | payload | 可取消 |
-|------|------|---------|--------|
-| `plugin:pre_disable` | 某插件即将被禁用 | `{"plugin": "plugin_name"}` | 是 |
-| `plugin:disabled` | 某插件已被禁用 | `{"plugin": "plugin_name"}` | 否 |
-| `plugin:pre_reload` | 某插件即将重载 | `{"plugin": "plugin_name"}` | 是 |
-| `plugin:reloaded` | 某插件已重载 | `{"plugin": "plugin_name"}` | 否 |
-| `plugin:installed` | 新插件已安装 | `{"name": "plugin_name"}` | 否 |
-| `plugin:enabled` | 插件启用完成 | `{"name": "...", "version": "..."}` | 否 |
-| `plugin:pre_unload` | 插件即将卸载 | `{"name": "..."}` | 否 |
-| `plugin:error` | 插件进入错误状态 | `{"name": "...", "error": "..."}` | 否 |
-
-#### 账户补充
-
-| 事件 | 说明 | payload |
-|------|------|---------|
-| `account:profile_refreshed` | 账户档案刷新 | `{"account_type", "player_name"}` |
-
-### 拒绝机制
-
-`game:pre_launch`、`plugin:pre_disable` 和 `plugin:pre_reload` 支持拒绝机制。处理器返回 `False` 可阻止操作：
-
-```python
-@Plugin.on("game:pre_launch")
-def on_pre_launch(self, payload):
-    # 检查版本是否允许启动
-    if payload.get("version_id") == "forbidden_version":
-        return False  # 阻止启动
-    return None  # 允许
-
-@Plugin.on("plugin:pre_disable")
-def on_pre_disable(self, payload):
-    plugin_name = payload.get("plugin", "")
-    if plugin_name == "critical_plugin":
-        return False  # 拒绝禁用
-    return None  # 同意
-```
-
----
-
-## 服务注册
-
-插件可以通过服务注册表暴露功能供其他插件调用：
+#### 监听事件
 
 ```python
 class MyPlugin(Plugin):
-
-    def on_enable(self):
-        self.register_service("my_plugin.calculate", self.calculate)
-
-    def calculate(self, a, b):
-        return a + b
+    @Plugin.on("config:changed")
+    def on_config_changed(self, section, old_value, new_value):
+        self.logger.info(f"配置变更: {section}")
 ```
 
-其他插件调用：
+系统事件列表：
+
+| 事件名 | 参数 | 说明 |
+|--------|------|------|
+| `config:changed` | `section, old_value, new_value` | 配置变更 |
+| `launcher:notify` | `message, type` | 启动器通知 |
+| `plugin:enabled` | `plugin_name` | 插件被启用 |
+| `plugin:disabled` | `plugin_name` | 插件被禁用 |
+| `plugin:unloaded` | `plugin_name` | 插件被卸载 |
+| `frontend:ready` | 无 | 前端初始化完成 |
+
+#### 触发事件
 
 ```python
-class OtherPlugin(Plugin):
-
-    def on_enable(self):
-        calc = self.get_service("my_plugin.calculate")
-        if calc:
-            result = calc(1, 2)
+def on_enable(self):
+    self.emit_event("my_event", param1="hello", param2=42)
 ```
 
 ---
 
-## 插件设置
+## 前端 SDK
 
-插件可以注册自己的配置面板，供用户在前端设置页中调整：
+插件前端资源通过 `plugin-sdk` 与启动器交互。SDK 通过 `window.__plugin_sdk__` 全局注入。
 
-```python
-class MyPlugin(Plugin):
+### API 调用
 
-    def on_enable(self):
-        self.register_settings({
-            "greeting": {
-                "type": "text",
-                "label": "问候语",
-                "description": "启动时显示的问候文字",
-                "default": "你好世界"
-            },
-            "enabled": {
-                "type": "boolean",
-                "label": "启用功能",
-                "description": "是否启用该功能",
-                "default": True
-            },
-            "interval": {
-                "type": "number",
-                "label": "间隔(秒)",
-                "description": "刷新间隔",
-                "default": 30,
-                "min": 5,
-                "max": 300
-            },
-            "theme": {
-                "type": "select",
-                "label": "主题",
-                "description": "选择显示主题",
-                "default": "auto",
-                "options": [
-                    {"label": "自动", "value": "auto"},
-                    {"label": "浅色", "value": "light"},
-                    {"label": "深色", "value": "dark"}
-                ]
-            }
-        })
-```
+```javascript
+const { callCommand, getSettings, updateSetting, getConfig, setConfig } = window.__plugin_sdk__
 
-支持的字段类型：`text`、`number`、`boolean`、`select`。
-
-在代码中读取和修改设置：
-
-```python
-def on_frontend_ready(self):
-    greeting = self.get_setting("greeting", "默认问候")
-    if self.get_setting("enabled", False):
-        from ECL.api.events import emit
-        emit("launcher:notify", {"message": greeting, "type": "info"})
-```
-
----
-
-## 前端自由注入
-
-插件可以对前端进行非常自由的修改，包括注入 CSS、HTML、JavaScript，注册自定义路由和命令。
-
-### CSS 注入
-
-修改任意页面样式：
-
-```python
-def on_frontend_ready(self):
-    self.inject_css("""
-        .plugins-page {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-    """)
-```
-
-每个插件拥有独立的 `<style>` 标签，重复调用会覆盖之前的内容。插件卸载时样式自动移除。
-
-### HTML 插槽注入
-
-在预定义的 UI 位置注入 HTML 内容：
-
-**可用插槽位置：**
-
-| 插槽名 | 位置 |
-|--------|------|
-| `sidebar-extra` | 侧栏扩展区域 |
-| `page-bottom` | 所有页面底部 |
-| `plugin-{plugin_name}` | 插件自定义页面（需配合 `register_route`） |
-
-```python
-def on_frontend_ready(self):
-    self.inject_html("page-bottom", """
-        <div style="padding: 16px; text-align: center; color: var(--text-tertiary)">
-            Powered by MyPlugin v1.0
-        </div>
-    """)
-```
-
-### 自定义路由
-
-在侧栏导航中注册独立的页面入口：
-
-```python
-def on_enable(self):
-    self.register_route("/dashboard", "数据面板", "chart")
-
-def on_frontend_ready(self):
-    self.inject_html("plugin-my_plugin", "<h1>数据面板</h1><div id='chart-container'></div>")
-    self.inject_script("""
-        document.getElementById('chart-container').innerHTML = '<p>实时数据...</p>';
-    """)
-
-def on_disable(self):
-    self.unregister_route("/dashboard")
-```
-
-注册后侧栏会自动出现对应的导航按钮，URL 为 `/plugin/{plugin_name}/dashboard`。
-
-### 自定义命令
-
-注册命令供前端或其他插件调用：
-
-```python
-def on_enable(self):
-    self.register_command("my_plugin.get_status", self.get_status, "获取插件状态")
-
-def get_status(self):
-    return {"running": True, "uptime": 3600}
-```
-
-前端调用：
-
-```typescript
-import { callPluginCommand } from '@/composables/usePluginBridge'
-
-const result = await callPluginCommand('my_plugin:get_status')
-console.log(result.data) // { running: true, uptime: 3600 }
-```
-
-### JavaScript 注入
-
-在前端执行任意脚本：
-
-```python
-def on_frontend_ready(self):
-    self.inject_script("""
-        // 每 5 秒刷新一次数据
-        setInterval(async () => {
-            const res = await window.__TAURI__.invoke('exec_action', {
-                action: 'plugin_call_command',
-                params: { command: 'my_plugin:get_status' }
-            });
-            console.log('插件状态:', res.data);
-        }, 5000);
-    """)
-```
-
-> **注意**：JavaScript 注入拥有完全的 DOM 访问权限，请谨慎使用。插件卸载时注入的脚本会自动移除。
-
----
-
-## 依赖管理
-
-### 第三方 Python 包
-
-1. 将包放入 `dep_cache/{package_name}/` 目录
-2. 在 `plugin.json` 的 `dependencies.third_party` 中声明
-3. 在代码中使用 `self.require("package_name")` 导入
-
-```python
-def on_enable(self):
-    requests = self.require("requests")
-    response = requests.get("https://api.example.com")
-```
-
-**注意**：不同插件依赖同名包时，框架会自动隔离，通过 `_plugin_{plugin_name}_{package_name}` 命名空间避免冲突。
-
-### 插件间依赖
-
-在 `plugin.json` 中声明：
-
-```json
-{
-  "dependencies": {
-    "plugins": {
-      "hello_world": ">=1.0.0"
-    }
-  }
+// 调用后端命令
+const result = await callCommand('my_plugin:my_command', { param1: 'hello' })
+if (result.success) {
+    console.log(result.data)
 }
+
+// 获取插件设置
+const settings = await getSettings('my_plugin')
+console.log(settings.data.api_key)
+
+// 更新设置
+await updateSetting('my_plugin', 'api_key', 'new_value')
+
+// 读取启动器配置
+const gameConfig = await getConfig('game')
+const javaAuto = gameConfig.data.java_auto
+
+// 修改启动器配置
+await setConfig('ui', { locale: 'en-US' })
 ```
 
-框架会自动按拓扑顺序加载，确保依赖插件先 enable。
+### 事件监听
 
----
+```javascript
+const { listen, Events } = window.__plugin_sdk__
 
-## 前端交互
-
-### 向后端发送事件
-
-```python
-from ECL.api.events import emit
-
-emit("launcher:notify", {
-    "message": "任务完成",
-    "type": "info"
+// 监听启动器事件
+const unlisten = listen(Events.SETTINGS_CHANGED, (payload) => {
+    console.log(`设置 ${payload.key} 从 ${payload.old_value} 变为 ${payload.new_value}`)
 })
+
+// 取消监听
+unlisten()
 ```
 
-### 前端监听后端事件
+### UI 工具
 
-前端在 `App.vue` 中通过 `backend.on()` 监听：
+```javascript
+const { $, showToast, showConfirm, showLoading, getSlot, clearSlot } = window.__plugin_sdk__
 
-```typescript
-backend.on('my_plugin:custom_event', (payload) => {
-  console.log('收到事件:', payload)
+// 创建元素
+const container = $.div({
+    class: 'my-container',
+    children: [
+        $.h2({ text: '我的插件' }),
+        $.p({ text: '欢迎使用' }),
+        $.button({
+            class: 'btn-primary',
+            text: '点击',
+            events: { click: () => showToast('点击成功') }
+        })
+    ]
 })
+
+// 添加到插槽
+const slot = getSlot('page-bottom')
+slot.appendChild(container)
+
+// Toast 通知
+showToast('操作成功', 'success', 3000)
+
+// 确认对话框
+const confirmed = await showConfirm('确认删除', '此操作不可撤销')
+if (confirmed) {
+    // 执行删除
+}
+
+// 加载指示器
+const removeLoading = showLoading(container, '加载中...')
+// 加载完成后
+removeLoading()
 ```
 
-### 后端 API
+### 类型定义
 
-插件可以通过 `self.framework` 访问框架，但推荐通过事件系统与前端通信，保持松耦合。
+```javascript
+const { ApiResponse, PluginInfo, GameVersion, JavaInfo, AccountInfo } = window.__plugin_sdk__
+
+// ApiResponse<T> = { success: boolean, data?: T, message?: string, timestamp?: number }
+// PluginInfo = { name, version, title, description, author, icon, status, error, is_system }
+// GameVersion = { id, type, release_time, url }
+// JavaInfo = { path, version, arch, vendor }
+// AccountInfo = { id, username, type: 'offline' | 'microsoft', uuid?, avatar_url? }
+```
 
 ---
 
 ## 完整示例
 
+### 示例：天气显示插件
+
+#### plugin.json
+
+```json
+{
+  "name": "weather_widget",
+  "title": "天气组件",
+  "version": "1.0.0",
+  "description": "在启动器底部显示当前天气",
+  "author": "Your Name",
+  "icon": "hugeicons:cloud",
+  "entry_point": "main:WeatherPlugin",
+  "dependencies": {
+    "plugins": {},
+    "python": {
+      "requests": ">=2.28.0"
+    }
+  }
+}
+```
+
+#### main.py
+
 ```python
+import requests
 from ECL.plugin.plugin import Plugin
 
-class ExamplePlugin(Plugin):
-
-    def on_load(self):
-        # 读取配置文件
-        self.config = {"interval": 30}
-
+class WeatherPlugin(Plugin):
     def on_enable(self):
-        # 注册服务
-        self.register_service("example.get_config", self.get_config)
-
-    def on_frontend_ready(self):
-        # 通知前端插件已就绪
-        from ECL.api.events import emit
-        emit("launcher:notify", {
-            "message": f"ExamplePlugin v{self.version} 已加载",
-            "type": "info"
+        self.register_command("get_weather", self.get_weather, "获取天气信息")
+        self.register_settings({
+            "city": {"type": "string", "default": "Beijing", "label": "城市"},
+            "unit": {
+                "type": "select",
+                "default": "celsius",
+                "label": "温度单位",
+                "options": [
+                    {"value": "celsius", "label": "摄氏度"},
+                    {"value": "fahrenheit", "label": "华氏度"}
+                ]
+            }
         })
 
-    def on_disable(self):
-        # 清理服务
-        self.unregister_service("example.get_config")
+    def on_frontend_ready(self):
+        settings = self.get_settings()
+        city = settings.get("city", "Beijing")
+        weather = self._fetch_weather(city)
+        self.inject_css("""
+            .weather-widget {
+                padding: 8px 16px;
+                font-size: 13px;
+                color: var(--muted);
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+        """)
+        self.inject_html("sidebar-bottom", f"""
+            <div class="weather-widget" id="weather-widget">
+                {weather['icon']} {weather['city']}: {weather['temperature']}°{weather['unit']}
+            </div>
+        """)
 
-    def on_unload(self):
-        pass
+    def get_weather(self, city: str = None):
+        settings = self.get_settings()
+        city = city or settings.get("city", "Beijing")
+        result = self._fetch_weather(city)
+        return {"success": True, "data": result}
 
-    @Plugin.on("plugin:pre_disable")
-    def on_pre_disable(self, payload):
-        # 允许任何插件被禁用
-        return None
+    def _fetch_weather(self, city: str):
+        try:
+            # 使用免费的天气 API
+            resp = requests.get(f"https://wttr.in/{city}?format=j1", timeout=5)
+            data = resp.json()
+            current = data["current_condition"][0]
+            return {
+                "city": city,
+                "temperature": current["temp_C"],
+                "humidity": current["humidity"],
+                "description": current["weatherDesc"][0]["value"],
+                "icon": current["weatherCode"],
+                "unit": "C"
+            }
+        except Exception as e:
+            self.logger.error(f"获取天气失败: {e}")
+            return {"city": city, "temperature": "--", "unit": "C", "error": str(e)}
 
-    @Plugin.provide_event("example:heartbeat", "心跳事件", ["timestamp"])
-    def on_heartbeat(self, payload):
-        pass
+    @Plugin.on("config:changed")
+    def on_config_changed(self, section, old_value, new_value):
+        if section == "plugin_settings":
+            plugin_name = self.meta.get("name")
+            if plugin_name in new_value or plugin_name in old_value:
+                self.logger.info("天气插件设置已更新，刷新天气数据")
+                # 通过 inject_html 更新前端显示
+                settings = self.get_settings()
+                weather = self._fetch_weather(settings.get("city", "Beijing"))
+                self.inject_html("sidebar-bottom", f"""
+                    <div class="weather-widget" id="weather-widget">
+                        {weather['icon']} {weather['city']}: {weather['temperature']}°{weather['unit']}
+                    </div>
+                """)
+```
 
-    def get_config(self):
-        return self.config
+#### frontend/index.js（前端扩展）
+
+```javascript
+(function() {
+    const { listen, Events, callCommand, showToast } = window.__plugin_sdk__
+
+    // 监听设置变更，自动刷新天气
+    listen(Events.SETTINGS_CHANGED, async (payload) => {
+        if (payload.key === 'city') {
+            const result = await callCommand('weather_widget:get_weather', {
+                city: payload.new_value
+            })
+            if (result.success) {
+                const widget = document.getElementById('weather-widget')
+                if (widget && result.data) {
+                    widget.innerHTML = `${result.data.icon} ${result.data.city}: ${result.data.temperature}°${result.data.unit}`
+                }
+            }
+        }
+    })
+
+    // 点击天气组件刷新
+    const widget = document.getElementById('weather-widget')
+    if (widget) {
+        widget.style.cursor = 'pointer'
+        widget.addEventListener('click', async () => {
+            const result = await callCommand('weather_widget:get_weather')
+            if (result.success) {
+                showToast('天气已刷新', 'success')
+            }
+        })
+    }
+})()
 ```
 
 ---
 
-## 调试技巧
+## 调试与测试
 
-1. **查看日志**：插件日志输出到 `logs/EuoraCraft-Launcher.log`
-2. **热重载**：在前端插件页点击"重载"按钮可热重载单个插件
-3. **手动加载**：将插件目录放入 `plugins/` 后重启启动器
-4. **错误状态**：如果插件状态显示为 `error`，查看日志获取详细错误信息
+### 查看插件日志
+
+插件通过 `self.logger` 输出日志，日志级别跟随启动器配置。开发模式下日志会输出到控制台。
+
+### 重载插件
+
+修改插件代码后，可以在启动器插件管理页面点击"重载"按钮，或通过 API 调用：
+
+```python
+framework.reload_plugin("my_plugin")
+```
+
+### 开发者工具
+
+启动器在开发模式下提供 `/dev` 路由的开发者工具页面，可以查看插件状态、事件注册、服务注册等信息。
+
+---
+
+## 发布插件
+
+### 打包
+
+插件目录直接打包为 zip 即可分发：
+
+```
+my-plugin.zip
+├── plugin.json
+├── main.py
+└── frontend/
+    ├── index.js
+    └── style.css
+```
+
+### 版本管理
+
+遵循语义化版本（SemVer）：`主版本.次版本.修订号`。在 `plugin.json` 中声明版本号，在依赖声明中约束其他插件版本。
+
+### 依赖声明
+
+```json
+{
+  "dependencies": {
+    "plugins": {
+      "required_plugin": ">=1.0.0"
+    },
+    "python": {
+      "requests": ">=2.28.0",
+      "pillow": ">=10.0.0"
+    }
+  }
+}
+```
+
+系统会在加载插件时自动安装 Python 依赖到隔离缓存目录。
+
+---
+
+## 注意事项
+
+1. **命名空间隔离**：插件使用独立的模块命名空间，避免与其他插件冲突
+2. **线程安全**：后端插件方法可能在不同线程中调用，注意线程安全
+3. **资源清理**：在 `on_disable` 和 `on_unload` 中彻底清理资源，避免内存泄漏
+4. **XSS 防护**：注入的 HTML 会经过安全过滤，`<script>` 标签、`javascript:` 协议、内联事件处理器会被移除。如需执行脚本，使用 `inject_script()` 方法
+5. **事件处理器**：使用 `@Plugin.on` 装饰器注册的事件处理器会在插件卸载时自动清理
+6. **前端资源**：`inject_css` 和 `inject_html` 在 `on_frontend_ready` 中调用，每次调用会覆盖同名插槽的旧内容
+7. **错误处理**：命令处理函数中的异常会被框架捕获并返回给调用方，不会导致启动器崩溃

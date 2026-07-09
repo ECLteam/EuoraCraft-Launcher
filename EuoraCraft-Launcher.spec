@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('EuoraCraftLauncher-UI/dist', 'ui/dist'),('resources', 'resources')],
+    datas=[('EuoraCraftLauncher-UI/dist', 'frontend'),('resources', 'resources')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

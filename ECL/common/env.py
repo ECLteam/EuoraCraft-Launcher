@@ -43,11 +43,17 @@ class EnvLoader:
     @cached_property
     def _env_dict(self):
         merged = {}
+        # 打包模式下额外检查 exe 所在目录（runtime_dir），确保构建时注入的 .env 可被读取
+        search_dirs = [Path.cwd()]
+        if is_frozen():
+            search_dirs.append(get_runtime_dir())
         for name in self.__env_paths:
-            path = Path(name).resolve()
-            if path.exists():
-                logger.debug(f"加载环境文件: {path}")
-                merged.update(_parse_env_file(path))
+            for base in search_dirs:
+                path = (base / name).resolve()
+                if path.exists():
+                    logger.debug(f"加载环境文件: {path}")
+                    merged.update(_parse_env_file(path))
+                    break
         for key, value in os.environ.items():
             merged[key] = value
         return merged

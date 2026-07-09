@@ -8,20 +8,27 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+
 jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
+
+      - name: Checkout frontend repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FRONTEND_REPO }}
+          path: EuoraCraftLauncher-UI
 
       - name: Install frontend dependencies
         working-directory: ./EuoraCraftLauncher-UI
@@ -60,13 +67,23 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Write .env for build
+        shell: bash
+        run: |
+          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
+      - name: Copy .env to dist
+        shell: bash
+        run: cp .env dist/
+
       - name: Package artifact
+        shell: bash
         run: |
           cd dist
-          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher"
+          7z a -tzip "../EuoraCraft-Launcher-windows-x64.zip" "EuoraCraft Launcher" .env
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -109,13 +126,20 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Write .env for build
+        run: |
+          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
+
+      - name: Copy .env to dist
+        run: cp .env dist/
 
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-linux-x64.tar.gz" "EuoraCraft Launcher"
+          tar -czf "../EuoraCraft-Launcher-linux-x64.tar.gz" "EuoraCraft Launcher" .env
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -153,13 +177,20 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Write .env for build
+        run: |
+          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
+
+      - name: Copy .env to dist
+        run: cp .env dist/
 
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-macos-x64.tar.gz" "EuoraCraft Launcher"
+          tar -czf "../EuoraCraft-Launcher-macos-x64.tar.gz" "EuoraCraft Launcher" .env
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -197,13 +228,20 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Write .env for build
+        run: |
+          echo "MICROSOFT_CLIENT_ID=${{ secrets.MICROSOFT_CLIENT_ID }}" > .env
+
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
+
+      - name: Copy .env to dist
+        run: cp .env dist/
 
       - name: Package artifact
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-macos-arm64.tar.gz" "EuoraCraft Launcher"
+          tar -czf "../EuoraCraft-Launcher-macos-arm64.tar.gz" "EuoraCraft Launcher" .env
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
