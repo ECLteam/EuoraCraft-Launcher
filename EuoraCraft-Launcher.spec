@@ -37,7 +37,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["numpy", "bcrypt", "psutil"],
+    excludes=["numpy", "bcrypt"],
     noarchive=False,
     optimize=2,
 )
