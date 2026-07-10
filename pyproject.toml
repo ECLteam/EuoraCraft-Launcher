@@ -10,8 +10,8 @@ authors = [
     {name = "ECLTeam", email = "EuoraCraft-Studio@outlook.com"},
 ]
 dependencies = [
-    "pytauri-wheel>=0.8.0",
-    "pytauri>=0.8.0",
+    "pytauri-wheel==0.8.0",
+    "pytauri==0.8.0",
     "anyio>=4.0",
     "colorama>=0.4.0",
     "requests>=2.30.0",
@@ -50,9 +50,26 @@ euoracraft-launcher = "main:main"
 [project.gui-scripts]
 EuoraCraft-Launcher = "main:main"
 
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pyinstaller>=6.8.0",
+    "python-semantic-release>=9.8.0",
+    "tomlkit>=0.13.0",
+    "types-requests>=2.31.0",
+    "types-colorama>=0.4.6",
+    "types-pyperclip>=1.8.2",
+    "types-Pillow>=10.2.0",
+    "debugpy>=1.8.0",
+    "ipython>=8.20.0",
+    "pip-tools>=7.4.0"
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ECL*", "ui*"]
+include = ["ECL*"]
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
@@ -122,7 +139,7 @@ select = [
 ignore = [
     "E501",   # Line too long (handled by formatter)
     "N818",   # Exception name should end with Error
-    "N999",   # Invalid module name (ECL is project-specific)
+    "N999",   # Invalid module name (ECL is project‑specific)
     "RUF001", # Ambiguous unicode char in strings (false positives in Chinese)
     "RUF002", # Ambiguous unicode char in docstrings (false positives in Chinese)
     "RUF003", # Ambiguous unicode char in comments (false positives in Chinese)

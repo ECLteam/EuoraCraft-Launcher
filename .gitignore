@@ -73,4 +73,5 @@ dep_cache/
 .plugin_config/
 
 plugins/
+plugin_config/
 

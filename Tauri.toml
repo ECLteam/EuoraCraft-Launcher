@@ -1,10 +1,10 @@
 "$schema" = "https://schema.tauri.app/config/2"
 productName = "EuoraCraft Launcher"
 version = "0.1.0"
-identifier = "com.euoracraft.launcher"
+identifier = "com.github.euoracraft.launcher"
 
 [build]
-frontendDist = "EuoraCraftLauncher-UI/dist"
+frontendDist = "frontend/dist"
 devUrl = "http://localhost:5173"
 
 [app]
