@@ -17,7 +17,7 @@ class ECLauncherCore:
     def __init__(self):
         self.output_log: Callable[[str], None] = print
         self.api_url = C_Libs.ApiUrl()
-        self.downloader = C_Downloader.Downloader()
+        self.downloader = C_Downloader.Downloader(temp_dir="./temp")
         self.files_checker = C_FilesChecker.FilesChecker(self.api_url, self.downloader)
         self.files_checker.set_cancel_check(self.is_canceled)
         self.instances_manager = InstancesManager.InstancesManager()
@@ -64,6 +64,7 @@ class ECLauncherCore:
         access_token: str = "None",
         first_set_lang: str = "zh_CN",
         set_lang: str = "",
+        use_gc: str = "G1GC",
         launcher_name: str = "ECL",
         launcher_version: str = "0.1145",
         default_version_type: bool = False,
@@ -142,12 +143,12 @@ class ECLauncherCore:
 
         jvm_params_list.extend(
             [
-                "-Xms256M",
+                f"-Xms{max_use_ram}M",
                 f"-Xmx{max_use_ram}M",
                 "-Dstderr.encoding=UTF-8",
                 "-Dstdout.encoding=UTF-8",
                 "-Dfile.encoding=UTF-8",
-                "-XX:+UseG1GC",
+                f"-XX:+Use{use_gc}",
                 "-XX:-UseAdaptiveSizePolicy",
                 "-XX:-OmitStackTraceInFastThrow",
                 "-Dlog4j2.formatMsgNoLookups=true",
@@ -394,14 +395,6 @@ class ECLauncherCore:
                 _safe_emit("game:launch_progress", {"phase": "launching", "percent": 95})
             except ImportError:
                 pass
-            # DEBUG: 输出完整的 jvm_params 中 -cp 附近的内容
-            cp_idx = jvm_params.find("-cp ")
-            if cp_idx >= 0:
-                logger.debug(f"[DEBUG] jvm_params around -cp (+250): {jvm_params[cp_idx:cp_idx+250]}")
-            else:
-                logger.debug(f"[DEBUG] jvm_params NO -cp found! params list: {jvm_params_list[:10]}...")
-            logger.debug(f"[DEBUG] jvm_params total length: {len(jvm_params)}")
-            logger.debug(f"[DEBUG] cwd: {game_path / 'versions' / version_name}")
             self.instances_manager.create_instance(
                 instance_name=version_name,
                 instance_type="MinecraftClient",

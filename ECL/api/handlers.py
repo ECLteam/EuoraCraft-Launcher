@@ -15,6 +15,7 @@ from typing import Any
 import keyring
 import pyperclip
 import requests
+import psutil
 
 from ..common.env import get_runtime_dir
 from ..common.logger import get_logger
@@ -631,17 +632,13 @@ class Api:
         )
 
     @staticmethod
-    def _calculate_auto_memory() -> int:
-        # 根据系统总内存自动计算推荐分配值（MB）
-        total_mb = ApiHandler._get_system_total_memory_mb()
-        if total_mb <= 0:
-            return 4096
-        if total_mb <= 4096:
-            return 2048
-        if total_mb <= 8192:
-            return max(2048, int(total_mb * 0.5))
-        # > 8GB：分配一半，上限 8GB
-        return min(int(total_mb * 0.5), 8192)
+    def _calculate_auto_memory(max_memory: int, uses_percent: int) -> int:
+        # 可用内存(MB)
+        available_memory = psutil.virtual_memory().available / 1048576
+        if available_memory >= max_memory:
+            return max_memory
+        else:
+            return int(available_memory * (0.01 * uses_percent))
 
     @staticmethod
     def _get_system_total_memory_mb() -> int:
