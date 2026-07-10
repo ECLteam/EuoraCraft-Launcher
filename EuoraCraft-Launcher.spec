@@ -31,6 +31,8 @@ a = Analysis(
         "pytauri_wheel",
         "pytauri_wheel.lib",
         "pytauri_wheel.ext_mod",
+        "httpx",
+        "psutil"
     ],
     hookspath=[],
     hooksconfig={},
