@@ -48,6 +48,7 @@ jobs:
     name: Build Backend
     needs: build-frontend
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest,ubuntu-latest-arm, macos-latest,macos-latest-large]
     runs-on: ${{ matrix.os }}
