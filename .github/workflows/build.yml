@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest,ubuntu-latest-arm, macos-latest,macos-latest-large]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -66,6 +66,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install system dependencies for Linux
         if: ${{ runner.os == 'Linux' }}
@@ -102,7 +103,7 @@ jobs:
         if: ${{ runner.os != 'Windows'}}
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.tar.gz" "EuoraCraft Launcher"
+          7z a -tzip "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip" "EuoraCraft Launcher"
 
       - name: Package artifact for Windows
         if: ${{runner.os == 'Windows'}}
