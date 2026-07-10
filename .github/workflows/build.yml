@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest,ubuntu-latest-arm, macos-latest,macos-latest-large]
+        os: [windows-latest, windows-11-arm, ubuntu-latest,ubuntu-latest-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -102,7 +102,7 @@ jobs:
         if: ${{ runner.os != 'Windows'}}
         run: |
           cd dist
-          tar -czf "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.tar.gz" "EuoraCraft Launcher"
+          7z a -tzip "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip" "EuoraCraft Launcher"
 
       - name: Package artifact for Windows
         if: ${{runner.os == 'Windows'}}
