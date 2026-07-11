@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import hashlib
 import json
 import time
@@ -69,7 +70,7 @@ class MultiAccountMinecraftAuth:
             self._initialized = True
             self._log("初始化成功")
             return True
-        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError) as e:
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
             self._log(f"初始化失败: {e}")
             return False
 
@@ -81,7 +82,7 @@ class MultiAccountMinecraftAuth:
             self._load_accounts()
             self._initialized = True
             return True
-        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError, RuntimeError) as e:
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
             self._log(f"设置密码失败: {e}")
             return False
 
@@ -104,22 +105,19 @@ class MultiAccountMinecraftAuth:
                             account_dict = json.loads(decrypted_data)
                             self.accounts[account_id] = MinecraftAccount.from_dict(account_dict)
                             logger.debug(f"加载账户成功: {account_id}")
-                        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as item_err:
+                        except (ValueError, KeyError, TypeError) as item_err:
                             logger.warning(f"加载账户 {account_id} 失败: {item_err}")
                     else:
                         logger.warning(f"账户 {account_id} 数据格式异常，期望字符串，得到 {type(enc_data)}")
             self._log(f"已加载 {len(self.accounts)} 个账户")
-        except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             logger.error(f"加载账户数据失败: {e}")
         if self.current_account_file.exists():
-            try:
-                with self.current_account_file.open(encoding="utf-8") as f:
-                    current_id = f.read().strip()
-                    if current_id in self.accounts:
-                        self.current_account = self.accounts[current_id]
-                        self._log(f"当前选中账户: {self.current_account.alias}")
-            except (OSError, ValueError) as e:
-                self._log(f"加载当前账户失败: {e}")
+            with contextlib.suppress(OSError, ValueError), self.current_account_file.open(encoding="utf-8") as f:
+                current_id = f.read().strip()
+                if current_id in self.accounts:
+                    self.current_account = self.accounts[current_id]
+                    self._log(f"当前选中账户: {self.current_account.alias}")
 
     def _save_accounts(self) -> None:
         accounts_data = {}
@@ -191,7 +189,7 @@ class MultiAccountMinecraftAuth:
                 if result and "id_token_claims" in result:
                     id_claims = result["id_token_claims"]
                     email = id_claims.get("preferred_username") or id_claims.get("email")
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError, requests.exceptions.RequestException) as e:
+            except (ValueError, KeyError, TypeError, requests.exceptions.RequestException) as e:
                 self.output_log(f"设备代码流失败: {e}")
                 return None, None, None
         if "access_token" in result:
@@ -223,8 +221,12 @@ class MultiAccountMinecraftAuth:
                 self.output_log(f"Xbox Live 令牌获取失败: {resp.status_code}")
                 return None, None
             xbox_live_data = resp.json()
-            xbox_live_token = xbox_live_data["Token"]
-            user_hash = xbox_live_data["DisplayClaims"]["xui"][0]["uhs"]
+            xbox_live_token = xbox_live_data.get("Token", "")
+            xui_claims = xbox_live_data.get("DisplayClaims", {}).get("xui", [])
+            user_hash = xui_claims[0].get("uhs", "") if xui_claims and isinstance(xui_claims[0], dict) else ""
+            if not xbox_live_token or not user_hash:
+                self.output_log("Xbox Live 响应缺少必要字段")
+                return None, None
             self.output_log("Xbox Live 令牌获取成功")
             resp = requests.post(
                 "https://xsts.auth.xboxlive.com/xsts/authorize",
@@ -241,7 +243,7 @@ class MultiAccountMinecraftAuth:
             xsts_token = resp.json()["Token"]
             self.output_log("XSTS 令牌获取成功")
             return xsts_token, user_hash
-        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError, ValueError) as e:
             self.output_log(f"Xbox 认证链失败: {e}")
             return None, None
 
@@ -258,7 +260,7 @@ class MultiAccountMinecraftAuth:
             data = resp.json()
             self.output_log("Minecraft 令牌获取成功")
             return data["access_token"], data.get("expires_in", 86400)
-        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError, ValueError) as e:
             self.output_log(f"Minecraft 令牌获取失败: {e}")
             return None, 0
 
@@ -278,7 +280,7 @@ class MultiAccountMinecraftAuth:
             else:
                 self.output_log(f"验证失败: {resp.status_code}")
                 return False, None
-        except (requests.exceptions.RequestException, KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError, ValueError) as e:
             self.output_log(f"验证失败: {e}")
             return False, None
 
@@ -720,13 +722,5 @@ class MultiAccountMinecraftAuth:
                 "message": f"账户 '{alias}' 添加成功",
                 "account": {"id": account_id, "alias": alias, "type": "microsoft", "email": email},
             }
-        except (
-            OSError,
-            json.JSONDecodeError,
-            ValueError,
-            KeyError,
-            TypeError,
-            RuntimeError,
-            requests.exceptions.RequestException,
-        ) as e:
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, requests.exceptions.RequestException) as e:
             return {"success": False, "message": f"登录过程出错: {e}"}

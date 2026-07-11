@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import enum
 import functools
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,14 @@ class PluginStatus(enum.Enum):
     ERROR = "error"
 
 
+def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+    """返回当前运行的事件循环，若无则返回 None。"""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 class Plugin:
     # 类级别待处理事件处理器和事件定义，按 qualname 存储
     _pending_handlers: dict[str, list[tuple[str, bool]]] = {}
@@ -34,6 +43,7 @@ class Plugin:
         self._services: dict[str, Any] = {}
         self._event_handlers: dict[str, list] = {}
         self._meta: dict[str, Any] = {}
+
 
     @classmethod
     def get_metadata(cls) -> dict[str, Any]:
@@ -126,13 +136,9 @@ class Plugin:
     def emit_async(self, event: str, *args: Any, **kwargs: Any) -> None:
         if self._framework._shutting_down:
             return
-        import asyncio
-
-        try:
-            asyncio.get_running_loop()
-            _ = asyncio.create_task(self._framework._event_registry.emit_async(event, *args, **kwargs)) # noqa: RUF006
-        except RuntimeError:
-            pass
+        loop = _get_event_loop()
+        if loop is not None:
+            _ = asyncio.create_task(self._framework._event_registry.emit_async(event, *args, **kwargs))  # noqa: RUF006
 
     @staticmethod
     def provide_event(name: str, desc: str = "", params: list[str] | None = None):
@@ -147,14 +153,13 @@ class Plugin:
 
         return decorator
 
-    def _provide_event(self, name: str, desc: str = "", params: list[str] | None = None):
+    def require(self, package_name: str):
+        return self._framework._importer.import_package(package_name, self._name)
+
+    @staticmethod
+    def on(event: str, async_handler: bool = False):
         def decorator(func):
-            self._framework._event_registry.register_event(
-                event_name=name,
-                plugin_name=self._name,
-                description=desc,
-                params=params or [],
-            )
+            Plugin._pending_handlers.setdefault(func.__qualname__, []).append((event, async_handler))
 
             @functools.wraps(func)
             def wrapper(*a, **kw):
@@ -164,10 +169,54 @@ class Plugin:
 
         return decorator
 
-    @staticmethod
-    def on(event: str, async_handler: bool = False):
+    def on_load(self) -> None:
+        pass
+
+    async def async_on_load(self) -> None:
+        pass
+
+    def on_enable(self) -> None:
+        pass
+
+    async def async_on_enable(self) -> None:
+        pass
+
+    def on_frontend_ready(self) -> None:
+        pass
+
+    async def async_on_frontend_ready(self) -> None:
+        pass
+
+    def on_disable(self) -> None:
+        pass
+
+    async def async_on_disable(self) -> None:
+        pass
+
+    def on_unload(self) -> None:
+        pass
+
+    async def async_on_unload(self) -> None:
+        pass
+
+    def get_provided_events(self) -> list[str]:
+        return self._framework._event_registry.get_provided_by_plugin(self._name)
+
+    def get_subscribed_events(self) -> list[str]:
+        return list(self._event_handlers.keys())
+
+    def get_available_events(self) -> list[dict[str, Any]]:
+        return self._framework._event_registry.list_events()
+
+
+    def _provide_event(self, name: str, desc: str = "", params: list[str] | None = None):
         def decorator(func):
-            Plugin._pending_handlers.setdefault(func.__qualname__, []).append((event, async_handler))
+            self._framework._event_registry.register_event(
+                event_name=name,
+                plugin_name=self._name,
+                description=desc,
+                params=params or [],
+            )
 
             @functools.wraps(func)
             def wrapper(*a, **kw):
@@ -220,45 +269,3 @@ class Plugin:
             to_remove_events.append(qualname)
         for key in to_remove_events:
             Plugin._pending_provided_events.pop(key, None)
-
-    def require(self, package_name: str):
-        return self._framework._importer.import_package(package_name, self._name)
-
-    def on_load(self) -> None:
-        pass
-
-    async def async_on_load(self) -> None:
-        pass
-
-    def on_enable(self) -> None:
-        pass
-
-    async def async_on_enable(self) -> None:
-        pass
-
-    def on_frontend_ready(self) -> None:
-        pass
-
-    async def async_on_frontend_ready(self) -> None:
-        pass
-
-    def on_disable(self) -> None:
-        pass
-
-    async def async_on_disable(self) -> None:
-        pass
-
-    def on_unload(self) -> None:
-        pass
-
-    async def async_on_unload(self) -> None:
-        pass
-
-    def get_provided_events(self) -> list[str]:
-        return self._framework._event_registry.get_provided_by_plugin(self._name)
-
-    def get_subscribed_events(self) -> list[str]:
-        return list(self._event_handlers.keys())
-
-    def get_available_events(self) -> list[dict[str, Any]]:
-        return self._framework._event_registry.list_events()

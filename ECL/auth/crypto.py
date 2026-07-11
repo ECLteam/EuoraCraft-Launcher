@@ -131,18 +131,15 @@ class SmartKeyringManager:
                             f.write(entry + b"\n")
 
                 def get_password(self, service: str, username: str) -> str | None:
-                    try:
-                        with self.storage_file.open("rb") as f:
-                            for line in f:
-                                try:
-                                    decrypted = self.fernet.decrypt(line.strip()).decode()
-                                    s, u, p = decrypted.split("|", 2)
-                                    if s == service and u == username:
-                                        return p
-                                except (InvalidToken, ValueError, KeyError, TypeError):
-                                    continue
-                    except FileNotFoundError:
-                        pass
+                    with contextlib.suppress(FileNotFoundError), self.storage_file.open("rb") as f:
+                        for line in f:
+                            try:
+                                decrypted = self.fernet.decrypt(line.strip()).decode()
+                                s, u, p = decrypted.split("|", 2)
+                                if s == service and u == username:
+                                    return p
+                            except (InvalidToken, ValueError, KeyError, TypeError):
+                                continue
                     return None
 
             keyring.set_keyring(CustomFallbackKeyring())
@@ -175,17 +172,14 @@ class EncryptionManager:
         self.keyring_manager = SmartKeyringManager(service_name, self._log)
         self.fernet = None
         self._needs_password = False
-        self._ensure_encryption_key()
-
-    def _log(self, msg: str) -> None:
-        self.log_callback(msg)
-
-    def _ensure_encryption_key(self) -> None:
         encryption_key = keyring.get_password(self.service_name, "encryption_key")
         if encryption_key:
             self.fernet = Fernet(encryption_key.encode())
-            return
-        self._needs_password = True
+        else:
+            self._needs_password = True
+
+    def _log(self, msg: str) -> None:
+        self.log_callback(msg)
 
     def needs_password(self) -> bool:
         return self._needs_password

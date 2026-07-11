@@ -1,7 +1,7 @@
 import io
 import json
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 

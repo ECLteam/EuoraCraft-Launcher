@@ -1,44 +1,29 @@
 import asyncio
 import queue
-from pathlib import Path
-from typing import Any
 
 from ..auth.manager import AccountManager
-from ..common.env import get_app_dir, get_runtime_dir, is_frozen, singleton
+from ..common.env import get_app_dir, get_runtime_dir, singleton
 from ..game.Core.C_GetGames import GetGames
 from ..game.Core.ECLauncherCore import ECLauncherCore
 from ..java.detector import JavaDetector
-from ..java.models import JavaInfo
 from .config import ConfigManager
 from .logger import get_logger
 
-# 进度事件队列：子线程中 _safe_emit 将事件入队，asyncio 主线程轮询消费
 _progress_queue = queue.Queue()
 
 
-def drain_progress_events() -> None:
-    # 必须在 asyncio 主线程中调用，将队列中的事件直接 emit 到前端
-    # 使用 emit_direct 绕过 run_on_main_thread，因为调用方已在主线程
-    # run_on_main_thread 的回调在 asyncio.sleep 期间不会被处理
+def drain_progress_events():
     from ..api.events import emit_direct
 
     while True:
-        try:
-            event, data = _progress_queue.get_nowait()
-            emit_direct(event, data)
-        except queue.Empty:
+        if _progress_queue.empty():
             break
+        event, data = _progress_queue.get_nowait()
+        emit_direct(event, data)
 
 
-def _safe_emit(event: str, data: dict) -> None:
-    # 将事件放入线程安全队列，由主线程轮询消费
-    # 避免在子线程中通过 run_on_main_thread 发射，因为
-    # asyncio.to_thread 阻塞期间 run_on_main_thread 回调无法被及时处理
-    try:
-        _progress_queue.put((event, data))
-    except Exception:
-        # 忽略队列满等异常
-        pass
+def _safe_emit(event, data):
+    _progress_queue.put((event, data))
 
 
 logger = get_logger("state")
@@ -49,23 +34,19 @@ class AppState:
     def __init__(self):
         if hasattr(self, "_initialized") and self._initialized:
             return
-        self.config_manager: ConfigManager = ConfigManager()
-        self.account_manager: AccountManager = AccountManager()
-        self.java_list: list[JavaInfo] = []
-        self.version_info: dict[str, Any] = {}
-        self._initialized: bool = False
-        self._shutdown_done: bool = False
-        self._cached_local_versions: list[dict[str, Any]] = []
-        # self.output_log: Callable[[str], None] = print
+        self.config_manager = ConfigManager()
+        self.account_manager = AccountManager()
+        self.java_list = []
+        self.version_info = {}
+        self._initialized = False
+        self._shutdown_done = False
+        self._cached_local_versions = []
 
-        # Core 实例
-        self.launcher_core: ECLauncherCore = ECLauncherCore()
-        self.get_games: GetGames = GetGames(self.launcher_core.files_checker)
+        self.launcher_core = ECLauncherCore()
+        self.get_games = GetGames(self.launcher_core.files_checker)
 
-        # 配置 Core 实例的日志回调
-        def _on_launcher_log(msg: str) -> None:
+        def _on_launcher_log(msg):
             logger.info(f"[Core] {msg}")
-            # 映射 Core 日志到启动进度阶段（数值严格递增，对应 Core 执行顺序）
             if "正在启动游戏" in msg:
                 _safe_emit("game:launch_progress", {"phase": "launching", "message": msg, "percent": 95})
             elif "系统平台" in msg:
@@ -84,19 +65,16 @@ class AppState:
         self.launcher_core.set_output_log(_on_launcher_log)
         self.get_games.set_output_log(lambda msg: logger.info(f"[Core] {msg}"))
 
-        # 文件校验日志回调 → 推送事件到前端
-        def _on_files_check_log(msg: str) -> None:
+        def _on_files_check_log(msg):
             logger.info(f"[FilesCheck] {msg}")
             _safe_emit("game:launch_progress", {"phase": "checking", "message": msg})
 
         self.launcher_core.files_checker.set_output_log(_on_files_check_log)
         self.launcher_core.files_checker.set_cancel_check(lambda: self.launcher_core.is_canceled())
 
-        # 下载日志回调 → 记录日志（进度通过 event_callback 推送）
         self.launcher_core.downloader.set_output_log(lambda msg: logger.info(f"[Downloader] {msg}"))
 
-        # 下载进度回调 → 推送 N/M 百分比到前端
-        def _on_download_progress(total: list, done: list) -> None:
+        def _on_download_progress(total, done):
             t = len(total)
             d = len(done)
             pct = int(d / t * 100) if t > 0 else 0
@@ -113,8 +91,7 @@ class AppState:
 
         self.launcher_core.downloader.set_output_progress(_on_download_progress)
 
-        # 下载事件回调 → 推送详细进度
-        def _on_download_event(event_data: dict) -> None:
+        def _on_download_event(event_data):
             _safe_emit(
                 "game:launch_progress",
                 {
@@ -128,20 +105,18 @@ class AppState:
 
         self.launcher_core.downloader.event_callback = _on_download_event
 
-        # 游戏实例日志/退出回调：不打印到终端，仅记录到日志文件
         self.launcher_core.instances_manager.set_output_log(lambda msg: logger.debug(f"[Game] {msg}"))
         self.launcher_core.instances_manager.set_exit_callback(
             lambda code: logger.info(f"[Game] 进程退出，返回码: {code}")
         )
 
-        # 插件框架（延迟初始化，在 initialize 中创建）
         self.plugin_framework = None
 
     @property
-    def initialized(self) -> bool:
+    def initialized(self):
         return self._initialized
 
-    def initialize(self) -> dict[str, Any]:
+    def initialize(self):
         if self._initialized:
             return {"needs_password": False}
         logger.info("正在初始化应用全局状态...")
@@ -170,7 +145,6 @@ class AppState:
         return {"needs_password": account_result.get("needs_password", False)}
 
     async def initialize_async(self):
-        # 延迟导入避免循环依赖
         from ..api.events import emit
 
         _current_task = {"task_id": None}
@@ -187,7 +161,6 @@ class AppState:
                 },
             )
 
-        # 设置下载进度事件回调（必须在每次初始化时设置，因为单例 __init__ 只执行一次）
         self.launcher_core.downloader.event_callback = _on_download_progress
         self._current_install_task = _current_task
 
@@ -197,7 +170,6 @@ class AppState:
         results = {}
         logger.info("正在异步初始化应用全局状态...")
 
-        # 配置加载必须在最前面（同步）
         self.config_manager.load()
         error = self.config_manager.validate()
         if error:
@@ -230,7 +202,7 @@ class AppState:
         logger.info("应用全局状态异步初始化完成")
         return results
 
-    def get_java_dicts(self) -> list[dict[str, Any]]:
+    def get_java_dicts(self):
         return [
             {
                 "path": str(java.path),
@@ -243,7 +215,7 @@ class AppState:
             for java in self.java_list
         ]
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         if self._shutdown_done:
             return
         self._shutdown_done = True
@@ -252,7 +224,6 @@ class AppState:
 
         EventEmitter.set_exiting(True)
         try:
-            # 先取消正在进行的启动流程，让 check_files 等尽快退出
             self.launcher_core.cancel_launch()
             if self.plugin_framework is not None:
                 try:
@@ -267,7 +238,6 @@ class AppState:
             logger.info("开始关闭实例管理器...")
             self.launcher_core.instances_manager.shutdown_all()
             logger.info("实例管理器已关闭")
-            # 关闭 Java 检测线程池
             try:
                 from ..java.detector import JavaDetector
 
@@ -277,23 +247,22 @@ class AppState:
         finally:
             logger.info("应用全局状态已关闭")
 
-    def _find_resource_dir(self, relative: Path) -> Path | None:
-        # 统一使用 get_app_dir() 获取资源根目录
+    def _find_resource_dir(self, relative):
         base = get_app_dir()
         p = base / relative
         if p.is_dir():
             return p
         return None
 
-    def _init_plugin_framework(self) -> None:
+    def _init_plugin_framework(self):
         try:
             from ..plugin import PluginFramework
 
             runtime_dir = get_runtime_dir()
-            plugins_dir = runtime_dir / "plugins"
-            cache_root = runtime_dir / "dep_cache"
-            deps_meta = runtime_dir / "deps_meta.json"
-            # 系统插件目录：优先从 app_dir 查找（打包环境在 MEIPASS 中）
+            ecl_libs_dir = runtime_dir / "ECL_Libs"
+            plugins_dir = ecl_libs_dir / "plugins"
+            cache_root = ecl_libs_dir / "dep_cache"
+            deps_meta = ecl_libs_dir / "deps_meta.json"
             system_plugins_dir = get_app_dir() / "resources" / "system_plugins"
             if not system_plugins_dir.is_dir():
                 system_plugins_dir = runtime_dir / "resources" / "system_plugins"
@@ -303,9 +272,7 @@ class AppState:
                 deps_meta_path=deps_meta,
                 system_plugins_dir=system_plugins_dir,
             )
-            # 加载系统插件
             self.plugin_framework._load_system_plugins()
-            # 扫描并加载所有插件
             plugins = self.plugin_framework.scan_plugins()
             for p in plugins:
                 if p["status"] == "unloaded" and p.get("name"):

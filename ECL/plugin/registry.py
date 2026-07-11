@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -5,6 +6,13 @@ from typing import Any
 from ..common.logger import get_logger
 
 logger = get_logger("plugin.registry")
+
+
+def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 class ServiceRegistry:
@@ -98,14 +106,12 @@ class EventRegistry:
         for handler, subscriber, is_async in handlers:
             try:
                 if is_async:
-                    import asyncio
-
-                    try:
-                        loop = asyncio.get_running_loop()
+                    loop = _get_event_loop()
+                    if loop is not None:
                         task = loop.create_task(handler(*args, **kwargs))
                         self._pending_tasks.add(task)
                         task.add_done_callback(self._pending_tasks.discard)
-                    except RuntimeError:
+                    else:
                         logger.warning(f"异步事件处理器 [{event}@{subscriber}] 无法在无事件循环环境中执行")
                     continue
                 results.append(handler(*args, **kwargs))
