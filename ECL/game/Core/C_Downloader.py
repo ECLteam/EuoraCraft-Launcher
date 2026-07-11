@@ -1,12 +1,15 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Tuple, Optional
-from pathlib import Path
-import threading
-import time
+import contextlib
+import hashlib
 import os
 import sys
+import threading
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
 import httpx
-import hashlib
+
 
 # ---------- 全局速率限制器 ----------
 class GlobalRateLimiter:
@@ -50,11 +53,11 @@ class Downloader:
         parallel_threads: int = 8,
         parallel_threshold: int = 10 * 1024 * 1024,
         rate_limit: float = 0,
-        temp_dir: Optional[str | Path] = None,
+        temp_dir: str | Path | None = None,
     ):
         self.download_status = True
-        self.__download_total: List[Tuple[str, str]] = []
-        self.__download_done: List[str] = []
+        self.__download_total: list[tuple[str, str]] = []
+        self.__download_done: list[str] = []
         self.output_progress = self.__default_output_progress
         self.output_log: Callable[[str], None] = print
         self.lock = threading.Lock()
@@ -64,10 +67,10 @@ class Downloader:
         self.parallel_threads = parallel_threads
         self.parallel_threshold = parallel_threshold
 
-        self.event_callback: Optional[Callable[[dict], None]] = None
+        self.event_callback: Callable[[dict], None] | None = None
 
-        self._file_progress_callback: Optional[Callable[[str, int, int], None]] = None
-        self._total_progress_callback: Optional[Callable[[int, int, int, int], None]] = None
+        self._file_progress_callback: Callable[[str, int, int], None] | None = None
+        self._total_progress_callback: Callable[[int, int, int, int], None] | None = None
 
         self.stop_event = threading.Event()
         self.rate_limiter = GlobalRateLimiter(rate_limit)
@@ -107,15 +110,13 @@ class Downloader:
         self.set_download_status(False)
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.client.close()
-        except Exception:
-            pass
 
-    def set_file_progress_callback(self, callback: Optional[Callable[[str, int, int], None]]) -> None:
+    def set_file_progress_callback(self, callback: Callable[[str, int, int], None] | None) -> None:
         self._file_progress_callback = callback
 
-    def set_total_progress_callback(self, callback: Optional[Callable[[int, int, int, int], None]]) -> None:
+    def set_total_progress_callback(self, callback: Callable[[int, int, int, int], None] | None) -> None:
         self._total_progress_callback = callback
 
     def set_rate_limit(self, rate_bytes_per_sec: float):
@@ -139,7 +140,7 @@ class Downloader:
             if total > 0:
                 print(f"下载进度: {done}/{total} ({done / total * 100:.1f}%)")
 
-    def __get_file_size(self, url: str) -> Optional[int]:
+    def __get_file_size(self, url: str) -> int | None:
         for attempt in range(self.max_retries):
             try:
                 resp = self.client.head(url)
@@ -153,7 +154,7 @@ class Downloader:
                     return int(content_length) if content_length else 0
             except (httpx.HTTPError, httpx.StreamError, OSError) as e:
                 if attempt == self.max_retries - 1:
-                    self.output_log(f"获取文件大小失败 {url}: {str(e)}")
+                    self.output_log(f"获取文件大小失败 {url}: {e!s}")
                     return None
                 time.sleep(2 ** attempt)
         return None
@@ -161,7 +162,7 @@ class Downloader:
     def __preallocate_file(self, path: Path, size: int):
         try:
             # 使用 "w+b" 确保文件存在并截断至 size
-            with open(path, "w+b") as f:
+            with Path(path).open("w+b") as f:
                 f.truncate(size)
             if sys.platform != "win32":
                 fd = os.open(path, os.O_RDWR)
@@ -172,7 +173,7 @@ class Downloader:
                 finally:
                     os.close(fd)
         except Exception as e:
-            self.output_log(f"预分配文件失败 {path}: {str(e)}")
+            self.output_log(f"预分配文件失败 {path}: {e!s}")
             raise  # 上层捕获并回退
 
     def __download_range(self, url: str, start: int, end: int, temp_file: Path,
@@ -186,7 +187,7 @@ class Downloader:
                     resp.raise_for_status()
                     if resp.status_code != 206:
                         return False
-                    with open(temp_file, "r+b") as f:
+                    with Path(temp_file).open("r+b") as f:
                         f.seek(start)
                         for chunk in resp.iter_bytes(chunk_size=self.chunk_size):
                             if self.stop_event.is_set():
@@ -198,14 +199,14 @@ class Downloader:
             except FileNotFoundError:
                 # 若预分配未创建文件，尝试创建并重试
                 try:
-                    with open(temp_file, "w+b") as f:
+                    with Path(temp_file).open("w+b") as f:
                         f.truncate(total_size)
                 except Exception:
                     return False
                 continue  # 重试本次下载
             except (httpx.HTTPError, httpx.StreamError, OSError) as e:
                 if attempt == self.max_retries - 1:
-                    self.output_log(f"分片 {part_index} 下载失败 {url}: {str(e)}")
+                    self.output_log(f"分片 {part_index} 下载失败 {url}: {e!s}")
                     return False
                 time.sleep(2 ** attempt)
         return False
@@ -271,7 +272,7 @@ class Downloader:
 
                     last_percent = -1
                     downloaded = start_byte
-                    with open(file_path, mode) as f:
+                    with Path(file_path).open(mode) as f:
                         for chunk in resp.iter_bytes(chunk_size=self.chunk_size):
                             if self.stop_event.is_set():
                                 return False
@@ -289,7 +290,7 @@ class Downloader:
                 return True
             except (httpx.HTTPError, httpx.StreamError, OSError) as e:
                 if attempt == self.max_retries - 1:
-                    self.output_log(f"流式下载失败 {url}: {str(e)}")
+                    self.output_log(f"流式下载失败 {url}: {e!s}")
                     return False
                 time.sleep(2 ** attempt)
         return False
@@ -359,7 +360,7 @@ class Downloader:
             self.output_log(f"重命名失败: {e}")
             return False
 
-    def download_manager(self, download_list: List[Tuple[str, str]], max_threads: int) -> bool:
+    def download_manager(self, download_list: list[tuple[str, str]], max_threads: int) -> bool:
         if not download_list or max_threads <= 0:
             self.output_log("下载列表为空或线程数无效")
             return False
@@ -417,7 +418,5 @@ class Downloader:
         return successful_downloads == total
 
     def __del__(self):
-        try:
+        with contextlib.suppress(BaseException):
             self.client.close()
-        except:
-            pass

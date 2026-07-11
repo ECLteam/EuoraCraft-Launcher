@@ -13,9 +13,12 @@ class JavaInfo:
     sources: list[str] = field(default_factory=list)
 
     @cached_property
-    def _unique_key(self) -> str:
+    def unique_key(self) -> str:
         java_home = self.path.parent.parent
         return f"{java_home.as_posix().lower()}_{self.major_version}"
 
     def __str__(self) -> str:
-        return f"{self.java_type} {self.major_version} ({self.version}), {self.arch}, 来源:[{','.join(self.sources)}], 路径: {self.path}"
+        return (
+            f"{self.java_type} {self.major_version} ({self.version}), {self.arch}, "
+            f"来源:[{','.join(self.sources)}], 路径: {self.path}"
+        )

@@ -196,10 +196,10 @@ class JavaDetector:
             if not info:
                 continue
 
-            if info._unique_key in validated:
-                validated[info._unique_key].sources.extend(info.sources)
+            if info.unique_key in validated:
+                validated[info.unique_key].sources.extend(info.sources)
             else:
-                validated[info._unique_key] = info
+                validated[info.unique_key] = info
 
         self.java_list = list(validated.values())
 
@@ -219,13 +219,6 @@ class JavaDetector:
 
         return self._parse_version_output(path, output, source, exec_path)
 
-    def _is_jdk(self, java_home: Path, output: str) -> bool:
-        if (java_home / "jmods").exists():
-            return True
-        if (java_home / "lib" / "tools.jar").exists():
-            return True
-        return "jdk" in output.lower() or "development" in output.lower()
-
     def _parse_version_output(self, path: Path, output: str, source: str, exec_path: Path) -> JavaInfo | None:
         version_match = re.search(r'version\s+"(\d+[\.\d]*[_\+]?\d*)"', output, re.IGNORECASE)
         if not version_match:
@@ -235,7 +228,13 @@ class JavaDetector:
         major = int(version_str.split(".")[1]) if version_str.startswith("1.") else int(version_str.split(".")[0])
 
         java_home = exec_path.parent.parent
-        java_type = "JDK" if self._is_jdk(java_home, output) else "JRE"
+        is_jdk = (
+            (java_home / "jmods").exists()
+            or (java_home / "lib" / "tools.jar").exists()
+            or "jdk" in output.lower()
+            or "development" in output.lower()
+        )
+        java_type = "JDK" if is_jdk else "JRE"
 
         arch = "64-bit"
         if any(x in output for x in ["32-Bit", "i586", "i686", "x86"]):

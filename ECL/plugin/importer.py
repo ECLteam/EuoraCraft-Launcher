@@ -15,9 +15,6 @@ class PluginImporter:
         self._plugin_libs: dict[str, dict[str, Path]] = {}
         self._importers: dict[str, dict[str, Any]] = {}
 
-    def _isolated_key(self, plugin_name: str, package_name: str) -> str:
-        return f"_plugin_{plugin_name}_{package_name}"
-
     def register_plugin(self, plugin_name: str, libs: dict[str, Path]) -> None:
         self._plugin_libs[plugin_name] = libs
         _importer = _PluginMetaPathFinder(plugin_name, libs)
@@ -31,7 +28,7 @@ class PluginImporter:
             if finder in sys.meta_path:
                 sys.meta_path.remove(finder)
             # 清理该插件在 sys.modules 中注册的隔离模块
-            prefix = self._isolated_key(plugin_name, "")
+            prefix = f"_plugin_{plugin_name}_"
             for key in list(sys.modules.keys()):
                 if key.startswith(prefix):
                     sys.modules.pop(key, None)
@@ -42,7 +39,7 @@ class PluginImporter:
         if package_name not in libs:
             return importlib.import_module(package_name)
 
-        isolated = self._isolated_key(plugin_name, package_name)
+        isolated = f"_plugin_{plugin_name}_{package_name}"
         if isolated in sys.modules:
             return sys.modules[isolated]
 

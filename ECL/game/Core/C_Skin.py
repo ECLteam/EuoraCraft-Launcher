@@ -8,11 +8,10 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from ...common.env import get_runtime_dir
-
 import requests
 from PIL import Image
 
+from ...common.env import get_runtime_dir
 from ...common.logger import get_logger
 
 logger = get_logger("skin")

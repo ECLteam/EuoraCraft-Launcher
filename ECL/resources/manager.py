@@ -1,3 +1,4 @@
+import contextlib
 import gzip
 import os
 import shutil
@@ -12,48 +13,49 @@ logger = get_logger("resources.manager")
 
 class ResourceManager:
 
-    # ── 资源包 ──
-
     @staticmethod
     def list_resourcepacks(game_path: str) -> list[dict[str, Any]]:
+        # 列出资源包
         rp_dir = Path(game_path) / "resourcepacks"
         return ResourceManager._list_dir_items(rp_dir)
 
     @staticmethod
     def remove_resourcepack(game_path: str, filename: str) -> dict[str, Any]:
+        # 删除资源包
         rp_dir = Path(game_path) / "resourcepacks"
         return ResourceManager._remove_item(rp_dir, filename, "资源包")
 
     @staticmethod
     def open_resourcepacks_folder(game_path: str) -> dict[str, Any]:
+        # 打开资源包文件夹
         rp_dir = Path(game_path) / "resourcepacks"
         rp_dir.mkdir(parents=True, exist_ok=True)
         os.startfile(str(rp_dir))
         return {"success": True, "path": str(rp_dir)}
 
-    # ── 光影包 ──
-
     @staticmethod
     def list_shaderpacks(game_path: str) -> list[dict[str, Any]]:
+        # 列出光影包
         sp_dir = Path(game_path) / "shaderpacks"
         return ResourceManager._list_dir_items(sp_dir)
 
     @staticmethod
     def remove_shaderpack(game_path: str, filename: str) -> dict[str, Any]:
+        # 删除光影包
         sp_dir = Path(game_path) / "shaderpacks"
         return ResourceManager._remove_item(sp_dir, filename, "光影包")
 
     @staticmethod
     def open_shaderpacks_folder(game_path: str) -> dict[str, Any]:
+        # 打开光影包文件夹
         sp_dir = Path(game_path) / "shaderpacks"
         sp_dir.mkdir(parents=True, exist_ok=True)
         os.startfile(str(sp_dir))
         return {"success": True, "path": str(sp_dir)}
 
-    # ── 存档 ──
-
     @staticmethod
     def list_saves(game_path: str) -> list[dict[str, Any]]:
+        # 列出存档并解析 level.dat 基本信息
         saves_dir = Path(game_path) / "saves"
         if not saves_dir.is_dir():
             return []
@@ -72,17 +74,13 @@ class ResourceManager:
                 "last_played": 0,
             }
 
-            try:
-                total = 0
+            total = 0
+            with contextlib.suppress(OSError):
                 for f in entry.rglob("*"):
                     if f.is_file():
-                        try:
+                        with contextlib.suppress(OSError):
                             total += f.stat().st_size
-                        except OSError:
-                            pass
-                info["size"] = total
-            except OSError:
-                pass
+            info["size"] = total
 
             if level_dat.is_file():
                 nbt_info = ResourceManager._parse_level_dat(str(level_dat))
@@ -96,6 +94,7 @@ class ResourceManager:
 
     @staticmethod
     def delete_save(game_path: str, save_name: str) -> dict[str, Any]:
+        # 删除存档
         saves_dir = Path(game_path) / "saves"
         save_path = saves_dir / save_name
         if not save_path.exists():
@@ -112,6 +111,7 @@ class ResourceManager:
 
     @staticmethod
     def open_saves_folder(game_path: str) -> dict[str, Any]:
+        # 打开存档文件夹
         saves_dir = Path(game_path) / "saves"
         saves_dir.mkdir(parents=True, exist_ok=True)
         os.startfile(str(saves_dir))
@@ -125,15 +125,13 @@ class ResourceManager:
             return []
         items = []
         for entry in sorted(directory.iterdir()):
-            try:
+            with contextlib.suppress(OSError):
                 stat = entry.stat()
                 items.append({
                     "filename": entry.name,
                     "size": stat.st_size if entry.is_file() else 0,
                     "is_folder": entry.is_dir(),
                 })
-            except OSError:
-                continue
         return items
 
     @staticmethod
@@ -163,6 +161,93 @@ class ResourceManager:
         except (gzip.BadGzipFile, OSError):
             return result
 
+        def skip_name(offset: int) -> int:
+            if offset + 2 > len(data):
+                return offset
+            name_len = struct.unpack(">H", data[offset:offset + 2])[0]
+            return offset + 2 + name_len
+
+        def read_string(offset: int, key: str) -> int:
+            if offset + 2 > len(data):
+                return offset
+            str_len = struct.unpack(">H", data[offset:offset + 2])[0]
+            offset += 2
+            if offset + str_len <= len(data):
+                result[key] = data[offset:offset + str_len].decode("utf-8", errors="replace")
+            return offset + str_len
+
+        def skip_tag(offset: int, tag_type: int) -> int:
+            if tag_type == 1:  # TAG_Byte
+                return offset + 1
+            if tag_type == 2:  # TAG_Short
+                return offset + 2
+            if tag_type == 3:  # TAG_Int
+                return offset + 4
+            if tag_type == 4:  # TAG_Long
+                return offset + 8
+            if tag_type == 5:  # TAG_Float
+                return offset + 4
+            if tag_type == 6:  # TAG_Double
+                return offset + 8
+            if tag_type == 7:  # TAG_Byte_Array
+                if offset + 4 > len(data):
+                    return offset
+                length = struct.unpack(">i", data[offset:offset + 4])[0]
+                return offset + 4 + length
+            if tag_type == 8:  # TAG_String
+                if offset + 2 > len(data):
+                    return offset
+                str_len = struct.unpack(">H", data[offset:offset + 2])[0]
+                return offset + 2 + str_len
+            if tag_type == 9:  # TAG_List
+                if offset + 5 > len(data):
+                    return offset
+                list_tag_type = data[offset]
+                offset += 1
+                length = struct.unpack(">i", data[offset:offset + 4])[0]
+                offset += 4
+                for _ in range(length):
+                    offset = skip_tag(offset, list_tag_type)
+                return offset
+            if tag_type == 10:  # TAG_Compound
+                while offset < len(data):
+                    if data[offset] == 0:  # TAG_End
+                        return offset + 1
+                    inner_type = data[offset]
+                    offset += 1
+                    offset = skip_name(offset)
+                    offset = skip_tag(offset, inner_type)
+                return offset
+            if tag_type == 11:  # TAG_Int_Array
+                if offset + 4 > len(data):
+                    return offset
+                length = struct.unpack(">i", data[offset:offset + 4])[0]
+                return offset + 4 + length * 4
+            if tag_type == 12:  # TAG_Long_Array
+                if offset + 4 > len(data):
+                    return offset
+                length = struct.unpack(">i", data[offset:offset + 4])[0]
+                return offset + 4 + length * 8
+            return offset
+
+        def find_data_compound(offset: int) -> int:
+            while offset < len(data):
+                if data[offset] == 0:  # TAG_End
+                    break
+                tag_type = data[offset]
+                offset += 1
+                name_len = struct.unpack(">H", data[offset:offset + 2])[0]
+                offset += 2
+                name = data[offset:offset + name_len].decode("utf-8", errors="replace")
+                offset += name_len
+
+                if name == "Data" and tag_type == 10:  # TAG_Compound
+                    return offset
+
+                offset = skip_tag(offset, tag_type)
+
+            return -1
+
         try:
             offset = 0
 
@@ -171,9 +256,9 @@ class ResourceManager:
             if tag_type != 10:  # TAG_Compound
                 return result
 
-            offset = ResourceManager._nbt_skip_name(data, offset)
+            offset = skip_name(offset)
 
-            data_offset = ResourceManager._nbt_find_data_compound(data, offset)
+            data_offset = find_data_compound(offset)
             if data_offset == -1:
                 return result
 
@@ -189,7 +274,7 @@ class ResourceManager:
                 offset += name_len
 
                 if tag_type == 8 and name == "LevelName":  # TAG_String
-                    offset = ResourceManager._nbt_read_string(data, offset, result, "level_name")
+                    offset = read_string(offset, "level_name")
                 elif tag_type == 3 and name == "GameType":  # TAG_Int
                     if offset + 4 <= len(data):
                         game_type_val = struct.unpack(">i", data[offset:offset + 4])[0]
@@ -201,106 +286,9 @@ class ResourceManager:
                         result["last_played"] = struct.unpack(">q", data[offset:offset + 8])[0]
                         offset += 8
                 else:
-                    offset = ResourceManager._nbt_skip_tag(data, offset, tag_type)
+                    offset = skip_tag(offset, tag_type)
 
         except (struct.error, IndexError, UnicodeDecodeError):
             pass
 
         return result
-
-    @staticmethod
-    def _nbt_skip_name(data: bytes, offset: int) -> int:
-        if offset + 2 > len(data):
-            return offset
-        name_len = struct.unpack(">H", data[offset:offset + 2])[0]
-        offset += 2 + name_len
-        return offset
-
-    @staticmethod
-    def _nbt_read_string(data: bytes, offset: int, result: dict[str, Any], key: str) -> int:
-        if offset + 2 > len(data):
-            return offset
-        str_len = struct.unpack(">H", data[offset:offset + 2])[0]
-        offset += 2
-        if offset + str_len <= len(data):
-            result[key] = data[offset:offset + str_len].decode("utf-8", errors="replace")
-        offset += str_len
-        return offset
-
-    @staticmethod
-    def _nbt_skip_tag(data: bytes, offset: int, tag_type: int) -> int:
-        if tag_type == 1:  # TAG_Byte
-            return offset + 1
-        elif tag_type == 2:  # TAG_Short
-            return offset + 2
-        elif tag_type == 3:  # TAG_Int
-            return offset + 4
-        elif tag_type == 4:  # TAG_Long
-            return offset + 8
-        elif tag_type == 5:  # TAG_Float
-            return offset + 4
-        elif tag_type == 6:  # TAG_Double
-            return offset + 8
-        elif tag_type == 7:  # TAG_Byte_Array
-            if offset + 4 > len(data):
-                return offset
-            length = struct.unpack(">i", data[offset:offset + 4])[0]
-            offset += 4 + length
-            return offset
-        elif tag_type == 8:  # TAG_String
-            if offset + 2 > len(data):
-                return offset
-            str_len = struct.unpack(">H", data[offset:offset + 2])[0]
-            offset += 2 + str_len
-            return offset
-        elif tag_type == 9:  # TAG_List
-            if offset + 5 > len(data):
-                return offset
-            list_tag_type = data[offset]
-            offset += 1
-            length = struct.unpack(">i", data[offset:offset + 4])[0]
-            offset += 4
-            for _ in range(length):
-                offset = ResourceManager._nbt_skip_tag(data, offset, list_tag_type)
-            return offset
-        elif tag_type == 10:  # TAG_Compound
-            while offset < len(data):
-                if data[offset] == 0:  # TAG_End
-                    return offset + 1
-                inner_type = data[offset]
-                offset += 1
-                offset = ResourceManager._nbt_skip_name(data, offset)
-                offset = ResourceManager._nbt_skip_tag(data, offset, inner_type)
-            return offset
-        elif tag_type == 11:  # TAG_Int_Array
-            if offset + 4 > len(data):
-                return offset
-            length = struct.unpack(">i", data[offset:offset + 4])[0]
-            offset += 4 + length * 4
-            return offset
-        elif tag_type == 12:  # TAG_Long_Array
-            if offset + 4 > len(data):
-                return offset
-            length = struct.unpack(">i", data[offset:offset + 4])[0]
-            offset += 4 + length * 8
-            return offset
-        return offset
-
-    @staticmethod
-    def _nbt_find_data_compound(data: bytes, offset: int) -> int:
-        while offset < len(data):
-            if data[offset] == 0:  # TAG_End
-                break
-            tag_type = data[offset]
-            offset += 1
-            name_len = struct.unpack(">H", data[offset:offset + 2])[0]
-            offset += 2
-            name = data[offset:offset + name_len].decode("utf-8", errors="replace")
-            offset += name_len
-
-            if name == "Data" and tag_type == 10:  # TAG_Compound
-                return offset
-
-            offset = ResourceManager._nbt_skip_tag(data, offset, tag_type)
-
-        return -1

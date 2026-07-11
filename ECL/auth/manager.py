@@ -190,7 +190,6 @@ class AccountManager:
     # ── Authlib 外置登录 ─────────────────────────────────────────────────
 
     def _load_authlib_accounts(self) -> None:
-        """从文件加载 Authlib 账户。"""
         if not self._authlib_accounts_file.is_file():
             return
         try:
@@ -203,11 +202,10 @@ class AccountManager:
             if current_id and current_id in self._authlib_accounts:
                 self._authlib_current_account = self._authlib_accounts[current_id]
             logger.debug(f"加载了 {len(self._authlib_accounts)} 个 Authlib 账户")
-        except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
+        except (OSError, KeyError, ValueError, TypeError) as e:
             logger.error(f"加载 Authlib 账户失败: {e}")
 
     def _save_authlib_accounts(self) -> None:
-        """保存 Authlib 账户到文件。"""
         try:
             self._authlib_data_dir.mkdir(parents=True, exist_ok=True)
             data = {

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import contextlib
 import gzip
 import logging
@@ -19,7 +17,7 @@ class ColoredFormatter(logging.Formatter):
         "BOLD": "\033[1m",
     }
 
-    def format(self, record: logging.LogRecord) -> str:
+    def format(self, record):
         record = logging.makeLogRecord(record.__dict__.copy())
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -45,28 +43,23 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
             if Path(dfn).exists():
                 Path(dfn).unlink()
             Path(self.baseFilename).rename(dfn)
-            self._compress_file(dfn)
+            try:
+                compressed_path = dfn + ".gz"
+                with Path(dfn).open("rb") as f_in, gzip.open(compressed_path, "wb") as f_out:
+                    f_out.writelines(f_in)
+                Path(dfn).unlink()
+            except (OSError, EOFError) as e:
+                logging.warning(f"压缩日志文件失败 {dfn}: {e}")
         if not self.delay:
             self.stream = self._open()
         self.rolloverAt = self.computeRollover(int(datetime.now().timestamp()))
-        self._cleanup_old_logs()
 
-    def _compress_file(self, filepath: str) -> None:
-        try:
-            compressed_path = filepath + ".gz"
-            with Path(filepath).open("rb") as f_in, gzip.open(compressed_path, "wb") as f_out:
-                f_out.writelines(f_in)
-            Path(filepath).unlink()
-        except (OSError, EOFError) as e:
-            logging.warning(f"压缩日志文件失败 {filepath}: {e}")
-
-    def _cleanup_old_logs(self) -> None:
         try:
             log_dir = Path(self.baseFilename).parent
             base_name = Path(self.baseFilename).name
             log_files = [f for f in log_dir.iterdir() if f.name.startswith(base_name) and f.name != base_name]
             log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-            for old_file in log_files[self.backup_count :]:
+            for old_file in log_files[self.backup_count:]:
                 with contextlib.suppress(OSError, PermissionError):
                     old_file.unlink()
         except (OSError, PermissionError):
@@ -74,15 +67,15 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
 
 
 class LoggerManager:
-    _instance: LoggerManager | None = None
-    _initialized: bool = False
+    _instance = None
+    _initialized = False
 
-    def __new__(cls) -> LoggerManager:
+    def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, colored: bool = True):
+    def __init__(self, colored=True):
         if LoggerManager._initialized:
             return
         self._root_logger = logging.getLogger("EuoraCraft-Launcher")
@@ -90,7 +83,7 @@ class LoggerManager:
         self._setup_handlers(colored)
         LoggerManager._initialized = True
 
-    def _setup_handlers(self, colored: bool) -> None:
+    def _setup_handlers(self, colored):
         if self._root_logger.handlers:
             return
         log_dir = Path("logs")
@@ -124,14 +117,14 @@ class LoggerManager:
         self._root_logger.addHandler(file_handler)
         self._root_logger.addHandler(error_handler)
 
-    def get_logger(self, name: str | None = None) -> logging.Logger:
+    def get_logger(self, name=None):
         return self._root_logger.getChild(name) if name else self._root_logger
 
-    def set_level(self, level: int) -> None:
+    def set_level(self, level):
         self._root_logger.setLevel(level)
         self._console_handler.setLevel(level)
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         for handler in self._root_logger.handlers[:]:
             with contextlib.suppress(OSError, RuntimeError):
                 handler.flush()
@@ -140,5 +133,5 @@ class LoggerManager:
             self._root_logger.removeHandler(handler)
 
 
-def get_logger(name: str | None = None) -> logging.Logger:
+def get_logger(name=None):
     return LoggerManager().get_logger(name)

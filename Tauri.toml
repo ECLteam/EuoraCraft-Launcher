@@ -1,11 +1,12 @@
 "$schema" = "https://schema.tauri.app/config/2"
 productName = "EuoraCraft Launcher"
 version = "0.1.0"
-identifier = "com.github.euoracraft.launcher"
+identifier = "com.github.euoracraft-launcher"
 
 [build]
-frontendDist = "frontend/dist"
-devUrl = "http://localhost:5173"
+# 可在此处修改前端的文件来源
+#frontendDist = "frontend/dist"
+frontendDist = "http://localhost:5173"
 
 [app]
 withGlobalTauri = false

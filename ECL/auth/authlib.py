@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -13,29 +14,19 @@ from ..common.logger import get_logger
 
 logger = get_logger("auth.authlib")
 
-# Authlib-Injector 下载地址
-AUTHLIB_INJECTOR_META_URL = "https://authlib-injector.yushi.moe/artifact/latest.json"
-
 
 def _get_shared_launcher_uuid() -> str:
-    # 获取共享的启动器 UUID，用于 client_token
-    # 直接从 user_agreement.json 读取，避免通过 AppState() 造成循环依赖死锁
-    try:
-        config_path = get_runtime_dir() / "ECL_Libs" / "user_agreement.json"
-        if config_path.is_file():
-            import json as _json
-
-            data = _json.loads(config_path.read_text("utf-8"))
+    config_path = get_runtime_dir() / "ECL_Libs" / "user_agreement.json"
+    if config_path.is_file():
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            data = json.loads(config_path.read_text("utf-8"))
             uuid_val = data.get("uuid", "")
             if uuid_val:
                 return uuid_val
-    except (OSError, ValueError, KeyError):
-        pass
     return str(uuid.uuid4())
 
 
 class AuthlibInjectorAccount:
-    """外置登录（Authlib-Injector）账户。"""
 
     def __init__(
         self,
@@ -54,8 +45,8 @@ class AuthlibInjectorAccount:
         self._client_token: str = _get_shared_launcher_uuid()
         self._token_expires_at: float = 0.0
 
+
     def login(self) -> bool:
-        """通过 Yggdrasil API 进行登录认证。"""
         try:
             payload = {
                 "agent": {"name": "Minecraft", "version": 1},
@@ -75,17 +66,16 @@ class AuthlibInjectorAccount:
             self._client_token = data.get("clientToken", self._client_token)
             if "selectedProfile" in data:
                 self.profile = data["selectedProfile"]
-            elif data.get("availableProfiles"):
-                self.profile = data["availableProfiles"][0]
+            else:
+                self.profile = next(iter(data.get("availableProfiles", [])), {})
             self._token_expires_at = time.time() + 36000  # 10 小时
             logger.info(f"Authlib 账户 '{self.email}' 登录成功")
             return True
-        except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
+        except (requests.RequestException, ValueError, KeyError) as e:
             logger.error(f"Authlib 账户登录失败: {e}")
             return False
 
     def refresh(self) -> bool:
-        """刷新 access token。"""
         try:
             if not self._access_token:
                 return self.login()
@@ -108,12 +98,11 @@ class AuthlibInjectorAccount:
                 self.profile = data["selectedProfile"]
             logger.info(f"Authlib 账户 '{self.email}' 令牌刷新成功")
             return True
-        except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Authlib 令牌刷新失败: {e}")
+        except (requests.RequestException, ValueError, KeyError) as e:
+            logger.error(f"Authlib accessToken 刷新失败: {e}")
             return False
 
     def validate(self) -> bool:
-        """验证当前 access token 是否有效。"""
         try:
             if not self._access_token:
                 return False
@@ -128,14 +117,12 @@ class AuthlibInjectorAccount:
             return False
 
     def get_token(self) -> str:
-        """获取当前有效的 access token，必要时自动刷新。"""
         if not self._access_token:
             self.login()
-        elif time.time() > self._token_expires_at or not self.validate():
-            if not self.refresh():
-                # 刷新失败（部分 Yggdrasil 实现不支持 refresh 端点），回退到完整登录
-                logger.info(f"令牌刷新失败，回退到完整登录: {self.email}")
-                self.login()
+        elif (time.time() > self._token_expires_at or not self.validate()) and not self.refresh():
+            # 刷新失败回退到完整登录
+            logger.info(f"令牌刷新失败，回退到完整登录: {self.email}")
+            self.login()
         return self._access_token
 
     def get_uuid(self) -> str:
@@ -178,20 +165,22 @@ class AuthlibInjectorManager:
         self._data_dir = data_dir or Path("~/.ECLAuth/authlib").expanduser()
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._jar_path = self._data_dir / "authlib-injector.jar"
+        self.authlib_injector_url = "https://authlib-injector.yushi.moe/artifact/latest.json"
 
     def download(self) -> bool:
-        """下载最新的 authlib-injector.jar。"""
         try:
             # 获取最新版本信息
-            meta_resp = requests.get(AUTHLIB_INJECTOR_META_URL, timeout=30)
+            meta_resp = requests.get(self.authlib_injector_url, timeout=30)
             meta_resp.raise_for_status()
             meta = meta_resp.json()
             download_url = meta.get("download_url", "")
             if not download_url:
                 # 尝试其他可能的字段名
                 download_url = meta.get("downloadUrl", "")
-                if not download_url and "assets" in meta:
-                    download_url = meta["assets"][0].get("browser_download_url", "")
+                if not download_url:
+                    assets = meta.get("assets", [])
+                    if assets and isinstance(assets[0], dict):
+                        download_url = assets[0].get("browser_download_url", "")
             if not download_url:
                 logger.error("无法从元数据中获取下载地址")
                 return False
@@ -201,18 +190,16 @@ class AuthlibInjectorManager:
             self._jar_path.write_bytes(jar_resp.content)
             logger.info(f"Authlib-Injector 下载成功: {self._jar_path}")
             return True
-        except (requests.RequestException, json.JSONDecodeError, KeyError, OSError) as e:
+        except (requests.RequestException, ValueError, KeyError, OSError, AttributeError) as e:
             logger.error(f"Authlib-Injector 下载失败: {e}")
             return False
 
     def get_path(self) -> Path:
-        """获取 authlib-injector.jar 路径，如果不存在则自动下载。"""
         if not self._jar_path.is_file():
             self.download()
         return self._jar_path
 
     def get_launch_args(self, auth_server: str) -> list[str]:
-        """获取 JVM 启动参数（-javaagent 和 -D 参数）。"""
         jar_path = self.get_path()
         return [
             f"-javaagent:{jar_path}={auth_server}",

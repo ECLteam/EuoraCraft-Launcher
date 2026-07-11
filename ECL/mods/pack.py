@@ -12,40 +12,37 @@ logger = get_logger("mods.pack")
 
 
 class ModpackManager:
-    # ── 整合包类型检测 ──
 
     @staticmethod
     def detect_modpack_type(file_path: str) -> dict[str, Any]:
+        # 检测整合包类型（modrinth / curseforge / mcbbs / unknown）
         result: dict[str, Any] = {"type": "unknown", "meta": {}}
 
-        try:
-            with zipfile.ZipFile(file_path, "r") as zf:
-                namelist = zf.namelist()
+        if not zipfile.is_zipfile(file_path):
+            return result
 
-                if "modrinth.index.json" in namelist:
-                    result["type"] = "modrinth"
-                    with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
-                        result["meta"] = json.loads(zf.read("modrinth.index.json").decode("utf-8"))
-                    return result
+        with zipfile.ZipFile(file_path, "r") as zf:
+            namelist = zf.namelist()
 
-                if "manifest.json" in namelist:
-                    result["type"] = "curseforge"
-                    with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
-                        result["meta"] = json.loads(zf.read("manifest.json").decode("utf-8"))
-                    return result
+            if "modrinth.index.json" in namelist:
+                result["type"] = "modrinth"
+                with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
+                    result["meta"] = json.loads(zf.read("modrinth.index.json").decode("utf-8"))
+                return result
 
-                if "mcbbs.packmeta" in namelist:
-                    result["type"] = "mcbbs"
-                    with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
-                        result["meta"] = json.loads(zf.read("mcbbs.packmeta").decode("utf-8"))
-                    return result
+            if "manifest.json" in namelist:
+                result["type"] = "curseforge"
+                with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
+                    result["meta"] = json.loads(zf.read("manifest.json").decode("utf-8"))
+                return result
 
-        except (zipfile.BadZipFile, OSError, KeyError):
-            pass
+            if "mcbbs.packmeta" in namelist:
+                result["type"] = "mcbbs"
+                with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
+                    result["meta"] = json.loads(zf.read("mcbbs.packmeta").decode("utf-8"))
+                return result
 
         return result
-
-    # ── 导入整合包 ──
 
     @staticmethod
     def import_modpack(
@@ -54,6 +51,7 @@ class ModpackManager:
         version_name: str,
         download_threads: int = 32,
     ) -> dict[str, Any]:
+        # 导入整合包到指定游戏目录
         game_dir = Path(game_path)
         game_dir.mkdir(parents=True, exist_ok=True)
 
@@ -94,24 +92,17 @@ class ModpackManager:
                         if mc_info.get("modLoaders")
                         else ""
                     )
-                    (
-                        mc_info.get("modLoaders", [{}])[0].get("id", "").split("-")[-1]
-                        if mc_info.get("modLoaders")
-                        else ""
-                    )
 
                 elif pack_format == "modrinth":
                     mod_files = meta.get("files", [])
                     deps = meta.get("dependencies", {})
                     minecraft_version = deps.get("minecraft", "")
                     loader_type = deps.get("loader", "fabric")
-                    deps.get("loader_version", "")
 
                 elif pack_format == "mcbbs":
                     mod_files = meta.get("files", [])
                     minecraft_version = meta.get("minecraft", {}).get("version", "")
                     loader_type = meta.get("minecraft", {}).get("loader", "")
-                    meta.get("minecraft", {}).get("loader_version", "")
 
                 # 安装 MC + 加载器由调用方处理
 
@@ -140,12 +131,9 @@ class ModpackManager:
                     )
                     downloaded += 1
 
-                overrides_src = None
-                if pack_format in ("curseforge", "modrinth", "mcbbs"):
-                    overrides_src = tmp_path / "overrides"
-
-                if overrides_src and overrides_src.is_dir():
-                    ModpackManager._copy_overrides(str(overrides_src), str(game_dir))
+                overrides_src = tmp_path / "overrides"
+                if overrides_src.is_dir():
+                    shutil.copytree(str(overrides_src), str(game_dir), dirs_exist_ok=True)
 
                 logger.info(
                     "modpack:import_completed",
@@ -171,21 +159,6 @@ class ModpackManager:
             return {"success": False, "message": f"导入整合包失败: {e}"}
 
     @staticmethod
-    def _copy_overrides(src: str, dst: str) -> None:
-        src_path = Path(src)
-        dst_path = Path(dst)
-        for item in src_path.rglob("*"):
-            rel = item.relative_to(src_path)
-            target = dst_path / rel
-            if item.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-            elif item.is_file():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(item), str(target))
-
-    # ── 导出整合包 ──
-
-    @staticmethod
     def export_modpack(
         game_path: str,
         output_path: str,
@@ -194,6 +167,7 @@ class ModpackManager:
         version: str,
         author: str,
     ) -> dict[str, Any]:
+        # 导出整合包为指定格式
         game_dir = Path(game_path)
         mods_dir = game_dir / "mods"
 
@@ -219,14 +193,30 @@ class ModpackManager:
                     if item.name in ("mods", "crash-reports", "logs", "saves"):
                         continue
                     if item.is_dir():
-                        ModpackManager._copy_overrides(str(item), str(overrides_dir / item.name))
+                        shutil.copytree(str(item), str(overrides_dir / item.name), dirs_exist_ok=True)
                     elif item.is_file():
                         shutil.copy2(str(item), str(overrides_dir / item.name))
 
                 if format == "curseforge":
-                    manifest = ModpackManager._build_curseforge_manifest(name, version, author, game_dir)
+                    manifest = {
+                        "manifestType": "minecraftModpack",
+                        "manifestVersion": 1,
+                        "name": name,
+                        "version": version,
+                        "author": author,
+                        "minecraft": {"version": "", "modLoaders": []},
+                        "files": [],
+                        "overrides": "overrides",
+                    }
                 elif format == "modrinth":
-                    manifest = ModpackManager._build_modrinth_manifest(name, version, game_dir)
+                    manifest = {
+                        "formatVersion": 1,
+                        "game": "minecraft",
+                        "versionId": version,
+                        "name": name,
+                        "dependencies": {},
+                        "files": [],
+                    }
                 else:
                     return {"success": False, "message": f"不支持的导出格式: {format}"}
 
@@ -265,27 +255,3 @@ class ModpackManager:
 
         except (zipfile.BadZipFile, OSError, KeyError, json.JSONDecodeError) as e:
             return {"success": False, "message": f"导出整合包失败: {e}"}
-
-    @staticmethod
-    def _build_curseforge_manifest(name: str, version: str, author: str, game_dir: Path) -> dict[str, Any]:
-        return {
-            "manifestType": "minecraftModpack",
-            "manifestVersion": 1,
-            "name": name,
-            "version": version,
-            "author": author,
-            "minecraft": {"version": "", "modLoaders": []},
-            "files": [],
-            "overrides": "overrides",
-        }
-
-    @staticmethod
-    def _build_modrinth_manifest(name: str, version: str, game_dir: Path) -> dict[str, Any]:
-        return {
-            "formatVersion": 1,
-            "game": "minecraft",
-            "versionId": version,
-            "name": name,
-            "dependencies": {},
-            "files": [],
-        }
