@@ -73,7 +73,7 @@ where = ["."]
 include = ["ECL*"]
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
+# version_toml = ["pyproject.toml:project.version"]
 version_variables = ["ECL/common/version.py:__version__"]
 branch = "main"
 upload_to_pypi = false
@@ -95,7 +95,7 @@ build_number = 0
 spec_file = "EuoraCraft-Launcher.spec"
 onefile = false
 console = true
-icon = "assets/icon.ico"
+icon = "assets/img/logo.ico"
 name = "EuoraCraft Launcher"
 
 [tool.release]

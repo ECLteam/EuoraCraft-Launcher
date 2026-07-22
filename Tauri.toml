@@ -1,23 +1,27 @@
 "$schema" = "https://schema.tauri.app/config/2"
 productName = "EuoraCraft Launcher"
-version = "0.1.0"
+#version = "0.1.0"
 identifier = "com.github.euoracraft-launcher"
 
-[build]
+#[build]
 # 可在此处修改前端的文件来源
 #frontendDist = "frontend/dist"
-frontendDist = "http://localhost:5173"
+#frontendDist = "http://localhost:5173"
+
+[bundle]
+active = true
+icon = ["resources/img/logo.ico"]
 
 [app]
-withGlobalTauri = false
+withGlobalTauri = true
 
-[app.security]
+#[app.security]
 
-[[app.windows]]
-title = "EuoraCraft Launcher"
-width = 1000
-height = 700
-minWidth = 900
-minHeight = 600
-decorations = false
-visible = true
+#[[app.windows]]
+#title = "EuoraCraft Launcher"
+#width = 950
+#height = 600
+#minWidth = 966
+#minHeight = 609
+#decorations = false
+#visible = true

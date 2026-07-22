@@ -80,6 +80,7 @@ exe = EXE(
     a.datas,
     [],
     name="EuoraCraft Launcher",
+    icon="resources/img/logo.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

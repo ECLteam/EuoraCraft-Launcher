@@ -75,3 +75,7 @@ dep_cache/
 plugins/
 plugin_config/
 
+ECL/Game/
+
+.agents/
+

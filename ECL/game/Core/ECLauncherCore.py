@@ -1,404 +1,428 @@
-import json
-import platform
-import re
-import threading
-import time
-from collections.abc import Callable
-from pathlib import Path
+from dataclasses import dataclass, asdict, fields
 from shutil import rmtree
+from pathlib import Path
+import platform
+import json
+import Libs
+import re
 
-from ...common.logger import get_logger
-from . import C_Downloader, C_FilesChecker, C_Libs, InstancesManager
-
-logger = get_logger("core")
-
-
-class ECLauncherCore:
-    def __init__(self):
-        self.output_log: Callable[[str], None] = print
-        self.api_url = C_Libs.ApiUrl()
-        self.downloader = C_Downloader.Downloader(temp_dir="./temp")
-        self.files_checker = C_FilesChecker.FilesChecker(self.api_url, self.downloader)
-        self.files_checker.set_cancel_check(self.is_canceled)
-        self.instances_manager = InstancesManager.InstancesManager()
-        self.system_type = platform.system()  # 获取系统类型
-        self._cancel_launch = False  # 启动取消标志
-
-    def set_api_url(self, api_url_dict: dict):
-        self.api_url.update_from_dict(api_url_dict)
-
-    def set_output_log(self, output_function: Callable[[str], None]) -> None:
-        self.output_log = output_function
-
-    def cancel_launch(self) -> None:
-        self._cancel_launch = True
-        self.downloader.cancel_all_downloads()
-        threading.Thread(target=self.instances_manager.shutdown_all, args=(True,), daemon=True).start()
-
-    def reset_cancel(self) -> None:
-        self._cancel_launch = False
-        self.downloader.set_download_status(True)
-
-    def is_canceled(self) -> bool:
-        return self._cancel_launch
-
-    def _pause_with_cancel(self, seconds: float, message: str) -> bool:
-        self.output_log(message)
-        steps = int(seconds * 10)
-        for _ in range(steps):
-            if self._cancel_launch:
-                self.output_log("启动已取消")
-                return True
-            time.sleep(0.1)
-        return False
-
-    def launch_minecraft(
+class JvmArgumentBuilder:
+    """构建 JVM 参数字符串"""
+    def __init__(
         self,
-        java_path: str | Path,
-        game_path: str | Path,
+        java_path: Path | str,
         version_name: str,
-        max_use_ram: int,
-        player_name: str,
-        user_type: str = "legacy",
-        auth_uuid: str = "",
-        access_token: str = "None",
-        first_set_lang: str = "zh_CN",
-        set_lang: str = "",
-        use_gc: str = "G1GC",
-        launcher_name: str = "ECL",
-        launcher_version: str = "0.1145",
-        default_version_type: bool = False,
-        custom_jvm_params: list[str] | None = None,
-        window_width: int | str = "${resolution_width}",
-        window_height: int | str = "${resolution_height}",
-        completes_file: bool = True,
-        download_max_thread: int = 32,
-        output_jvm_params: bool = False,
-        write_run_script: bool = False,
-        run_script_path: str | Path = ".",
-        authlib_injector_path: str | None = None,
-        authlib_server: str | None = None,
+        use_ram: int,
+        use_gc: str = "G1GC"
     ):
-        if re.search(r"[^a-zA-Z0-9\-_+.]", player_name):  # 检测用户名是否合法
-            error_msg = "玩家名称不能包含数字、减号、下划线、加号或英文句号(小数点)以外的字符"
-            self.output_log(error_msg)
-            raise ValueError(error_msg)
+        """
+        初始化
+        :param java_path: Java 可执行文件路径
+        :param version_name: 版本名称
+        :param use_ram: 分配给 Minecraft 的内存(MB)
+        :param use_gc: Jvm 使用什么 GC, 如 "G1GC" 或 "ZGC"
+        """
+        self.java_path = Path(java_path)
+        self.version_name = version_name
+        self.use_ram = use_ram
+        self.use_gc = use_gc
 
-        if auth_uuid != "" and not C_Libs.is_uuid3(auth_uuid):  # 检测是否定义了UUID3,是否合法
-            error_msg = "错误的 UUID, UUID 必须是 UUID3"
-            self.output_log(error_msg)
-            raise ValueError(error_msg)
+        self.system = platform.system()
+        self.args = []
 
-        java_path = Path(java_path)
-        game_path = Path(game_path).resolve()
-        version_json_path = game_path / "versions" / version_name / f"{version_name}.json"
+        self._add_base_args()
 
-        if not java_path.is_file():
-            error_msg = f"未找到 Java 可执行文件 {java_path}"
-            self.output_log(error_msg)
-            raise FileNotFoundError(error_msg)
+    def _add_base_args(self) -> None:
+        self.args.extend([
+            f'"{self.java_path}"',
+            f"-Xms{self.use_ram}M",
+            f"-Xmx{self.use_ram}M",
+            "-Dstderr.encoding=UTF-8",
+            "-Dstdout.encoding=UTF-8",
+            "-Dfile.encoding=UTF-8",
+            f"-XX:+Use{self.use_gc}",
+            "-XX:-UseAdaptiveSizePolicy",
+            "-XX:-OmitStackTraceInFastThrow",
+            "-Dlog4j2.formatMsgNoLookups=true",
+            "-Dfml.ignoreInvalidMinecraftCertificates=True",
+            "-Dfml.ignorePatchDiscrepancies=True"
+        ])
+        if self.system == "Windows":
+            self.args.append("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump")
+        elif self.system == "Darwin":
+            self.args.append("-XstartOnFirstThread")
 
-        if not version_json_path.is_file():
-            error_msg = f"未找到游戏 {version_name}"
-            self.output_log(error_msg)
-            raise FileNotFoundError(error_msg)
-
-        if max_use_ram < 256:
-            max_use_ram = 256
-
-        if completes_file:
-            self.files_checker.check_files(game_path, version_name, download_max_thread)
-            if self.is_canceled():
-                self.output_log("启动已取消")
-                return
-            # 显式发送进度事件，确保前端能收到
-            try:
-                from ...common.state import _safe_emit
-                _safe_emit("game:launch_progress", {"phase": "files_checked", "percent": 50})
-            except ImportError:
-                pass
-            if self._pause_with_cancel(2.0, "文件校验完成，即将构建启动参数..."):
-                return
-
-        jvm_params_list = []
-        cp_delimiter = ":"  # ClassPath分隔符
-        run_script_suffix = ".sh"
-        self.output_log(f"系统平台 {self.system_type}")
-        # 显式发送进度事件，确保前端能收到
-        try:
-            from ...common.state import _safe_emit
-            _safe_emit("game:launch_progress", {"phase": "building_args", "percent": 65})
-        except ImportError:
-            pass
-
-        if self.system_type == "Windows":  # 判断是否为Windows
-            run_script_suffix = ".bat"
-            cp_delimiter = ";"
-            jvm_params_list.append(
-                "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump"
-            )
-        elif self.system_type == "Darwin":  # 判断是否为MacOS(OSX)
-            run_script_suffix = ".command"
-            jvm_params_list.append("-XstartOnFirstThread")
-
-        jvm_params_list.extend(
-            [
-                f"-Xms{max_use_ram}M",
-                f"-Xmx{max_use_ram}M",
-                "-Dstderr.encoding=UTF-8",
-                "-Dstdout.encoding=UTF-8",
-                "-Dfile.encoding=UTF-8",
-                f"-XX:+Use{use_gc}",
-                "-XX:-UseAdaptiveSizePolicy",
-                "-XX:-OmitStackTraceInFastThrow",
-                "-Dlog4j2.formatMsgNoLookups=true",
-                "-Dfml.ignoreInvalidMinecraftCertificates=True",
-                "-Dfml.ignorePatchDiscrepancies=True",
-            ]
-        )
-
-        if custom_jvm_params:
-            jvm_params_list.extend(custom_jvm_params)  # 添加自定义Jvm
-
-        # Authlib 外置登录 JVM 参数
-        if authlib_injector_path and authlib_server:
-            jvm_params_list.append(f"-javaagent:{authlib_injector_path}={authlib_server}")
-            jvm_params_list.append("-Dauthlibinjector.noLogFile=true")
-            self.output_log(f"已添加 Authlib-Injector 参数: {authlib_server}")
-
-        version_data = json.loads(version_json_path.read_text("utf-8"))
-
-        if "arguments" in version_data:
-            if "jvm" in version_data["arguments"]:
-                for arguments_jvm in version_data["arguments"]["jvm"]:
+    def add_from_version_json(self, version_json: dict) -> "JvmArgumentBuilder":
+        """
+        读取 Meta Json 内容添加相应 Jvm 参数
+        :param version_json: Meta Json
+        :return: 返回实例自身
+        """
+        if "arguments" in version_json:
+            if "jvm" in version_json["arguments"]:
+                for arguments_jvm in version_json["arguments"]["jvm"]:
                     if type(arguments_jvm) is not str:
                         continue
-                    if "${classpath_separator}" in arguments_jvm:
-                        jvm_params_list.append(f'"{arguments_jvm}"')
-                    else:
-                        jvm_params_list.append(arguments_jvm)
-            if "game" in version_data["arguments"]:
-                for arguments_game in version_data["arguments"]["game"]:
+                    if arguments_jvm in self.args:
+                        continue
+                    self.args.append(arguments_jvm)
+            if "game" in version_json["arguments"]:
+                for arguments_game in version_json["arguments"]["game"]:
                     if type(arguments_game) is not str:
                         continue
-                    jvm_params_list.append(arguments_game)
-        elif "minecraftArguments" in version_data:
-            jvm_params_list.extend(
-                ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", version_data["minecraftArguments"]]
-            )
+                    if arguments_game in self.args:
+                        continue
+                    self.args.append(arguments_game)
+        elif "minecraftArguments" in version_json:
+            ex_args = [
+                "-Djava.library.path=${natives_directory}",
+                "-cp ${classpath}",
+                version_json["minecraftArguments"]
+            ]
+            for arg in ex_args:
+                if arg in self.args:
+                    continue
+                self.args.append(arg)
+        return self
 
-        if window_width != "${resolution_width}" or window_height != "${resolution_height}":
-            jvm_params_list.append(f"--width {window_width} --height {window_height}")
-        class_path_list = []
-        asm_versions = []  # Fuck ASM!!!
-        natives_path_list = []
+    def add_custom(self, custom_args: list[str]) -> "JvmArgumentBuilder":
+        """
+        添加自定义 Jvm 参数(把握好添加时机,参数位置不对可能导致崩溃)
+        :param custom_args: 参数列表 ["..."]
+        :return: 返回实例自身
+        """
+        if custom_args:
+            self.args.extend(custom_args)
+        return self
 
-        for libraries in version_data.get("libraries", []):  # 遍历依赖
-            get_path = C_Libs.name_to_path(libraries.get("name"))
-            if not get_path:
+    def get_args(self) -> list[str]:
+        """
+        获取 Jvm 参数列表
+        :return: Jvm 参数列表
+        """
+        return self.args
+
+    def build(self) -> str:
+        """
+        构建 Jvm 参数为单条指令
+        :return: 初始指令(未替换占位符)
+        """
+        self.args.extend([
+            "--width ${resolution_width}",
+            "--height ${resolution_height}",
+        ])
+        return " ".join(self.args)
+
+class ClasspathBuilder:
+    """构建 ClassPath，包含 ASM 版本过滤"""
+    def __init__(self, game_path: Path | str):
+        """
+        初始化
+        :param game_path: .minecraft 路径
+        """
+        self.game_path = Path(game_path)
+        self.classpath = []
+        self.asm_versions = []
+        self.natives = []
+
+    def add_libraries(self, version_json: dict) -> "ClasspathBuilder":
+        """
+        读取 Meta Json 内容添加相应 Libraries
+        :param version_json: Meta Json
+        :return: 返回实例自身
+        """
+        for lib in version_json.get("libraries", []):
+            r_path = Libs.name_to_path(lib["name"])
+            if not r_path:
                 continue
-            libraries_path = game_path / "libraries" / get_path
-            if str(libraries_path) in class_path_list:
-                continue  # 防止重复添加
-            if re.search(r"asm-\d+(?:\.\d+)*", libraries_path.stem):  # Fuck ASM!!!
-                asm_versions.append(libraries_path)
+            lib_path = self.game_path / "libraries" / r_path
+            if str(lib_path) in self.classpath:
                 continue
-            class_path_list.append(str(libraries_path))
-            if "classifiers" not in libraries.get("downloads", {}):
+            # ASM 版本过滤
+            if re.search(r"asm-\d+(?:\.\d+)*", lib_path.stem):
+                self.asm_versions.append(lib_path)
+                continue
+            self.classpath.append(str(lib_path))
+            if "classifiers" not in lib.get("downloads", {}):
                 continue  # 查找natives
-            for classifiers in libraries["downloads"]["classifiers"].values():
-                natives_path = game_path / "libraries" / classifiers["path"]
-                if natives_path in natives_path_list:
+            for classifiers in lib["downloads"]["classifiers"].values():
+                natives_path = self.game_path / "libraries" / classifiers["path"]
+                if natives_path in self.natives:
                     continue  # 防止重复添加
-                natives_path_list.append(natives_path)
+                self.natives.append(natives_path)
+        return self
 
-        version_jar = game_path / "versions" / version_name / f"{version_name}.jar"
-        asset_index_id = ""
+    def add_version_jar(self, jar_path: Path) -> "ClasspathBuilder":
+        """
+        添加游戏本体 Jar, 这个需要最后执行(在构建 Classpath 之前)
+        :param jar_path: 游戏本体 Jar 文件路径
+        :return: 返回实例自身
+        """
+        self._select_best_asm()
+        self.classpath.append(str(jar_path))
+        return self
 
-        if "id" in version_data.get("assetIndex", {}):
-            asset_index_id = version_data["assetIndex"]["id"]
+    def _select_best_asm(self):
+        """选择最高版本的 ASM，避免重复加载"""
+        if not self.asm_versions:
+            return
+        # 使用 packaging.version 或简单数值比较
+        best = max(self.asm_versions, key=lambda p: self._parse_asm_version(p.stem))
+        self.classpath.append(str(best))
 
-        game_json = C_Libs.find_version(version_data, game_path)
+    @staticmethod
+    def _parse_asm_version(stem: str) -> tuple[int, ...]:
+        # "asm-9.4.1" -> (9, 4, 1)
+        parts = stem.replace("asm-", "").split(".")
+        return tuple(int(x) for x in parts)
 
-        if game_json:
-            game_json, version_path = game_json
-            if "arguments" in game_json:
-                if "jvm" in game_json["arguments"]:
-                    for arguments_jvm in game_json["arguments"]["jvm"]:
-                        if type(arguments_jvm) is not str:
-                            continue
-                        if arguments_jvm in jvm_params_list:
-                            continue
-                        jvm_params_list.append(arguments_jvm)
-                if "game" in game_json["arguments"]:
-                    for arguments_game in game_json["arguments"]["game"]:
-                        if type(arguments_game) is not str:
-                            continue
-                        if arguments_game in jvm_params_list:
-                            continue
-                        jvm_params_list.append(arguments_game)
-            elif "minecraftArguments" not in version_data and "minecraftArguments" in game_json:
-                jvm_params_list.extend(
-                    ["-Djava.library.path=${natives_directory}", "-cp ${classpath}", game_json["minecraftArguments"]]
-                )
+    def get_natives(self) -> list[str]:
+        """
+        获取 Natives 原生库列表(需要解压)
+        :return: Natives 原生库列表
+        """
+        return self.natives
 
-            for libraries in game_json.get("libraries", []):  # 遍历依赖
-                get_path = C_Libs.name_to_path(libraries.get("name"))
-                if not get_path:
-                    continue
-                libraries_path = game_path / "libraries" / get_path
-                if str(libraries_path) in class_path_list:
-                    continue  # 防止重复添加
-                if (
-                    re.search(r"asm-\d+(?:\.\d+)*", libraries_path.stem) and libraries_path not in asm_versions
-                ):  # Fuck ASM!!!
-                    asm_versions.append(libraries_path)
-                    continue
-                class_path_list.append(str(libraries_path))
-                if "classifiers" not in libraries.get("downloads", {}):
-                    continue  # 查找natives
-                for classifiers in libraries["downloads"]["classifiers"].values():
-                    natives_path = game_path / "libraries" / classifiers["path"]
-                    if natives_path in natives_path_list:
-                        continue  # 防止重复添加
-                    natives_path_list.append(natives_path)
+    def get_classpath(self) -> list[str]:
+        """
+        获取 Classpath 列表
+        :return: Classpath 列表
+        """
+        return self.classpath
 
-            if not version_jar.is_file():
-                version_jar = version_path / f"{version_path.name}.jar"
+    def build(self, cp_delimiter:str = ":") -> str:
+        """
+        构建 Classpath 字符串
+        :param cp_delimiter: Classpath 分隔符, 通常系统为 ":", Windows 为 ";"
+        :return: 构建好的 Classpath 字符串
+        """
+        return cp_delimiter.join(self.classpath)
 
-            if not asset_index_id:
-                asset_index_id = game_json.get("assetIndex", {}).get("id", asset_index_id)
 
-        asm_version = (0,)
-        asm_path = ""
+@dataclass(frozen=True)
+class LaunchConfig:
+    """启动游戏所需的所有变量，避免散落在各处"""
+    java_path: str | Path
+    """Java 可执行文件路径"""
+    game_path: str | Path
+    """.minecraft 路径"""
+    version_name: str
+    """游戏版本名称"""
+    use_ram: int
+    """分配给 Minecraft 的内存(MB)"""
+    player_name: str
+    """玩家昵称"""
+    auth_uuid: str
+    """登录的 UUID(UUID3)"""
+    user_type: str = "legacy"
+    """用户类型, "legacy" 为离线登录, "msa" 为 Microsoft 登录"""
+    access_token: str = "None"
+    """user_type 非 "legacy" 登录需要添加 Token 令牌"""
+    use_gc: str = "G1GC"
+    """Jvm 使用什么 GC, 如 "G1GC" 或 "ZGC" """
+    launcher_name: str = "ECL"
+    """启动器名称"""
+    launcher_version: str = "0.11.45"
+    """启动器版本号(似乎没啥用)"""
+    custom_jvm_params: list[str] | None = None
+    """添加额外的 Jvm 参数"""
+    version_isolation: bool = False
+    """是否隔离版本, 不推荐不隔离"""
+    window_width: int | str = "${resolution_width}"
+    """Minecraft 窗口宽度(px)"""
+    window_height: int | str = "${resolution_height}"
+    """Minecraft 窗口高度(px)"""
 
-        for get_asm in asm_versions:  # Fuck ASM!!!
-            asm_ver = get_asm.stem.replace("asm-", "")
-            asm_parts = tuple(int(x) for x in asm_ver.split("."))  # 按版本号分段比较，避免 float 对三段版本号失败
-            if asm_parts > asm_version:
-                asm_version = asm_parts
-                asm_path = str(get_asm)
-        if asm_path:
-            class_path_list.append(asm_path)
+    def get(self, key_name: str) -> str | None:
+        """
+        通过元素名称查找值
+        :param key_name: 元素名称
+        :return: 对应值
+        """
+        return getattr(self, key_name, None)
 
-        class_path_list.append(str(version_jar))
-        jvm_params = f'"{java_path}" {" ".join(jvm_params_list)}'
-        class_path = f'"{cp_delimiter.join(class_path_list)}" {version_data["mainClass"]}'
-        # DEBUG: 输出 classpath 构建信息
-        logger.debug(f"[DEBUG] mainClass: {version_data['mainClass']}")
-        logger.debug(f"[DEBUG] classpath jars count: {len(class_path_list)}")
-        logger.debug(f"[DEBUG] class_path (first 200): {class_path[:200]}")
-        logger.debug(f"[DEBUG] class_path (last 200): {class_path[-200:]}")
-        # 显式发送进度事件，确保前端能收到
+    def to_dict(self) -> dict[str, str]:
+        """
+        转为字典
+        :return: {"API": "URL"}
+        """
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, api_url_dict: dict) -> "LaunchConfig":
+        """
+        从字典创建实例, 不存在的键值则默认
+        :param api_url_dict: {"API": "URL"}
+        :return: ApiUrlConfig 实例
+        """
+        kw = {}
+        for api_name in fields(cls):
+            if api_name.name in api_url_dict: kw.update({api_name.name: api_url_dict[api_name.name].strip("/")})
+        return cls(**kw)
+
+    def update_from_dict(self, api_url_dict: dict) -> None:
+        """
+        从字典中更新元素值
+        :param api_url_dict: {"API": "URL"}
+        :return: Nome
+        """
+        for api_name in fields(self):
+            if api_name.name in api_url_dict: setattr(self, api_name.name, api_url_dict[api_name.name].strip("/"))
+
+
+class PlaceholderReplacer:
+    """占位符替换器"""
+    def __init__(
+        self,
+        config: LaunchConfig,
+        classpath: str,
+        main_class: str,
+        index_id: str,
+        natives_dir: Path | str,
+        version_jar_path: Path | str,
+        cp_delimiter:str = ":",
+        version_isolation: bool = False
+    ):
+        """
+        初始化
+        :param config: LaunchConfig 实例
+        :param classpath: 构建好的 Classpath 字符串
+        :param main_class: Java 程序入口
+        :param index_id: 资源引索 ID
+        :param natives_dir: Natives 原生库路径
+        :param version_jar_path: 游戏本体 Jar 文件路径
+        :param cp_delimiter: Classpath 分隔符, 通常系统为 ":", Windows 为 ";"
+        :param version_isolation: 是否隔离版本, 不推荐不隔离
+        """
+        self.config = config
+        self.classpath = classpath
+        self.main_class = main_class
+        self.index_id = index_id
+        self.natives_dir = natives_dir
+        self.version_jar_path = version_jar_path
+        self.cp_delimiter = cp_delimiter
+        self.version_isolation = version_isolation
+
+    def _build_standard_replacements(self) -> dict[str, str]:
+        """构建除 classpath 和 version_name 外的所有占位符映射"""
+        game_dir = Path(self.config.game_path) / "versions"
+        if not self.version_isolation:
+            game_dir = game_dir / self.config.version_name
+        return {
+            "library_directory": str(Path(self.config.game_path) / "libraries"),
+            "assets_root": str(Path(self.config.game_path) / "assets"),
+            "assets_index_name": self.index_id,
+            "natives_directory": str(self.natives_dir),
+            "game_directory": str(game_dir),
+            "launcher_name": self.config.launcher_name,
+            "launcher_version": self.config.launcher_version,
+            "version_type": self.config.launcher_name,
+            "auth_player_name": self.config.player_name,
+            "user_type": self.config.user_type,
+            "auth_uuid": self.config.auth_uuid,
+            "auth_access_token": self.config.access_token,
+            "user_properties": "{}",
+            "classpath_separator": self.cp_delimiter,
+            "primary_jar_name": str(Path(self.version_jar_path).name),
+            "resolution_width": str(self.config.window_width),
+            "resolution_height": str(self.config.window_height),
+        }
+
+    @staticmethod
+    def _replace_last(text: str, old: str, new: str) -> str:
+        """
+        只替换字符串中最后一次出现的 old
+        等价于原 C_Libs.replace_last 的逻辑
+        """
+        return new.join(text.rsplit(old, 1))
+
+    def replace(self, raw_command: str) -> str:
+        """
+        替换掉占位符
+        :param raw_command: 初始指令(未替换占位符)
+        :return: 替换好的指令
+        """
+        result = raw_command
+
+        for key, value in self._build_standard_replacements().items():
+            result = result.replace(f"${{{key}}}", f'"{value}"')
+
+        version = self.config.version_name
+        result = (
+            self._replace_last(result, "${version_name}", f'"{version}"')
+                .replace("${version_name}", version)
+                .replace("${classpath}", f'"{self.classpath}" "{self.main_class}"')
+        )
+        result = result
+
+        return result
+
+
+def build_minecraft_cmd(config: LaunchConfig) -> str:
+    """
+    准备启动 Minecraft 并构建启动指令
+    :param config: LaunchConfig 实例
+    :return: 构建好的启动指令
+    """
+
+    jvm_builder = JvmArgumentBuilder(
+        java_path=config.java_path,
+        version_name=config.version_name,
+        use_ram=config.use_ram,
+        use_gc=config.use_gc
+    )
+
+    version_json = json.loads(
+        (
+            Path(config.game_path) / "versions" / config.version_name / f"{config.version_name}.json"
+        ).read_text("utf-8")
+    )
+
+    jvm_builder.add_from_version_json(version_json)
+
+    cp_builder = ClasspathBuilder(config.game_path)
+    cp_builder.add_libraries(version_json)
+
+    version_jar = Path(config.game_path) / "versions" / config.version_name / f"{config.version_name}.jar"
+    index_id = ""
+    if "id" in version_json.get("assetIndex", {}):
+        index_id = version_json["assetIndex"]["id"]
+
+    game_json = Libs.find_version(version_json, config.game_path)
+    if game_json:
+        jvm_builder.add_from_version_json(game_json[0])
+        cp_builder.add_libraries(game_json[0])
+        index_id = game_json[0].get("assetIndex", {}).get("id", index_id)
+
+        if not version_jar.is_file():
+            version_jar = game_json[1] / f"{game_json[1].name}.jar"
+
+    if config.custom_jvm_params:
+        jvm_builder.add_custom(config.custom_jvm_params)
+
+    cp_builder.add_version_jar(version_jar)
+    cp_delimiter = ":" if platform.system() != "Windows" else ";"
+
+    natives_path = Path(config.game_path) / "versions" / config.version_name / "natives"
+    if natives_path.is_dir():
         try:
-            from ...common.state import _safe_emit
-            _safe_emit("game:launch_progress", {"phase": "args_built", "percent": 75})
-        except ImportError:
+            rmtree(natives_path)
+        except OSError:
             pass
-        if self._pause_with_cancel(2.0, "启动参数构建完成，即将解压原生库..."):
-            return
-        natives_path = game_path / "versions" / version_name / "natives"
-        is_set_lang = False
+        natives_path.mkdir(parents=True, exist_ok=True)
+    else:
+        natives_path.mkdir(parents=True, exist_ok=True)
+    for native in cp_builder.get_natives():
+        Libs.unzip(native, natives_path)
 
-        if natives_path.is_dir():
-            try:
-                rmtree(natives_path)
-            except OSError as e:
-                logger.warning(f"删除 natives 目录失败: {e}")
-            natives_path.mkdir(parents=True, exist_ok=True)
-        else:
-            is_set_lang = True
-            natives_path.mkdir(parents=True, exist_ok=True)
+    cmd = PlaceholderReplacer(
+        config=config,
+        classpath=cp_builder.build(cp_delimiter),
+        main_class=version_json["mainClass"],
+        index_id=index_id,
+        natives_dir=natives_path,
+        version_jar_path=version_jar,
+        cp_delimiter=cp_delimiter
+    )
 
-        self.output_log(f"需要解压 {len(natives_path_list)} 个文件")
-        for a_natives in natives_path_list:
-            if self.is_canceled():  # 解压前检查取消标志
-                return
-            C_Libs.unzip(a_natives, natives_path)
-
-        # 显式发送进度事件，确保前端能收到
-        try:
-            from ...common.state import _safe_emit
-            _safe_emit("game:launch_progress", {"phase": "natives_done", "percent": 85})
-        except ImportError:
-            pass
-        if self._pause_with_cancel(2.0, "原生库解压完成，即将启动游戏..."):
-            return
-
-        if is_set_lang or set_lang:  # 设置游戏语言
-            options_contents = lang = f"lang:{set_lang}" if set_lang else f"lang:{first_set_lang}"
-            options_path = game_path / "versions" / version_name / "options.txt"
-            if options_path.is_file():
-                options_contents = options_path.read_text("utf-8")
-                options_contents = re.sub(r"^lang:\S+$", lang, options_contents, flags=re.MULTILINE)
-            options_path.write_text(options_contents, "utf-8")
-            self.output_log(f"设置游戏语言为 {lang}")
-
-        if user_type == "legacy":  # 离线模式设置唯一标识id
-            auth_uuid = C_Libs.name_to_uuid(player_name).hex
-            self.output_log(f"未设置 UUID, 生成 UUID 为 {auth_uuid}")
-
-        jvm_params = C_Libs.replace_last(
-            jvm_params.replace("${classpath}", class_path)  # 把-cp参数内容换成拼接好的依赖路径
-            .replace("${library_directory}", f'"{game_path / "libraries"}"', 1)  # 依赖文件夹路径
-            .replace("${assets_root}", f'"{game_path / "assets"}"')  # 资源文件夹路径
-            .replace("${assets_index_name}", asset_index_id)  # 资源索引id
-            .replace("${natives_directory}", f'"{natives_path}"')  # 依赖库文件夹路径
-            .replace("${game_directory}", f'"{game_path / "versions" / version_name}"')  # 游戏文件存储路径
-            .replace("${launcher_name}", f'"{launcher_name}"')  # 启动器名字
-            .replace("${launcher_version}", f'"{launcher_version}"')  # 启动器版本
-            # .replace("${version_name}", f'"{version_name}"', -1)
-            .replace(
-                "${version_type}",
-                f'"{version_data.get("type", launcher_name)}"' if default_version_type else f'"{launcher_name}"',
-            )  # 版本类型
-            .replace("${auth_player_name}", f'"{player_name}"')  # 玩家名字
-            .replace("${user_type}", user_type)  # 登录方式
-            .replace("${auth_uuid}", auth_uuid)
-            .replace("${auth_access_token}", access_token)  # 正版登录令牌
-            .replace("${user_properties}", "{}")  # 老版本的用户配置项
-            .replace("${classpath_separator}", cp_delimiter)  # NeoForged的占位符,替换为ClassPath的分隔符
-            .replace("${library_directory}", f"{game_path / 'libraries'}")  # NeoForged的占位符,获取依赖文件夹路径
-            .replace("${primary_jar_name}", version_jar.name),  # NeoForged的占位符,替换为游戏本体Jar文件名
-            "${version_name}",
-            f'"{version_name}"',  # 版本名字
-        ).replace("${version_name}", version_name)  # 特殊处理占位符,替换为游戏版本名称
-
-        if self.is_canceled():
-            self.output_log("启动已取消")
-            return
-
-        # 显式发送进度事件，确保前端能收到
-        try:
-            from ...common.state import _safe_emit
-            _safe_emit("game:launch_progress", {"phase": "about_to_launch", "percent": 92})
-        except ImportError:
-            pass
-        if self._pause_with_cancel(2.0, "即将启动游戏进程..."):
-            return
-
-        if write_run_script:
-            run_script_path = Path(run_script_path) / f"run{run_script_suffix}"
-            self.output_log(f"生成的启动脚本在 {run_script_path}")
-            run_script_path.write_text(jvm_params, "utf-8")
-        if output_jvm_params:
-            self.output_log("输出启动参数")
-            self.output_log(jvm_params)
-        else:
-            if self.is_canceled():
-                self.output_log("启动已取消")
-                return
-            self.output_log(f"正在启动游戏 [{version_name}]")
-            # 显式发送进度事件，确保前端能收到
-            try:
-                from ...common.state import _safe_emit
-                _safe_emit("game:launch_progress", {"phase": "launching", "percent": 95})
-            except ImportError:
-                pass
-            self.instances_manager.create_instance(
-                instance_name=version_name,
-                instance_type="MinecraftClient",
-                args=jvm_params,
-                cwd=(game_path / "versions" / version_name),
-                only_stdout=True,
-            )  # 启动游戏
+    return cmd.replace(jvm_builder.build())
