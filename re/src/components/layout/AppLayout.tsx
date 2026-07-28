@@ -19,10 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAppStore } from "@/stores/appStore";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { SideBar } from "@/components/layout/SideBar";
-import { TaskPanel } from "@/components/layout/TaskPanel";
 import { initializeTheme } from "@/hooks/useTheme";
-import { isShowcaseMode } from "@/api/transport";
-import { mockTasks } from "@/api/transport/showcase";
 
 // ---------------------------------------------------------------------------
 // Minimum Window Size (for Tauri)
@@ -90,7 +87,7 @@ function RouteLoadingFallback() {
 
 export function AppLayout() {
   const location = useLocation();
-  const { navigateTo, addTask, tasks } = useAppStore();
+  const { navigateTo } = useAppStore();
 
   // Initialize theme on mount
   useEffect(() => {
@@ -101,13 +98,6 @@ export function AppLayout() {
   useEffect(() => {
     navigateTo(location.pathname);
   }, [location.pathname, navigateTo]);
-
-  // Load demo tasks in showcase mode
-  useEffect(() => {
-    if (isShowcaseMode() && tasks.length === 0) {
-      mockTasks.forEach((task) => addTask(task));
-    }
-  }, [addTask, tasks.length]);
 
   return (
     <div
@@ -143,9 +133,6 @@ export function AppLayout() {
           </AnimatePresence>
         </main>
       </div>
-
-      {/* Task Panel (slide-in from right) */}
-      <TaskPanel />
     </div>
   );
 }

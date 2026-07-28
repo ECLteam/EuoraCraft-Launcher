@@ -9,7 +9,7 @@
  * Used when `window.__TAURI_INTERNALS__` is not available.
  */
 
-import type { ApiResponse, TaskInfo } from "@/types/api";
+import type { ApiResponse } from "@/types/api";
 import type {
   LauncherConfig,
   MinecraftVersion,
@@ -373,90 +373,6 @@ const mockPlugins: PluginInfo[] = [
   },
 ];
 
-/** Mock task queue data for showcase mode */
-const mockTasks: TaskInfo[] = [
-  {
-    id: "task-demo-download",
-    type: "version_install",
-    name: "下载 Minecraft 1.21.4",
-    status: "running",
-    progress: 68,
-    message: "正在下载 client.jar (12.4 MB / 18.2 MB)",
-    createdAt: Date.now() - 120000,
-    startedAt: Date.now() - 100000,
-    cancellable: true,
-  },
-  {
-    id: "task-demo-install",
-    type: "install",
-    name: "安装 Forge 49.0.38",
-    status: "pending",
-    progress: 0,
-    message: "等待下载完成...",
-    createdAt: Date.now() - 60000,
-    cancellable: true,
-    parentId: "task-demo-download",
-  },
-  {
-    id: "task-demo-plugin-done",
-    type: "plugin_install",
-    name: "OptiFine HD U J1",
-    status: "completed",
-    progress: 100,
-    message: "安装完成，已添加到 1.21.4",
-    createdAt: Date.now() - 300000,
-    startedAt: Date.now() - 290000,
-    completedAt: Date.now() - 60000,
-    cancellable: false,
-  },
-  {
-    id: "task-demo-delete-fail",
-    type: "version_delete",
-    name: "删除旧版本 1.16.5",
-    status: "failed",
-    progress: 34,
-    error: "无法删除文件: .minecraft/versions/1.16.5/1.16.5.jar 被其他进程占用",
-    createdAt: Date.now() - 600000,
-    startedAt: Date.now() - 590000,
-    completedAt: Date.now() - 580000,
-    cancellable: false,
-  },
-  {
-    id: "task-demo-plugin-update",
-    type: "plugin_update",
-    name: "更新世界备份插件 v2.0.0 → v2.0.1",
-    status: "pending",
-    progress: 0,
-    message: "队列中，等待当前任务完成",
-    createdAt: Date.now() - 30000,
-    cancellable: true,
-  },
-  {
-    id: "task-demo-extract",
-    type: "extract",
-    name: "解压资源包素材",
-    status: "completed",
-    progress: 100,
-    message: "共解压 1,247 个文件 (45.6 MB)",
-    createdAt: Date.now() - 900000,
-    startedAt: Date.now() - 890000,
-    completedAt: Date.now() - 870000,
-    cancellable: false,
-  },
-  {
-    id: "task-demo-cancelled",
-    type: "download",
-    name: "下载光影包 SEUS v11",
-    status: "cancelled",
-    progress: 12,
-    message: "已取消",
-    createdAt: Date.now() - 1200000,
-    startedAt: Date.now() - 1190000,
-    completedAt: Date.now() - 1150000,
-    cancellable: false,
-  },
-];
-
 /** Mock file system structure */
 const mockFileSystem: Record<string, { isDirectory: boolean; content?: string }> = {
   ".minecraft": { isDirectory: true },
@@ -629,11 +545,6 @@ export const showcaseTransport: Transport = {
           data = { ok: true };
           break;
 
-        // ---- Task Queue Commands ----
-        case "get_tasks":
-          data = mockTasks;
-          break;
-
         // ---- Default ----
         default:
           if (import.meta.env.DEV) {
@@ -741,5 +652,3 @@ export const showcaseTransport: Transport = {
 };
 
 export default showcaseTransport;
-
-export { mockTasks };
