@@ -14,30 +14,30 @@ import { GameAccountCard, MOCK_ACCOUNT } from "./GameAccountCard";
 import { GameInfoCard } from "./GameInfoCard";
 import { GameLaunchBar } from "./GameLaunchBar";
 import { LaunchProgressCard, useDemoLaunchProgress } from "./LaunchProgressCard";
-import { useStaggeredBounce, useBounceIn } from "@/hooks/useAnimation";
 
 // ---------------------------------------------------------------------------
-// Animation Variants (nonlinear bounce stagger)
+// Animation Variants (snappy, no spring, no scale)
 // ---------------------------------------------------------------------------
 
-const bounceContainer = {
+const snappyEase: [number, number, number, number] = [0.8, 0, 0.2, 1];
+
+const staggerContainer = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.06,
+      staggerChildren: 0.08,
       delayChildren: 0.05,
     },
   },
 };
 
-const bounceUp = {
-  hidden: { opacity: 0, scale: 0.6, y: 8 },
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
   visible: {
     opacity: 1,
-    scale: 1,
     y: 0,
-    transition: { duration: 0.4, ease: [0.34, 1.56, 0.64, 1] as [number, number, number, number] },
+    transition: { duration: 0.15, ease: snappyEase },
   },
 };
 
@@ -96,18 +96,18 @@ function HeroSection() {
   return (
     <motion.div
       className="flex flex-col items-start justify-center pl-6"
-      variants={bounceContainer}
+      variants={staggerContainer}
       initial="hidden"
       animate="visible"
     >
       {/* Block grid decoration */}
-      <motion.div variants={bounceUp} className="mb-6">
+      <motion.div variants={fadeUp} className="mb-6">
         <BlockGrid />
       </motion.div>
 
       {/* Title */}
       <motion.h1
-        variants={bounceUp}
+        variants={fadeUp}
         className="font-mono text-4xl font-bold text-[#5B8731]"
         style={{ textShadow: "3px 3px 0px rgba(0,0,0,0.3)" }}
       >
@@ -116,7 +116,7 @@ function HeroSection() {
 
       {/* Subtitle */}
       <motion.p
-        variants={bounceUp}
+        variants={fadeUp}
         className="mt-2 font-mono text-sm text-[#999999] tracking-[0.25em]"
       >
         BLOCK BY BLOCK
@@ -124,7 +124,7 @@ function HeroSection() {
 
       {/* Description */}
       <motion.p
-        variants={bounceUp}
+        variants={fadeUp}
         className="mt-4 text-sm text-[#999999] max-w-sm leading-relaxed"
       >
         Select a version and start your adventure.
@@ -134,7 +134,7 @@ function HeroSection() {
 
       {/* Decorative divider */}
       <motion.div
-        variants={bounceUp}
+        variants={fadeUp}
         className="mt-6 flex items-center gap-3"
       >
         <div className="h-[2px] w-10 bg-[#7F7F7F26]" />
@@ -144,7 +144,7 @@ function HeroSection() {
 
       {/* Version info tags */}
       <motion.div
-        variants={bounceUp}
+        variants={fadeUp}
         className="mt-6 flex items-center gap-3"
       >
         {[

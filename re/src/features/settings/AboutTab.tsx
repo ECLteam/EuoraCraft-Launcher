@@ -14,7 +14,6 @@
 import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Globe, ExternalLink, BookOpen, Heart, Gamepad2 } from "lucide-react";
-import { useStaggeredBounce } from "@/hooks/useAnimation";
 
 // ---------------------------------------------------------------------------
 // Tech Stack Data
@@ -36,27 +35,21 @@ const TECH_STACK = [
 // ---------------------------------------------------------------------------
 
 export function AboutTab() {
-  const bounceVariants = useStaggeredBounce(0.06, 10);
-
   return (
-    <motion.div
-      className="flex flex-col gap-4"
-      variants={bounceVariants}
-      initial="hidden"
-      animate="visible"
-      custom={0}
-    >
+    <div className="flex flex-col gap-4">
       {/* ---- App Info Card ---- */}
       <motion.div
         className="flex flex-col items-center border-2 border-border-stone bg-bg-surface p-8 text-center shadow-[4px_4px_0px_rgba(0,0,0,0.3)]"
-        variants={bounceVariants}
-        custom={0}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
       >
         {/* Logo */}
         <motion.div
           className="mb-4 flex h-20 w-20 items-center justify-center border-2 border-grass bg-grass/10"
-          variants={bounceVariants}
-          custom={1}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
         >
           <Gamepad2 className="h-10 w-10 text-grass" />
         </motion.div>
@@ -64,8 +57,9 @@ export function AboutTab() {
         {/* App Name */}
         <motion.h1
           className="font-mono text-2xl font-bold text-grass"
-          variants={bounceVariants}
-          custom={2}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
         >
           EuoraCraft Launcher
         </motion.h1>
@@ -73,16 +67,18 @@ export function AboutTab() {
         {/* Version */}
         <motion.p
           className="mt-1 font-mono text-sm text-text-tertiary"
-          variants={bounceVariants}
-          custom={3}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.16, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
         >
           Version 1.0.0-beta
         </motion.p>
 
         <motion.p
           className="mt-2 text-xs text-text-tertiary"
-          variants={bounceVariants}
-          custom={4}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
         >
           一个现代化的 Minecraft 启动器，基于 Tauri 2 构建
         </motion.p>
@@ -91,8 +87,9 @@ export function AboutTab() {
       {/* ---- Tech Stack Card ---- */}
       <motion.div
         className="border-2 border-border-stone bg-bg-surface p-4 shadow-[4px_4px_0px_rgba(0,0,0,0.3)]"
-        variants={bounceVariants}
-        custom={5}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.03, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
       >
         <h3 className="mb-3 font-mono text-sm font-semibold text-text-primary">
           技术栈
@@ -113,8 +110,9 @@ export function AboutTab() {
       {/* ---- Links Card ---- */}
       <motion.div
         className="border-2 border-border-stone bg-bg-surface p-4 shadow-[4px_4px_0px_rgba(0,0,0,0.3)]"
-        variants={bounceVariants}
-        custom={6}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.06, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
       >
         <h3 className="mb-3 font-mono text-sm font-semibold text-text-primary">
           链接
@@ -144,8 +142,9 @@ export function AboutTab() {
       {/* ---- Credits Card ---- */}
       <motion.div
         className="border-2 border-border-stone bg-bg-surface p-4 text-center shadow-[4px_4px_0px_rgba(0,0,0,0.3)]"
-        variants={bounceVariants}
-        custom={7}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.09, duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
       >
         <p className="flex items-center justify-center gap-1 font-mono text-xs text-text-tertiary">
           Made with <Heart className="h-3 w-3 text-lava" /> by EuoraCraft Team
@@ -154,6 +153,6 @@ export function AboutTab() {
           Copyright 2026 EuoraCraft. All rights reserved.
         </p>
       </motion.div>
-    </motion.div>
+    </div>
   );
 }

@@ -39,39 +39,36 @@ interface LaunchProgressCardProps {
 // Animation Variants (snappy, no spring, no scale)
 // ---------------------------------------------------------------------------
 
-const bounceEase: [number, number, number, number] = [0.34, 1.56, 0.64, 1];
+const snappyEase: [number, number, number, number] = [0.8, 0, 0.2, 1];
 
 const cardVariants = {
   hidden: {
     opacity: 0,
     y: 16,
-    scale: 0.9,
   },
   visible: {
     opacity: 1,
     y: 0,
-    scale: 1,
-    transition: { duration: 0.35, ease: bounceEase },
+    transition: { duration: 0.15, ease: snappyEase },
   },
   exit: {
     opacity: 0,
     y: 16,
-    scale: 0.9,
-    transition: { duration: 0.2, ease: [0.8, 0, 0.2, 1] as [number, number, number, number] },
+    transition: { duration: 0.12, ease: snappyEase },
   },
 };
 
 const stageTextVariants = {
-  enter: { opacity: 0, x: 10 },
+  enter: { opacity: 0, x: 8 },
   center: {
     opacity: 1,
     x: 0,
-    transition: { duration: 0.25, ease: bounceEase },
+    transition: { duration: 0.15, ease: snappyEase },
   },
   exit: {
     opacity: 0,
-    x: -10,
-    transition: { duration: 0.15, ease: [0.8, 0, 0.2, 1] as [number, number, number, number] },
+    x: -8,
+    transition: { duration: 0.1, ease: snappyEase },
   },
 };
 
@@ -190,7 +187,7 @@ export function LaunchProgressCard({
                     className="h-full bg-[#5B8731]"
                     initial={{ width: 0 }}
                     animate={{ width: `${Math.min(progress, 100)}%` }}
-                    transition={{ duration: 0.3, ease: bounceEase }}
+                    transition={{ duration: 0.15, ease: snappyEase }}
                     style={{
                       boxShadow: "2px 2px 0px rgba(0,0,0,0.3)",
                     }}

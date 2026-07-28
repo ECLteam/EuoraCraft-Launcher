@@ -36,25 +36,22 @@ const MIN_WINDOW_HEIGHT = 600;
 const pageVariants = {
   initial: {
     opacity: 0,
-    x: 16,
-    scale: 0.97,
+    x: 12,
   },
   animate: {
     opacity: 1,
     x: 0,
-    scale: 1,
     transition: {
-      duration: 0.3,
-      ease: [0.34, 1.56, 0.64, 1] as [number, number, number, number],
+      duration: 0.15,
+      ease: [0.8, 0, 0.2, 1] as [number, number, number, number],
     },
   },
   exit: {
     opacity: 0,
-    x: -16,
-    scale: 0.97,
+    x: -12,
     transition: {
-      duration: 0.2,
-      ease: [0.4, 0, 1, 1] as [number, number, number, number],
+      duration: 0.15,
+      ease: [0.8, 0, 0.2, 1] as [number, number, number, number],
     },
   },
 };

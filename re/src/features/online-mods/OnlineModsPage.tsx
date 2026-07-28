@@ -207,12 +207,12 @@ function ModCard({ mod, index, installing, onInstall }: ModCardProps) {
   return (
     <motion.div
       className="flex flex-col gap-3 border-2 border-border-stone bg-bg-surface p-4 shadow-[4px_4px_0px_rgba(0,0,0,0.3)] transition-[transform,box-shadow,border-color] duration-[150ms] hover:border-border-primary hover:-translate-y-[1px] hover:shadow-[5px_5px_0px_rgba(0,0,0,0.35)]"
-      initial={{ opacity: 0, scale: 0.6, y: 8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{
-        delay: index * 0.05,
-        duration: 0.35,
-        ease: [0.34, 1.56, 0.64, 1],
+        delay: index * 0.04,
+        duration: 0.15,
+        ease: [0.8, 0, 0.2, 1],
       }}
     >
       {/* Header */}
@@ -366,13 +366,13 @@ export function OnlineModsPage() {
       className="flex h-full flex-col gap-4 bg-bg-deepslate p-6"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
+      transition={{ duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
     >
       {/* ---- Search Bar ---- */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.9, y: -4 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.34, 1.56, 0.64, 1] }}
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15, ease: [0.8, 0, 0.2, 1] }}
       >
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
@@ -388,9 +388,9 @@ export function OnlineModsPage() {
       {/* ---- Category Filters ---- */}
       <motion.div
         className="flex flex-wrap items-center gap-1.5"
-        initial={{ opacity: 0, scale: 0.9, y: -4 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.34, 1.56, 0.64, 1], delay: 0.04 }}
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15, ease: [0.8, 0, 0.2, 1], delay: 0.03 }}
       >
         {CATEGORIES.map((cat) => {
           const Icon = cat.icon;
@@ -428,7 +428,7 @@ export function OnlineModsPage() {
             hidden: { opacity: 0 },
             visible: {
               opacity: 1,
-              transition: { staggerChildren: 0.04 },
+              transition: { staggerChildren: 0.03 },
             },
           }}
         >
