@@ -223,6 +223,25 @@
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
 
   /* ================================================================
+     Nonlinear Easing - Blocky Bounce, Anticipation, Elastic
+     Still snappy, still blocky. No smooth springs.
+     ================================================================ */
+  /* Bounce: quick overshoot then settle, like a block landing */
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Heavy bounce: exaggerated overshoot for emphasis */
+  --ease-bounce-heavy: cubic-bezier(0.16, 2.2, 0.44, 1);
+  /* Anticipate: wind-up before action, like pulling back a bow */
+  --ease-anticipate: cubic-bezier(0.4, -0.3, 0.2, 1);
+  /* Back-out: gentle overshoot on exit */
+  --ease-back-out: cubic-bezier(0.68, -0.4, 0.32, 1.4);
+  /* Step-based: discrete 4-step blocky animation */
+  --ease-step-4: steps(4, jump-end);
+  /* Step-based: discrete 6-step blocky animation */
+  --ease-step-6: steps(6, jump-end);
+  /* Step-based: discrete 8-step blocky animation (Minecraft pixelated) */
+  --ease-step-8: steps(8, jump-end);
+
+  /* ================================================================
      Animation Durations
      ================================================================ */
   --duration-instant: 50ms;
@@ -230,6 +249,11 @@
   --duration-normal: 150ms;
   --duration-slow: 200ms;
   --duration-slower: 300ms;
+  --duration-bounce: 400ms;
+  --duration-shake: 350ms;
+  --duration-float: 2500ms;
+  --duration-glitch: 250ms;
+  --duration-slam: 350ms;
 
   /* ================================================================
      Typography Scale
@@ -810,6 +834,184 @@ img.pixelated {
 }
 
 /* ============================================================
+   Nonlinear Animation Keyframes
+   Block-brutalist style: discrete, snappy, no smooth springs.
+   ============================================================ */
+
+/* Bounce in: scale overshoot with discrete intermediate states */
+@keyframes block-bounce-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  75% {
+    transform: scale(0.94);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Bounce out: scale overshoot on exit */
+@keyframes block-bounce-out {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+/* Shake: horizontal oscillation, like mining a block */
+@keyframes block-shake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-4px); }
+  20% { transform: translateX(4px); }
+  30% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  50% { transform: translateX(-2px); }
+  60% { transform: translateX(2px); }
+  70% { transform: translateX(-1px); }
+  80% { transform: translateX(1px); }
+  90% { transform: translateX(0); }
+}
+
+/* Shake heavy: wider oscillation for error states */
+@keyframes block-shake-heavy {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-8px); }
+  20% { transform: translateX(8px); }
+  30% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  50% { transform: translateX(-4px); }
+  60% { transform: translateX(4px); }
+  70% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+  90% { transform: translateX(0); }
+}
+
+/* Pixel pop: discrete 4-step scale pop-in (Minecraft style) */
+@keyframes block-pixel-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.25);
+  }
+  25% {
+    opacity: 0.5;
+    transform: scale(0.5);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(0.75);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Float: subtle bobbing with discrete vertical steps */
+@keyframes block-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  25% {
+    transform: translateY(-3px);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+  75% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Glitch: rapid horizontal displacement, like a glitched block */
+@keyframes block-glitch-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  20% {
+    opacity: 0.3;
+    transform: translateX(6px);
+  }
+  40% {
+    opacity: 0.5;
+    transform: translateX(-4px);
+  }
+  60% {
+    opacity: 0.7;
+    transform: translateX(3px);
+  }
+  80% {
+    opacity: 0.9;
+    transform: translateX(-1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Slam: heavy drop-down with impact */
+@keyframes block-slam-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.8);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(4px) scale(1.02);
+  }
+  80% {
+    transform: translateY(-2px) scale(0.98);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Crack: discrete crack progression (6 stages, Minecraft block breaking) */
+@keyframes block-crack {
+  0% { transform: translate(0, 0); }
+  16% { transform: translate(-1px, 1px); }
+  33% { transform: translate(1px, -1px); }
+  50% { transform: translate(-1px, -1px); }
+  66% { transform: translate(1px, 1px); }
+  83% { transform: translate(0, -1px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* Dig: rapid up-down micro-movement, like block being dug */
+@keyframes block-dig {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-2px); }
+  50% { transform: translateY(0); }
+  75% { transform: translateY(1px); }
+}
+
+/* Heartbeat: nonlinear scale pulse with discrete steps */
+@keyframes block-heartbeat {
+  0%, 100% { transform: scale(1); }
+  15% { transform: scale(1.06); }
+  30% { transform: scale(0.97); }
+  45% { transform: scale(1.04); }
+  60% { transform: scale(1); }
+}
+
+/* ============================================================
    Animation Utility Classes
    ============================================================ */
 
@@ -855,6 +1057,54 @@ img.pixelated {
 
 .animate-block-spin {
   animation: block-spin 1s steps(8) infinite;
+}
+
+/* ============================================================
+   Nonlinear Animation Utility Classes
+   ============================================================ */
+
+.animate-block-bounce-in {
+  animation: block-bounce-in var(--duration-bounce) var(--ease-bounce) both;
+}
+
+.animate-block-bounce-out {
+  animation: block-bounce-out var(--duration-bounce) var(--ease-bounce) both;
+}
+
+.animate-block-shake {
+  animation: block-shake var(--duration-shake) var(--ease-linear) both;
+}
+
+.animate-block-shake-heavy {
+  animation: block-shake-heavy var(--duration-shake) var(--ease-linear) both;
+}
+
+.animate-block-pixel-pop {
+  animation: block-pixel-pop var(--duration-bounce) var(--ease-step-4) both;
+}
+
+.animate-block-float {
+  animation: block-float var(--duration-float) var(--ease-step-4) infinite;
+}
+
+.animate-block-glitch-in {
+  animation: block-glitch-in var(--duration-glitch) var(--ease-step-6) both;
+}
+
+.animate-block-slam-in {
+  animation: block-slam-in var(--duration-slam) var(--ease-bounce) both;
+}
+
+.animate-block-crack {
+  animation: block-crack var(--duration-fast) var(--ease-step-6) both;
+}
+
+.animate-block-dig {
+  animation: block-dig var(--duration-normal) var(--ease-step-4) infinite;
+}
+
+.animate-block-heartbeat {
+  animation: block-heartbeat 1.5s var(--ease-step-4) infinite;
 }
 
 /* ============================================================

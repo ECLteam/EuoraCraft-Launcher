@@ -201,12 +201,12 @@ function VersionCard({
   return (
     <motion.div
       className="group flex items-center gap-4 border-2 border-border-stone bg-bg-surface p-4 shadow-[4px_4px_0px_rgba(0,0,0,0.3)] transition-[transform,box-shadow,border-color] duration-[150ms] hover:border-border-primary hover:-translate-y-[1px] hover:shadow-[5px_5px_0px_rgba(0,0,0,0.35)]"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, scale: 0.6, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{
-        delay: index * 0.04,
-        duration: 0.15,
-        ease: [0.8, 0, 0.2, 1],
+        delay: index * 0.05,
+        duration: 0.35,
+        ease: [0.34, 1.56, 0.64, 1],
       }}
     >
       {/* Version Icon */}

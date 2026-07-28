@@ -12,6 +12,7 @@ import { User, Shield, Monitor, ChevronRight } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AccountType } from "@/types/api";
+import { useBounceIn, useTiltHover } from "@/hooks/useAnimation";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,19 +79,22 @@ export function GameAccountCard({
   className,
 }: GameAccountCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const bounceIn = useBounceIn(0.4, 0.05);
+  const tiltHover = useTiltHover();
 
   const hasAccount = !!account;
   const typeMeta = account
     ? (accountTypeConfig[account.type] ?? accountTypeConfig.offline)
     : null;
 
-  const snappyEase: [number, number, number, number] = [0.8, 0, 0.2, 1];
+  const bounceEase: [number, number, number, number] = [0.34, 1.56, 0.64, 1];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.15, ease: snappyEase, delay: 0.05 }}
+      variants={bounceIn}
+      initial="hidden"
+      animate="visible"
+      {...tiltHover}
     >
       <div
         className={cn(
@@ -153,7 +157,7 @@ export function GameAccountCard({
               {/* Chevron */}
               <motion.div
                 animate={{ x: isHovered ? 2 : 0 }}
-                transition={{ duration: 0.15, ease: snappyEase }}
+                transition={{ duration: 0.25, ease: bounceEase }}
               >
                 <ChevronRight className="size-4 text-[#555555]" />
               </motion.div>
@@ -174,7 +178,7 @@ export function GameAccountCard({
               </div>
               <motion.div
                 animate={{ x: isHovered ? 2 : 0 }}
-                transition={{ duration: 0.15, ease: snappyEase }}
+                transition={{ duration: 0.25, ease: bounceEase }}
               >
                 <ChevronRight className="size-4 text-[#555555]" />
               </motion.div>

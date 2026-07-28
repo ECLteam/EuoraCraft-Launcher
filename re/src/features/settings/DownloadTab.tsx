@@ -34,12 +34,12 @@ function SettingGroup({ title, description, children, delay = 0 }: SettingGroupP
   return (
     <motion.div
       className="border-2 border-border-stone bg-bg-surface p-4 shadow-[4px_4px_0px_rgba(0,0,0,0.3)]"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, scale: 0.7, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{
         delay,
-        duration: 0.15,
-        ease: [0.8, 0, 0.2, 1],
+        duration: 0.35,
+        ease: [0.34, 1.56, 0.64, 1],
       }}
     >
       <div className="mb-3">

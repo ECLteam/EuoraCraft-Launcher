@@ -27,6 +27,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useBounceIn } from "@/hooks/useAnimation";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,14 +79,13 @@ export function GameLaunchBar({
 }: GameLaunchBarProps) {
   const hasVersionSelected = !!selectedVersionId;
   const isDisabled = disabled || !hasVersionSelected;
-
-  const snappyEase: [number, number, number, number] = [0.8, 0, 0.2, 1];
+  const bounceIn = useBounceIn(0.4, 0.15);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.15, ease: snappyEase, delay: 0.15 }}
+      variants={bounceIn}
+      initial="hidden"
+      animate="visible"
     >
       <div
         className={cn(

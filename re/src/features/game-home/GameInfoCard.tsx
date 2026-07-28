@@ -96,22 +96,25 @@ const DEFAULT_TIPS: TipItem[] = [
 // Fade transition (NO scale, NO spring)
 // ---------------------------------------------------------------------------
 
-const snappyEase: [number, number, number, number] = [0.8, 0, 0.2, 1];
+const bounceEase: [number, number, number, number] = [0.34, 1.56, 0.64, 1];
 
 const fadeVariants = {
   enter: {
     opacity: 0,
-    y: 6,
+    y: 8,
+    scale: 0.95,
   },
   center: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.15, ease: snappyEase },
+    scale: 1,
+    transition: { duration: 0.25, ease: bounceEase },
   },
   exit: {
     opacity: 0,
-    y: -6,
-    transition: { duration: 0.12, ease: snappyEase },
+    y: -8,
+    scale: 0.95,
+    transition: { duration: 0.15, ease: [0.8, 0, 0.2, 1] as [number, number, number, number] },
   },
 };
 
@@ -144,9 +147,9 @@ export function GameInfoCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.15, ease: snappyEase, delay: 0.1 }}
+      initial={{ opacity: 0, scale: 0.7, y: 12 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: bounceEase, delay: 0.1 }}
     >
       <div
         className={cn(

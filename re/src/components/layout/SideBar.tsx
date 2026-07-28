@@ -97,8 +97,8 @@ export function SideBar() {
           width: isExpanded ? "var(--spacing-sidebar)" : "var(--spacing-sidebar-collapsed)",
         }}
         transition={{
-          duration: 0.2,
-          ease: [0.8, 0, 0.2, 1] as [number, number, number, number],
+          duration: 0.35,
+          ease: [0.34, 1.56, 0.64, 1] as [number, number, number, number],
         }}
         onMouseEnter={() => sidebarCollapsed && setSidebarHovered(true)}
         onMouseLeave={() => sidebarCollapsed && setSidebarHovered(false)}
