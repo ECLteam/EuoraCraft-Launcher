@@ -1,3 +1,4 @@
+import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -549,6 +550,31 @@ class FrontendApi:
         """
         open_result = None
         return {"success": True, "data": open_result}
+
+    async def open_url(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        使用系统默认浏览器打开外部 URL
+        :param body: 包含 url 的请求参数
+        :return: 打开结果
+        """
+        url = body.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return {
+                "success": False,
+                "message": "URL 不能为空",
+                "errorCode": "INVALID_URL",
+            }
+        try:
+            opened = webbrowser.open(url.strip())
+            self.logger.info(f"已在默认浏览器中打开: {url}")
+            return {"success": True, "data": opened}
+        except Exception as e:
+            self.logger.error(f"打开 URL 失败: {url} - {e}")
+            return {
+                "success": False,
+                "message": f"打开 URL 失败: {e}",
+                "errorCode": "OPEN_URL_FAILED",
+            }
 
     # 游戏实例
 

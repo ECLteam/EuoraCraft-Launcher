@@ -15,13 +15,13 @@ class EuoraCraftLauncher:
 
     def __init__(self):
         runtime_info = get_runtime_info()
-        self.app_path: Path = Path(runtime_info["app_path"])
-        self.launcher_version: str = __version__
-        self.launcher_version_type: str = __version_type__
-        self.debug: bool = False
-        self.is_frozen: bool = runtime_info["is_frozen"]
-        self.data_path: Path = self.app_path / "ECL_data"
-        self.config: dict[str, Any] | None = None
+        self.app_path: Path = Path(runtime_info["app_path"]) # 获取启动器运行目录
+        self.launcher_version: str = __version__ # 启动器版本
+        self.launcher_version_type: str = __version_type__ # 启动器版本类型 alpha | beta | release
+        self.debug: bool = False # 调试模式
+        self.is_frozen: bool = runtime_info["is_frozen"] # 是否已经打包
+        self.data_path: Path = self.app_path / "ECL_data" # 数据目录
+        self.config: dict[str, Any] | None = None # 配置
 
         self.logger = LoggerManager().get_logger("EuoraCraftLauncher")
         self.config_instance = ConfigManager(self.data_path)
@@ -52,8 +52,6 @@ class EuoraCraftLauncher:
         self.logger.info("启动器已退出")
         return True
 
-    # ---------- 初始化 ----------
-
     def _init(self) -> bool:
         """
         初始化启动器：系统检测、配置加载、环境变量覆盖
@@ -77,11 +75,11 @@ class EuoraCraftLauncher:
 
         self.logger.info("程序路径: %s", self.app_path)
 
-        config = self.config_instance.get_config()
-        config = self.env_instance.config_replace(config)
+        config = self.config_instance.get_config() # 读取配置
+        config = self.env_instance.config_replace(config) # 传入配置使用环境变量进行替换
         self.config = config
 
-        if (config.get("launcher") or {}).get("debug"):
+        if (config.get("launcher") or {}).get("debug"): # 启用debug模式
             self.debug = True
             LoggerManager().set_level(logging.DEBUG)
             self.logger.warning("调试模式已启动")

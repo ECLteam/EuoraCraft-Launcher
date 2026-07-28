@@ -29,12 +29,12 @@ class Adapter:
         self.logger = get_logger("Adapter")
         self._initialized: bool = True
         self.commands = Commands()
-        self.tauri_config: dict | None = None
+        self.tauri_config: dict | None = None # tauri配置
         self.launcher_instance = launcher_instance
-        self.app_path: Path = self.launcher_instance.app_path
-        self.is_frozen: bool = self.launcher_instance.is_frozen
-        self.config: dict = self.launcher_instance.config
-        self.launcher_version: str = self.launcher_instance.launcher_version
+        self.app_path: Path = self.launcher_instance.app_path # 启动器运行目录
+        self.is_frozen: bool = self.launcher_instance.is_frozen # 是否已经打包
+        self.config: dict = self.launcher_instance.config# 配置
+        self.launcher_version: str = self.launcher_instance.launcher_version # 启动器版本
         self.frontend_api_instance = FrontendApi(self.launcher_instance)
 
     def run_adapter(self) -> bool:
@@ -64,7 +64,7 @@ class Adapter:
                 ]
             },
         }
-        with start_blocking_portal("asyncio") as portal:
+        with start_blocking_portal("asyncio") as portal: # 允许异步方法
             context = context_factory(self.app_path, tauri_config=self.tauri_config)
             app = builder_factory().build(
                 context=context,
@@ -135,6 +135,7 @@ class Adapter:
             self.commands.command("select_image")(api.select_image)
             self.commands.command("select_file")(api.select_file)
             self.commands.command("open_folder")(api.open_folder)
+            self.commands.command("open_url")(api.open_url)
 
             # ---------- 游戏实例和日志 ----------
             self.commands.command("instances_list")(api.instances_list)
