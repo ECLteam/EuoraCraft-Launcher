@@ -1,9 +1,9 @@
 from dataclasses import dataclass, asdict, fields
 from shutil import rmtree
 from pathlib import Path
+from . import Libs
 import platform
 import json
-import Libs
 import re
 
 class JvmArgumentBuilder:
@@ -52,7 +52,7 @@ class JvmArgumentBuilder:
         elif self.system == "Darwin":
             self.args.append("-XstartOnFirstThread")
 
-    def add_from_version_json(self, version_json: dict) -> "JvmArgumentBuilder":
+    def add_jvm_args(self, version_json: dict) -> "JvmArgumentBuilder":
         """
         读取 Meta Json 内容添加相应 Jvm 参数
         :param version_json: Meta Json
@@ -65,24 +65,36 @@ class JvmArgumentBuilder:
                         continue
                     if arguments_jvm in self.args:
                         continue
-                    self.args.append(arguments_jvm)
+                    self.args.append(arguments_jvm.replace(" ", ""))
+        elif "minecraftArguments" in version_json:
+            ex_args = [
+                "-Djava.library.path=${natives_directory}",
+                "-cp ${classpath}",
+            ]
+            for arg in ex_args:
+                if arg in self.args:
+                    continue
+                self.args.append(arg)
+            for arg in version_json["minecraftArguments"].split():
+                if arg in self.args:
+                    continue
+                self.args.append(arg)
+        return self
+
+    def add_game_args(self, version_json: dict) -> "JvmArgumentBuilder":
+        """
+        读取 Meta Json 内容添加相应 Jvm 参数
+        :param version_json: Meta Json
+        :return: 返回实例自身
+        """
+        if "arguments" in version_json:
             if "game" in version_json["arguments"]:
                 for arguments_game in version_json["arguments"]["game"]:
                     if type(arguments_game) is not str:
                         continue
                     if arguments_game in self.args:
                         continue
-                    self.args.append(arguments_game)
-        elif "minecraftArguments" in version_json:
-            ex_args = [
-                "-Djava.library.path=${natives_directory}",
-                "-cp ${classpath}",
-                version_json["minecraftArguments"]
-            ]
-            for arg in ex_args:
-                if arg in self.args:
-                    continue
-                self.args.append(arg)
+                    self.args.append(arguments_game.replace(" ", ""))
         return self
 
     def add_custom(self, custom_args: list[str]) -> "JvmArgumentBuilder":
@@ -228,9 +240,9 @@ class LaunchConfig:
     """添加额外的 Jvm 参数"""
     version_isolation: bool = False
     """是否隔离版本, 不推荐不隔离"""
-    window_width: int | str = "${resolution_width}"
+    window_width: int | str = 854
     """Minecraft 窗口宽度(px)"""
-    window_height: int | str = "${resolution_height}"
+    window_height: int | str = 480
     """Minecraft 窗口高度(px)"""
 
     def get(self, key_name: str) -> str | None:
@@ -378,24 +390,30 @@ def build_minecraft_cmd(config: LaunchConfig) -> str:
         ).read_text("utf-8")
     )
 
-    jvm_builder.add_from_version_json(version_json)
-
+    jvm_builder.add_jvm_args(version_json)
     cp_builder = ClasspathBuilder(config.game_path)
-    cp_builder.add_libraries(version_json)
 
     version_jar = Path(config.game_path) / "versions" / config.version_name / f"{config.version_name}.jar"
     index_id = ""
     if "id" in version_json.get("assetIndex", {}):
         index_id = version_json["assetIndex"]["id"]
 
-    game_json = Libs.find_version(version_json, config.game_path)
+    game_json = Libs.find_version(version_json, config.game_path, config.version_name)
     if game_json:
-        jvm_builder.add_from_version_json(game_json[0])
+        jvm_builder.add_jvm_args(game_json[0])
+        jvm_builder.add_game_args(game_json[0])
         cp_builder.add_libraries(game_json[0])
         index_id = game_json[0].get("assetIndex", {}).get("id", index_id)
 
         if not version_jar.is_file():
-            version_jar = game_json[1] / f"{game_json[1].name}.jar"
+            jar_path = Path(config.game_path) / "versions" / config.version_name / f"{version_json['inheritsFrom']}.jar"
+            if jar_path.is_file():
+                version_jar = jar_path
+            else:
+                version_jar = game_json[1] / f"{game_json[1].name}.jar"
+
+    jvm_builder.add_game_args(version_json)
+    cp_builder.add_libraries(version_json)
 
     if config.custom_jvm_params:
         jvm_builder.add_custom(config.custom_jvm_params)

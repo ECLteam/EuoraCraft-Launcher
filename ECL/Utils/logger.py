@@ -1,12 +1,14 @@
-import contextlib
 import gzip
 import logging
 import logging.handlers
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
 
 class ColoredFormatter(logging.Formatter):
+    """控制台彩色日志格式化器"""
+
     COLORS = {
         "DEBUG": "\033[36m",
         "INFO": "\033[32m",
@@ -17,7 +19,12 @@ class ColoredFormatter(logging.Formatter):
         "BOLD": "\033[1m",
     }
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
+        """
+        格式化日志记录，添加 ANSI 颜色
+        :param record: 日志记录对象
+        :return: 带颜色的格式化日志字符串
+        """
         record = logging.makeLogRecord(record.__dict__.copy())
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -27,11 +34,23 @@ class ColoredFormatter(logging.Formatter):
 
 
 class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
-    def __init__(self, filename, when="midnight", interval=1, backupCount=30, encoding="utf-8", delay=False, utc=False):
-        self.backup_count = backupCount
-        super().__init__(filename, when, interval, backupCount, encoding, delay, utc)
+    """按时间轮转并 gzip 压缩的日志文件处理器"""
 
-    def doRollover(self):
+    def __init__(
+            self,
+            filename: str,
+            when: str = "midnight",
+            interval: int = 1,
+            backup_count: int = 30,
+            encoding: str = "utf-8",
+            delay: bool = False,
+            utc: bool = False,
+    ):
+        self.backup_count = backup_count
+        super().__init__(filename, when, interval, backup_count, encoding, delay, utc)
+
+    def dorollover(self) -> None:
+        """执行日志轮转，将旧日志压缩为 .gz 文件"""
         if self.stream:
             self.stream.close()
             self.stream = None
@@ -53,20 +72,21 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
         if not self.delay:
             self.stream = self._open()
         self.rolloverAt = self.computeRollover(int(datetime.now().timestamp()))
-
         try:
             log_dir = Path(self.baseFilename).parent
             base_name = Path(self.baseFilename).name
             log_files = [f for f in log_dir.iterdir() if f.name.startswith(base_name) and f.name != base_name]
             log_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-            for old_file in log_files[self.backup_count:]:
-                with contextlib.suppress(OSError, PermissionError):
+            for old_file in log_files[self.backup_count :]:
+                with suppress(OSError, PermissionError):
                     old_file.unlink()
         except (OSError, PermissionError):
             pass
 
 
 class LoggerManager:
+    """全局日志管理器，支持彩色控制台输出和文件轮转"""
+
     _instance = None
     _initialized = False
 
@@ -75,7 +95,7 @@ class LoggerManager:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, colored=True):
+    def __init__(self, colored: bool = True):
         if LoggerManager._initialized:
             return
         self._root_logger = logging.getLogger("EuoraCraft-Launcher")
@@ -83,7 +103,11 @@ class LoggerManager:
         self._setup_handlers(colored)
         LoggerManager._initialized = True
 
-    def _setup_handlers(self, colored):
+    def _setup_handlers(self, colored: bool) -> None:
+        """
+        初始化日志处理器
+        :param colored: 是否启用彩色控制台输出
+        """
         if self._root_logger.handlers:
             return
         log_dir = Path("logs")
@@ -104,12 +128,12 @@ class LoggerManager:
         console_handler.setFormatter(console_formatter)
         self._console_handler = console_handler
         file_handler = CompressedTimedRotatingFileHandler(
-            log_dir / "EuoraCraft-Launcher.log", when="midnight", interval=1, backupCount=30, encoding="utf-8"
+            log_dir / "EuoraCraft-Launcher.log", when="midnight", interval=1, backup_count=30, encoding="utf-8"
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(base_formatter)
         error_handler = CompressedTimedRotatingFileHandler(
-            log_dir / "error.log", when="midnight", interval=1, backupCount=30, encoding="utf-8"
+            log_dir / "error.log", when="midnight", interval=1, backup_count=30, encoding="utf-8"
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(base_formatter)
@@ -117,21 +141,36 @@ class LoggerManager:
         self._root_logger.addHandler(file_handler)
         self._root_logger.addHandler(error_handler)
 
-    def get_logger(self, name=None):
+    def get_logger(self, name: str | None = None) -> logging.Logger:
+        """
+        获取命名日志记录器
+        :param name: 日志记录器名称，为 None 时返回根日志记录器
+        :return: 日志记录器实例
+        """
         return self._root_logger.getChild(name) if name else self._root_logger
 
-    def set_level(self, level):
+    def set_level(self, level: int) -> None:
+        """
+        设置全局日志级别
+        :param level: 日志级别常量
+        """
         self._root_logger.setLevel(level)
         self._console_handler.setLevel(level)
 
-    def shutdown(self):
+    def shutdown(self) -> None:
+        """关闭所有日志处理器"""
         for handler in self._root_logger.handlers[:]:
-            with contextlib.suppress(OSError, RuntimeError):
+            with suppress(OSError, RuntimeError):
                 handler.flush()
-            with contextlib.suppress(OSError, RuntimeError):
+            with suppress(OSError, RuntimeError):
                 handler.close()
             self._root_logger.removeHandler(handler)
 
 
-def get_logger(name=None):
+def get_logger(name: str | None = None) -> logging.Logger:
+    """
+    获取日志记录器的便捷函数
+    :param name: 日志记录器名称
+    :return: 日志记录器实例
+    """
     return LoggerManager().get_logger(name)

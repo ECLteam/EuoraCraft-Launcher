@@ -1,0 +1,873 @@
+@import "tailwindcss";
+
+/* ============================================================
+   EuoraCraft Launcher - Minecraft Block Brutalist Design System
+   A raw, blocky, pixelated, earth-toned visual language.
+   No glass. No rounded corners. No spring. Only blocks.
+   ============================================================ */
+
+/* ============================================================
+   Design Tokens - @theme block (Tailwind CSS v4)
+   ============================================================ */
+
+@theme {
+  /* ---- Font Family ---- */
+  /* JetBrains Mono for headings, UI, monospace elements */
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code",
+    "Source Code Pro", "Consolas", "Courier New", monospace;
+  /* System sans-serif for body text */
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
+    "WenQuanYi Micro Hei", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-display: "JetBrains Mono", "Cascadia Code", "Fira Code",
+    "Source Code Pro", monospace;
+
+  /* ================================================================
+     Minecraft Earth Tone Color Palette
+     ================================================================ */
+
+  /* ---- Primary: Grass Green (#5B8731) ---- */
+  --color-grass-50: #e8f2d8;
+  --color-grass-100: #d4e8b8;
+  --color-grass-200: #b8d888;
+  --color-grass-300: #9cc860;
+  --color-grass-400: #7db840;
+  --color-grass-500: #5B8731;
+  --color-grass-600: #4a6f28;
+  --color-grass-700: #3a5720;
+  --color-grass-800: #2b3f18;
+  --color-grass-900: #1c2810;
+  --color-grass-950: #111808;
+  --color-grass: #5B8731;
+
+  /* ---- Secondary: Stone Gray (#7F7F7F) ---- */
+  --color-stone-50: #e8e8e8;
+  --color-stone-100: #d4d4d4;
+  --color-stone-200: #b8b8b8;
+  --color-stone-300: #9c9c9c;
+  --color-stone-400: #8b8b8b;
+  --color-stone-500: #7F7F7F;
+  --color-stone-600: #6a6a6a;
+  --color-stone-700: #555555;
+  --color-stone-800: #404040;
+  --color-stone-900: #2a2a2a;
+  --color-stone-950: #1a1a1a;
+  --color-stone: #7F7F7F;
+
+  /* ---- Accent: Water Blue (#3B6BD4) ---- */
+  --color-water-50: #d8e4f8;
+  --color-water-100: #b8cff2;
+  --color-water-200: #88b0e8;
+  --color-water-300: #6090e0;
+  --color-water-400: #4b7dda;
+  --color-water-500: #3B6BD4;
+  --color-water-600: #3058b0;
+  --color-water-700: #25458c;
+  --color-water-800: #1b3268;
+  --color-water-900: #112044;
+  --color-water-950: #0a1428;
+  --color-water: #3B6BD4;
+
+  /* ---- Destructive: Lava Orange (#FF5500) ---- */
+  --color-lava-50: #ffe8d8;
+  --color-lava-100: #ffd4b8;
+  --color-lava-200: #ffb888;
+  --color-lava-300: #ff9c60;
+  --color-lava-400: #ff7b40;
+  --color-lava-500: #FF5500;
+  --color-lava-600: #d44600;
+  --color-lava-700: #aa3700;
+  --color-lava-800: #802800;
+  --color-lava-900: #551a00;
+  --color-lava-950: #331000;
+  --color-lava: #FF5500;
+
+  /* ---- Success: Emerald Green (#50C878) ---- */
+  --color-emerald-50: #d8f8e8;
+  --color-emerald-100: #b8f2d4;
+  --color-emerald-200: #88e8b8;
+  --color-emerald-300: #68e0a0;
+  --color-emerald-400: #5cd48c;
+  --color-emerald-500: #50C878;
+  --color-emerald-600: #40a860;
+  --color-emerald-700: #30884a;
+  --color-emerald-800: #206838;
+  --color-emerald-900: #104828;
+  --color-emerald-950: #082818;
+  --color-emerald: #50C878;
+
+  /* ---- Warning: Gold (#FFAA00) ---- */
+  --color-gold-50: #fff0d8;
+  --color-gold-100: #ffe4b8;
+  --color-gold-200: #ffd088;
+  --color-gold-300: #ffc060;
+  --color-gold-400: #ffb540;
+  --color-gold-500: #FFAA00;
+  --color-gold-600: #d48a00;
+  --color-gold-700: #aa6e00;
+  --color-gold-800: #805200;
+  --color-gold-900: #553600;
+  --color-gold-950: #332000;
+  --color-gold: #FFAA00;
+
+  /* ---- Semantic Color Aliases ---- */
+  --color-primary: var(--color-grass);
+  --color-primary-foreground: #e8f2d8;
+  --color-secondary: var(--color-stone);
+  --color-secondary-foreground: #e8e8e8;
+  --color-accent: var(--color-water);
+  --color-accent-foreground: #d8e4f8;
+  --color-destructive: var(--color-lava);
+  --color-destructive-foreground: #ffe8d8;
+  --color-success: var(--color-emerald);
+  --color-success-foreground: #d8f8e8;
+  --color-warning: var(--color-gold);
+  --color-warning-foreground: #fff0d8;
+  --color-info: var(--color-water);
+  --color-info-foreground: #d8e4f8;
+
+  /* ================================================================
+     Background Colors - Deepslate Dark
+     ================================================================ */
+  --color-bg-deepslate: #0D0D0D;
+  --color-bg-base: #1A1A1A;
+  --color-bg-surface: #222222;
+  --color-bg-elevated: #2A2A2A;
+  --color-bg-overlay: #333333;
+  --color-bg-input: #1E1E1E;
+  --color-bg-card: #252525;
+  --color-bg-card-hover: #2D2D2D;
+  --color-bg-tooltip: #2A2A2A;
+  --color-bg-sidebar: #151515;
+  --color-bg-sidebar-hover: #1F1F1F;
+  --color-bg-sidebar-active: #2A2A2A;
+
+  /* ================================================================
+     Text Colors
+     ================================================================ */
+  --color-text-primary: #E8E8E8;
+  --color-text-secondary: #999999;
+  --color-text-tertiary: #555555;
+  --color-text-disabled: #3A3A3A;
+  --color-text-inverse: #0D0D0D;
+  --color-text-link: #3B6BD4;
+  --color-text-link-hover: #6090e0;
+
+  /* ================================================================
+     Border Colors
+     ================================================================ */
+  --color-border-primary: #3A3A3A;
+  --color-border-secondary: #2A2A2A;
+  --color-border-focus: #5B8731;
+  --color-border-dirt: rgb(139 105 20 / 0.3);
+  --color-border-stone: #4A4A4A;
+  --color-border-card: #333333;
+
+  /* ================================================================
+     Ring / Focus
+     ================================================================ */
+  --color-ring: #5B8731;
+  --color-ring-offset: #0D0D0D;
+
+  /* ================================================================
+     Border Radius - Blocky, Sharp, Maximum 4px
+     ================================================================ */
+  --radius-none: 0;
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-max: 4px;
+
+  /* ================================================================
+     Shadows - Solid Block Shadows (Minecraft Pixel Style)
+     ================================================================ */
+  --shadow-block-sm: 2px 2px 0px rgb(0 0 0 / 0.4);
+  --shadow-block: 4px 4px 0px rgb(0 0 0 / 0.3);
+  --shadow-block-md: 4px 4px 0px rgb(0 0 0 / 0.4);
+  --shadow-block-lg: 6px 6px 0px rgb(0 0 0 / 0.35);
+  --shadow-block-xl: 8px 8px 0px rgb(0 0 0 / 0.35);
+  --shadow-block-inset: inset 2px 2px 0px rgb(0 0 0 / 0.3);
+  --shadow-block-inset-sm: inset 1px 1px 0px rgb(0 0 0 / 0.25);
+  --shadow-block-pressed: inset 3px 3px 0px rgb(0 0 0 / 0.4);
+  --shadow-block-raised: 3px 3px 0px rgb(0 0 0 / 0.3), inset -1px -1px 0px rgb(255 255 255 / 0.05);
+  --shadow-grass-glow: 0 0 0px 2px rgb(91 135 49 / 0.4);
+  --shadow-lava-glow: 0 0 0px 2px rgb(255 85 0 / 0.4);
+  --shadow-emerald-glow: 0 0 0px 2px rgb(80 200 120 / 0.4);
+
+  /* ================================================================
+     Spacing
+     ================================================================ */
+  --spacing-sidebar: 16rem;
+  --spacing-sidebar-collapsed: 4rem;
+  --spacing-titlebar: 2.5rem;
+
+  /* ================================================================
+     Z-Index
+     ================================================================ */
+  --z-sidebar: 40;
+  --z-titlebar: 50;
+  --z-overlay: 60;
+  --z-modal: 70;
+  --z-popover: 80;
+  --z-tooltip: 90;
+  --z-toast: 100;
+
+  /* ================================================================
+     Animation Easing - Snappy, Block-Placement Style
+     NO spring. NO smooth ease. Quick snap like placing a block.
+     ================================================================ */
+  --ease-snap: cubic-bezier(0.8, 0, 0.2, 1);
+  --ease-linear: cubic-bezier(0, 0, 1, 1);
+  --ease-in: cubic-bezier(0.8, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
+  /* ================================================================
+     Animation Durations
+     ================================================================ */
+  --duration-instant: 50ms;
+  --duration-fast: 100ms;
+  --duration-normal: 150ms;
+  --duration-slow: 200ms;
+  --duration-slower: 300ms;
+
+  /* ================================================================
+     Typography Scale
+     ================================================================ */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --text-6xl: 3.75rem;
+
+  /* ---- Leading ---- */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* ---- Tracking ---- */
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  --tracking-wider: 0.05em;
+}
+
+/* ============================================================
+   Base Styles
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-deepslate);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  background-color: var(--color-bg-deepslate);
+  color: var(--color-text-primary);
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ============================================================
+   Selection - Bright Minecraft Green Highlight
+   ============================================================ */
+
+::selection {
+  background-color: rgb(91 135 49 / 0.5);
+  color: #ffffff;
+}
+
+/* ============================================================
+   Focus Visible - 2px Solid Grass Green Outline, Offset 2px
+   ============================================================ */
+
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   Scrollbar Styling - Thick, Blocky, Stone Gray
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-base);
+  border-left: 1px solid var(--color-border-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-stone-700);
+  border: 2px solid var(--color-stone-800);
+  border-radius: 0;
+  transition: background var(--duration-fast) var(--ease-snap);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-stone-600);
+  border-color: var(--color-stone-700);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--color-stone-500);
+  border-color: var(--color-stone-600);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--color-bg-base);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-stone-700) var(--color-bg-base);
+}
+
+/* ============================================================
+   Block Utilities - Minecraft-Style Solid Blocks
+   ============================================================ */
+
+/* Base block card - solid background, sharp corners, stone border */
+.block-card {
+  background: var(--color-bg-surface);
+  border: 2px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block);
+}
+
+.block-card:hover {
+  background: var(--color-bg-card-hover);
+  border-color: var(--color-stone-600);
+}
+
+/* Raised block - uses border-style groove for 3D effect */
+.block-raised {
+  background: var(--color-bg-elevated);
+  border: 2px solid;
+  border-color: var(--color-stone-600) var(--color-stone-800) var(--color-stone-800) var(--color-stone-600);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-raised);
+}
+
+/* Pressed/inset block */
+.block-inset {
+  background: var(--color-bg-base);
+  border: 2px solid;
+  border-color: var(--color-stone-800) var(--color-stone-600) var(--color-stone-600) var(--color-stone-800);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-inset);
+}
+
+/* Grass-accented block */
+.block-grass {
+  background: var(--color-bg-surface);
+  border: 2px solid var(--color-grass);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block), var(--shadow-grass-glow);
+}
+
+/* Lava/destructive block */
+.block-lava {
+  background: var(--color-bg-surface);
+  border: 2px solid var(--color-lava);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block), var(--shadow-lava-glow);
+}
+
+/* ============================================================
+   Button Base Styles
+   ============================================================ */
+
+/* Primary button: Grass green, blocky */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--color-grass);
+  border: 2px solid var(--color-grass-700);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-snap);
+  user-select: none;
+}
+
+.btn-primary:hover {
+  background: var(--color-grass-400);
+  border-color: var(--color-grass-600);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px rgb(0 0 0 / 0.4);
+}
+
+.btn-primary:active {
+  background: var(--color-grass-700);
+  border-color: var(--color-grass-800);
+  transform: translate(1px, 1px);
+  box-shadow: var(--shadow-block-pressed);
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--color-grass-300);
+  outline-offset: 2px;
+}
+
+.btn-primary:disabled {
+  background: var(--color-stone-700);
+  border-color: var(--color-stone-800);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Secondary button: Stone gray */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: var(--color-stone-800);
+  border: 2px solid var(--color-stone-600);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-snap);
+  user-select: none;
+}
+
+.btn-secondary:hover {
+  background: var(--color-stone-700);
+  border-color: var(--color-stone-500);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px rgb(0 0 0 / 0.4);
+}
+
+.btn-secondary:active {
+  background: var(--color-stone-900);
+  border-color: var(--color-stone-700);
+  transform: translate(1px, 1px);
+  box-shadow: var(--shadow-block-pressed);
+}
+
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--color-stone-400);
+  outline-offset: 2px;
+}
+
+.btn-secondary:disabled {
+  background: var(--color-stone-900);
+  border-color: var(--color-stone-800);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Destructive button: Lava orange */
+.btn-destructive {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--color-lava);
+  border: 2px solid var(--color-lava-700);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-snap);
+  user-select: none;
+}
+
+.btn-destructive:hover {
+  background: var(--color-lava-400);
+  border-color: var(--color-lava-600);
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px rgb(0 0 0 / 0.4);
+}
+
+.btn-destructive:active {
+  background: var(--color-lava-700);
+  border-color: var(--color-lava-800);
+  transform: translate(1px, 1px);
+  box-shadow: var(--shadow-block-pressed);
+}
+
+.btn-destructive:focus-visible {
+  outline: 2px solid var(--color-lava-300);
+  outline-offset: 2px;
+}
+
+.btn-destructive:disabled {
+  background: var(--color-stone-700);
+  border-color: var(--color-stone-800);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Ghost button: Minimal, for less prominent actions */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-snap);
+  user-select: none;
+}
+
+.btn-ghost:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-stone);
+  box-shadow: var(--shadow-block-sm);
+}
+
+.btn-ghost:active {
+  background: var(--color-bg-overlay);
+  box-shadow: var(--shadow-block-pressed);
+}
+
+.btn-ghost:focus-visible {
+  outline: 2px solid var(--color-stone-400);
+  outline-offset: 2px;
+}
+
+.btn-ghost:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ============================================================
+   Input / Form Styles
+   ============================================================ */
+
+.input-block {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 2px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-block-inset-sm);
+  transition: all var(--duration-fast) var(--ease-snap);
+  outline: none;
+}
+
+.input-block::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.input-block:hover {
+  border-color: var(--color-stone-600);
+}
+
+.input-block:focus {
+  border-color: var(--color-grass);
+  box-shadow: var(--shadow-block-inset-sm), var(--shadow-grass-glow);
+}
+
+.input-block:disabled {
+  background: var(--color-bg-base);
+  border-color: var(--color-border-secondary);
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.input-block.error {
+  border-color: var(--color-lava);
+  box-shadow: var(--shadow-block-inset-sm), var(--shadow-lava-glow);
+}
+
+/* ============================================================
+   Link Styles
+   ============================================================ */
+
+a {
+  color: var(--color-text-link);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-snap);
+}
+
+a:hover {
+  color: var(--color-text-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================================
+   Image / Media
+   ============================================================ */
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+/* Pixelated rendering for small images (Minecraft icons, etc.) */
+img.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* ============================================================
+   Utility: No drag (Tauri desktop app)
+   ============================================================ */
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+
+/* ============================================================
+   Animation Keyframes - Block Placement Style
+   ============================================================ */
+
+/* Block place: quick snap down, like placing a Minecraft block */
+@keyframes block-place {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Block break: rapid shrink and fade */
+@keyframes block-break {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+/* Block slide-in from top */
+@keyframes block-slide-in-top {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Block slide-in from bottom */
+@keyframes block-slide-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Block slide-in from left */
+@keyframes block-slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Block slide-in from right */
+@keyframes block-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Fade in */
+@keyframes block-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Fade out */
+@keyframes block-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Progress bar pulse (for loading bars, Minecraft-style) */
+@keyframes progress-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* Lava glow pulse */
+@keyframes lava-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0px 2px rgb(255 85 0 / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0px 4px rgb(255 85 0 / 0.5);
+  }
+}
+
+/* Spin (for loading indicators) */
+@keyframes block-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================================
+   Animation Utility Classes
+   ============================================================ */
+
+.animate-block-place {
+  animation: block-place var(--duration-slow) var(--ease-snap) both;
+}
+
+.animate-block-break {
+  animation: block-break var(--duration-fast) var(--ease-snap) both;
+}
+
+.animate-block-slide-in-top {
+  animation: block-slide-in-top var(--duration-slow) var(--ease-snap) both;
+}
+
+.animate-block-slide-in-bottom {
+  animation: block-slide-in-bottom var(--duration-slow) var(--ease-snap) both;
+}
+
+.animate-block-slide-in-left {
+  animation: block-slide-in-left var(--duration-slow) var(--ease-snap) both;
+}
+
+.animate-block-slide-in-right {
+  animation: block-slide-in-right var(--duration-slow) var(--ease-snap) both;
+}
+
+.animate-block-fade-in {
+  animation: block-fade-in var(--duration-normal) var(--ease-snap) both;
+}
+
+.animate-block-fade-out {
+  animation: block-fade-out var(--duration-normal) var(--ease-snap) both;
+}
+
+.animate-progress-pulse {
+  animation: progress-pulse 1.5s var(--ease-snap) infinite;
+}
+
+.animate-lava-glow {
+  animation: lava-glow 2s var(--ease-snap) infinite;
+}
+
+.animate-block-spin {
+  animation: block-spin 1s steps(8) infinite;
+}
+
+/* ============================================================
+   Reduced Motion
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

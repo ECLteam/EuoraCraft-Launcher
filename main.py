@@ -6,7 +6,8 @@
 
 import sys
 
-from ECL.lunacher import EuoraCraftLauncher
+from ECL.launcher import EuoraCraftLauncher
+
 
 def run_launcher() -> bool:
     launcher = EuoraCraftLauncher()
