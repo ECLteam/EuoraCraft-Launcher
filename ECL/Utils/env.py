@@ -7,12 +7,12 @@ from ECL.Utils.logger import get_logger
 
 
 class EnvManager:
-    """.env 环境变量和 ECL_CONFIG_ 前缀覆盖管理器"""
+    """环境变量管理器"""
 
     _instance = None
     _initialized = False
 
-    def __new__(cls, data_path: Path | None = None):
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -31,13 +31,12 @@ class EnvManager:
         获取环境变量数据
         :return: 合并 .env 文件和系统环境变量的字典，不存在时返回 None
         """
-        system_env = {k: v for k, v in os.environ.items() if k.startswith("ECL_")}
         if not self.env_path.exists():
             return None
         if self.env_data is not None:
             return self.env_data
         self.env_data = dotenv_values(self.env_path)
-        self.env_data.update(system_env)
+        self.env_data.update({k: v for k, v in os.environ.items() if k.startswith("ECL_")})
         return self.env_data
 
     def _convert_env_value(self, value: str) -> bool | int | float | str:

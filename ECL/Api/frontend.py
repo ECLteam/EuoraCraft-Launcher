@@ -1,16 +1,16 @@
+import json
 import webbrowser
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlsplit
 
+from pytauri import EventTarget
+from pytauri.ffi import Emitter as _Emitter
 from pytauri.ipc import WebviewWindow
 
-from ECL.Utils.config import ConfigManager
+from ECL.plugin import PluginFramework
+from ECL.Utils.event_bus import EventBus
 from ECL.Utils.logger import get_logger
-from ECL.Utils.utils import get_runtime_info
-
-if TYPE_CHECKING:
-    from ECL.launcher import EuoraCraftLauncher
 
 
 class FrontendApi:
@@ -24,34 +24,44 @@ class FrontendApi:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, launcher_instance: "EuoraCraftLauncher"):
+    def __init__(self):
         if self._initialized:
-            self.launcher_instance = launcher_instance
             return
         self.logger = get_logger("FrontendApi")
-        self.runtime_info: dict = get_runtime_info()
-        self.app_path: Path = Path(self.runtime_info.get("app_path"))
+        bus = EventBus()
+        self.launcher = bus["launcher"]
+        self.config = bus["config"]
+        self.app_path: Path = self.launcher.app_path # 启动器运行目录
         self.data_path: Path = self.app_path / "ECL_data"
-        self.config_instance = ConfigManager(self.data_path)
-        self.launcher_instance = launcher_instance
+        self._webview: WebviewWindow | None = None # 前端就绪后赋值，用于主动推送事件
         self._initialized = True
 
-    # ---------- 内部方法 ----------
+    def emit_to_frontend(self, event: str, payload: Any) -> None:
+        """
+        主动向 Web 前端推送事件
+        :param event: 事件名称，前端通过 backend.on(event, cb) 监听
+        :param payload: 事件负载数据
+        """
+        if self._webview is None:
+            return
+        # WebviewWindow 是 Rust-backed 对象，需通过 Emitter 的 emit_str_to 推送
+        # EventTarget.Any() 表示推送到所有监听该事件的窗口
+        _Emitter.emit_str_to(self._webview, EventTarget.Any(), event, json.dumps(payload))
 
     def _get_effective_config(self) -> dict[str, Any]:
         """
         获取包含运行时信息的前端配置
         :return: 合并后的完整配置
         """
-        config = self.config_instance.get_config()
+        config = self.config.get_config()
         launcher_config = config.get("launcher") or {}
 
-        launcher = self.launcher_instance
+        launcher = self.launcher
         runtime_config = (launcher.config or {}).get("launcher") or {}
         launcher_config.update(runtime_config)
         launcher_config["debug"] = bool(launcher.debug)
         launcher_config["version"] = launcher.launcher_version or ""
-        launcher_config["version_type"] = launcher.launcher_version_type or "release"
+        launcher_config["version_type"] = launcher.launcher_version_type or "beta"
 
         config["launcher"] = launcher_config
         return config
@@ -74,7 +84,7 @@ class FrontendApi:
         return server_url
 
     def _get_authlib_server_urls(self) -> list[str]:
-        authlib_config = self.config_instance.get_config("authlib") or {}
+        authlib_config = self.config.get_config("authlib") or {}
         stored_servers = authlib_config.get("servers") or []
 
         server_urls: list[str] = []
@@ -92,9 +102,9 @@ class FrontendApi:
         server_urls.insert(0, server_url)
         server_urls = server_urls[:20]
 
-        authlib_config = self.config_instance.get_config("authlib") or {}
+        authlib_config = self.config.get_config("authlib") or {}
         authlib_config["servers"] = server_urls
-        return self.config_instance.save_config("authlib", authlib_config)
+        return self.config.save_config("authlib", authlib_config)
 
     async def frontend_ready(self, body: dict[str, Any], webview_window: WebviewWindow) -> dict[str, Any]:
         """
@@ -103,6 +113,7 @@ class FrontendApi:
         :param webview_window: 当前 Tauri Webview 窗口
         :return: 窗口显示结果
         """
+        self._webview = webview_window
         webview_window.show()
         self.logger.info("前端加载完成，已显示主窗口")
         return {"success": True}
@@ -152,7 +163,7 @@ class FrontendApi:
                 "errorCode": "MISSING_CONFIG_DATA",
             }
 
-        if not self.config_instance.save_config(section, body["data"]):
+        if not self.config.save_config(section, body["data"]):
             return {
                 "success": False,
                 "message": "保存配置失败",
@@ -166,7 +177,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 配置分区名称列表
         """
-        return {"success": True, "data": self.config_instance.list_sections()}
+        return {"success": True, "data": self.config.list_sections()}
 
     async def config_get_all(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -629,109 +640,139 @@ class FrontendApi:
         """
         获取已安装插件列表
         :param body: 前端传递的请求参数
-        :return: 临时插件列表
+        :return: 插件列表
         """
-        plugin_list: list[dict[str, Any]] = []
-        return {"success": True, "data": plugin_list}
+        return {"success": True, "data": PluginFramework().list_plugins()}
 
     async def plugin_info(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取指定插件信息
         :param body: 包含 plugin_name 的请求参数
-        :return: 临时插件信息
+        :return: 插件信息
         """
-        plugin_data: dict[str, Any] = {}
-        return {"success": True, "data": plugin_data}
+        plugin_name = body.get("plugin_name")
+        plugin = PluginFramework().get_plugin(plugin_name)
+        if plugin is None:
+            return {"success": False, "message": f"插件不存在: {plugin_name}", "errorCode": "PLUGIN_NOT_FOUND"}
+        return {"success": True, "data": plugin.metadata}
 
     async def plugin_enable(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         启用指定插件
         :param body: 包含 plugin_name 的请求参数
-        :return: 临时插件启用结果
+        :return: 启用结果
         """
-        enable_result = None
-        return {"success": True, "data": enable_result}
+        plugin_name = body.get("plugin_name")
+        if not PluginFramework()._enable(plugin_name):
+            return {"success": False, "message": f"启用插件失败: {plugin_name}", "errorCode": "PLUGIN_ENABLE_FAILED"}
+        return {"success": True}
 
     async def plugin_disable(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         禁用指定插件
         :param body: 包含 plugin_name 和 force 的请求参数
-        :return: 临时插件禁用结果
+        :return: 禁用结果
         """
-        disable_result = None
-        return {"success": True, "data": disable_result}
+        plugin_name = body.get("plugin_name")
+        if not PluginFramework().disable(plugin_name):
+            return {"success": False, "message": f"禁用插件失败: {plugin_name}", "errorCode": "PLUGIN_DISABLE_FAILED"}
+        return {"success": True}
 
     async def plugin_unload(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         卸载指定插件运行实例
         :param body: 包含 plugin_name 的请求参数
-        :return: 临时插件卸载结果
+        :return: 卸载结果
         """
-        unload_result = None
-        return {"success": True, "data": unload_result}
+        plugin_name = body.get("plugin_name")
+        if not PluginFramework().unload(plugin_name):
+            return {"success": False, "message": f"卸载插件失败: {plugin_name}", "errorCode": "PLUGIN_UNLOAD_FAILED"}
+        return {"success": True}
 
     async def plugin_reload(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         重新加载指定插件
         :param body: 包含 plugin_name 和 cascade 的请求参数
-        :return: 临时插件重载结果
+        :return: 重载结果
         """
-        reload_result = None
-        return {"success": True, "data": reload_result}
+        plugin_name = body.get("plugin_name")
+        if not PluginFramework().reload(plugin_name):
+            return {"success": False, "message": f"重载插件失败: {plugin_name}", "errorCode": "PLUGIN_RELOAD_FAILED"}
+        return {"success": True}
 
     async def plugin_install(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         从本地路径安装插件
         :param body: 包含 plugin_path 的请求参数
-        :return: 临时插件安装结果
+        :return: 安装结果
         """
-        install_result = None
-        return {"success": True, "data": install_result}
+        plugin_path = body.get("plugin_path")
+        if not PluginFramework().install(plugin_path):
+            return {"success": False, "message": "安装插件失败", "errorCode": "PLUGIN_INSTALL_FAILED"}
+        return {"success": True}
 
     async def plugin_get_routes(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取插件注册的前端路由
         :param body: 包含可选 plugin_id 的请求参数
-        :return: 临时插件路由列表
+        :return: 插件路由列表
         """
-        route_list: list[dict[str, Any]] = []
-        return {"success": True, "data": route_list}
+        return {"success": True, "data": PluginFramework().get_routes()}
 
     async def plugin_get_slots(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        获取插件注册的界面插槽
+        获取插件注册的 HTML 插槽
         :param body: 前端传递的请求参数
-        :return: 临时插件插槽映射
+        :return: 插件插槽映射
         """
-        slot_data: dict[str, list[dict[str, Any]]] = {}
-        return {"success": True, "data": slot_data}
+        return {"success": True, "data": PluginFramework().get_slots()}
+
+    async def plugin_get_vue_slots(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取插件注册的 Vue 组件插槽
+        :param body: 前端传递的请求参数
+        :return: slot_id → [{plugin, component_name, template, script, style}, ...]
+        """
+        return {"success": True, "data": PluginFramework().get_vue_slots()}
+
+    async def plugin_get_vue_components(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取所有插件注册的 Vue 组件定义
+        :param body: 前端传递的请求参数
+        :return: component_name → {plugin, template, script, style}
+        """
+        return {"success": True, "data": PluginFramework().get_vue_components()}
 
     async def plugin_call_command(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         调用插件提供的命令
         :param body: 包含 command 和 params 的请求参数
-        :return: 临时插件命令结果
+        :return: 插件命令结果
         """
-        command_result: Any = None
-        return {"success": True, "data": command_result}
+        command = body.get("command")
+        result = PluginFramework().call_command(command, body.get("params", {}))
+        return {"success": True, "data": result}
 
     async def plugin_get_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取指定插件的设置结构和值
         :param body: 包含 plugin_name 的请求参数
-        :return: 临时插件设置数据
+        :return: 插件设置数据
         """
-        settings_data = {"schema": None, "values": {}}
-        return {"success": True, "data": settings_data}
+        plugin_name = body.get("plugin_name")
+        return {"success": True, "data": PluginFramework().get_settings(plugin_name)}
 
     async def plugin_update_setting(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         更新指定插件的设置项
         :param body: 包含 plugin_name、key 和 value 的请求参数
-        :return: 临时设置更新结果
+        :return: 设置更新结果
         """
-        update_result = None
-        return {"success": True, "data": update_result}
+        plugin_name = body.get("plugin_name")
+        key = body.get("key")
+        if not PluginFramework().update_setting(plugin_name, key, body.get("value")):
+            return {"success": False, "message": "更新设置失败", "errorCode": "SETTING_UPDATE_FAILED"}
+        return {"success": True}
 
     # Mod 管理
 

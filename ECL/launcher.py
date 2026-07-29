@@ -6,12 +6,13 @@ from ECL.Adapters.adapter import Adapter
 from ECL.Common.version import __version__, __version_type__
 from ECL.Utils.config import ConfigManager
 from ECL.Utils.env import EnvManager
+from ECL.Utils.event_bus import EventBus
 from ECL.Utils.logger import LoggerManager, logging
 from ECL.Utils.utils import get_runtime_info
 
 
 class EuoraCraftLauncher:
-    """EuoraCraft Launcher 主入口"""
+    """EuoraCraft Launcher 主类"""
 
     def __init__(self):
         runtime_info = get_runtime_info()
@@ -23,7 +24,7 @@ class EuoraCraftLauncher:
         self.data_path: Path = self.app_path / "ECL_data" # 数据目录
         self.config: dict[str, Any] | None = None # 配置
 
-        self.logger = LoggerManager().get_logger("EuoraCraftLauncher")
+        self.logger = LoggerManager().get_logger("EuoraCraft_Launcher")
         self.config_instance = ConfigManager(self.data_path)
         self.env_instance = EnvManager(self.app_path)
 
@@ -35,7 +36,7 @@ class EuoraCraftLauncher:
         self.logger.info("正在启动 EuoraCraft Launcher V%s %s", self.launcher_version, self.launcher_version_type)
 
         if self.launcher_version_type == "alpha":
-            self.logger.warning("当前启动器版本为开发版本")
+            self.logger.warning("当前启动器版本为内部测试版本")
         elif self.launcher_version_type == "beta":
             self.logger.warning("当前启动器版本为测试版本，可能存在未知问题")
 
@@ -44,7 +45,7 @@ class EuoraCraftLauncher:
             return False
 
         self.logger.info("启动前端")
-        adapter = Adapter(self)
+        adapter = Adapter()
         if not adapter.run_adapter():
             self.logger.error("前端适配器异常退出")
             return False
@@ -84,5 +85,23 @@ class EuoraCraftLauncher:
             LoggerManager().set_level(logging.DEBUG)
             self.logger.warning("调试模式已启动")
 
+        # 注册全部共享实例到总线
+        bus = EventBus()
+        bus.register("config", self.config_instance)
+        bus.register("env", self.env_instance)
+        bus.register("launcher", self)
+
+        bus.subscribe("config:updated", self._on_config_updated) # 订阅配置变更
+
         self.logger.info("初始化完成")
         return True
+
+    def _on_config_updated(self, section: str, data: Any) -> None:
+        if section != "launcher":
+            return
+        debug_enabled = bool((data or {}).get("debug", False))
+        if debug_enabled == self.debug:
+            return
+        self.debug = debug_enabled
+        LoggerManager().set_level(logging.DEBUG if debug_enabled else logging.INFO)
+        self.logger.warning("调试模式已%s", "启用" if debug_enabled else "关闭")

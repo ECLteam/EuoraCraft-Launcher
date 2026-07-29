@@ -1,15 +1,14 @@
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from anyio.from_thread import start_blocking_portal
 from pytauri import Commands
 from pytauri_wheel.lib import builder_factory, context_factory
 
 from ECL.Api.frontend import FrontendApi
+from ECL.plugin import PluginFramework
+from ECL.Utils.event_bus import EventBus
 from ECL.Utils.logger import get_logger
-
-if TYPE_CHECKING:
-    from ECL.launcher import EuoraCraftLauncher
 
 
 class Adapter:
@@ -23,19 +22,21 @@ class Adapter:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, launcher_instance: "EuoraCraftLauncher"):
+    def __init__(self):
         if self._initialized:
             return
         self.logger = get_logger("Adapter")
         self._initialized: bool = True
         self.commands = Commands()
+        launcher = EventBus()["launcher"]
         self.tauri_config: dict | None = None # tauri配置
-        self.launcher_instance = launcher_instance
-        self.app_path: Path = self.launcher_instance.app_path # 启动器运行目录
-        self.is_frozen: bool = self.launcher_instance.is_frozen # 是否已经打包
-        self.config: dict = self.launcher_instance.config# 配置
-        self.launcher_version: str = self.launcher_instance.launcher_version # 启动器版本
-        self.frontend_api_instance = FrontendApi(self.launcher_instance)
+        self.app_path: Path = launcher.app_path # 启动器运行目录
+        self.is_frozen: bool = launcher.is_frozen # 是否已经打包
+        self.config: dict = launcher.config # 配置
+        self.launcher_version: str = launcher.launcher_version # 启动器版本
+        self.frontend_api_instance = FrontendApi()
+        # 初始化插件框架，扫描并加载所有插件
+        PluginFramework().initialize(self.app_path)
 
     def run_adapter(self) -> bool:
         """
@@ -80,22 +81,18 @@ class Adapter:
         try:
             api = self.frontend_api_instance
 
-            # ---------- 基础 ----------
             self.commands.command("frontend_ready")(api.frontend_ready)
             self.commands.command("ping")(api.ping)
 
-            # ---------- 配置 ----------
             self.commands.command("config_get")(api.config_get)
             self.commands.command("config_set")(api.config_set)
             self.commands.command("config_list")(api.config_list)
             self.commands.command("config_get_all")(api.config_get_all)
             self.commands.command("config_get_many")(api.config_get_many)
 
-            # ---------- Java ----------
             self.commands.command("java_scan")(api.java_scan)
             self.commands.command("java_list")(api.java_list)
 
-            # ---------- 游戏版本 ----------
             self.commands.command("minecraft_versions")(api.minecraft_versions)
             self.commands.command("minecraft_versions_classified")(api.minecraft_versions_classified)
             self.commands.command("fabric_versions")(api.fabric_versions)
@@ -107,7 +104,6 @@ class Adapter:
             self.commands.command("install_version")(api.install_version)
             self.commands.command("uninstall_version")(api.uninstall_version)
 
-            # ---------- 账户 ----------
             self.commands.command("accounts_list")(api.accounts_list)
             self.commands.command("accounts_current")(api.accounts_current)
             self.commands.command("accounts_add_offline")(api.accounts_add_offline)
@@ -120,12 +116,10 @@ class Adapter:
             self.commands.command("accounts_refresh_profile")(api.accounts_refresh_profile)
             self.commands.command("authlib_servers")(api.authlib_servers)
 
-            # ---------- 用户协议 ----------
             self.commands.command("user_agreement_get")(api.user_agreement_get)
             self.commands.command("user_agreement_save")(api.user_agreement_save)
             self.commands.command("user_agreement_clear")(api.user_agreement_clear)
 
-            # ---------- 图片和文件选择 ----------
             self.commands.command("image_fetch_data_url")(api.image_fetch_data_url)
             self.commands.command("image_save_url")(api.image_save_url)
             self.commands.command("image_read_file")(api.image_read_file)
@@ -137,14 +131,12 @@ class Adapter:
             self.commands.command("open_folder")(api.open_folder)
             self.commands.command("open_url")(api.open_url)
 
-            # ---------- 游戏实例和日志 ----------
             self.commands.command("instances_list")(api.instances_list)
             self.commands.command("launch_instance")(api.launch_instance)
             self.commands.command("cancel_launch")(api.cancel_launch)
             self.commands.command("instance_stop")(api.instance_stop)
             self.commands.command("export_logs")(api.export_logs)
 
-            # ---------- 插件 ----------
             self.commands.command("plugin_list")(api.plugin_list)
             self.commands.command("plugin_info")(api.plugin_info)
             self.commands.command("plugin_enable")(api.plugin_enable)
@@ -154,18 +146,18 @@ class Adapter:
             self.commands.command("plugin_install")(api.plugin_install)
             self.commands.command("plugin_get_routes")(api.plugin_get_routes)
             self.commands.command("plugin_get_slots")(api.plugin_get_slots)
+            self.commands.command("plugin_get_vue_slots")(api.plugin_get_vue_slots)
+            self.commands.command("plugin_get_vue_components")(api.plugin_get_vue_components)
             self.commands.command("plugin_call_command")(api.plugin_call_command)
             self.commands.command("plugin_get_settings")(api.plugin_get_settings)
             self.commands.command("plugin_update_setting")(api.plugin_update_setting)
 
-            # ---------- Mod 管理 ----------
             self.commands.command("get_mods")(api.get_mods)
             self.commands.command("toggle_mod")(api.toggle_mod)
             self.commands.command("add_mod")(api.add_mod)
             self.commands.command("remove_mod")(api.remove_mod)
             self.commands.command("open_mods_folder")(api.open_mods_folder)
 
-            # ---------- 整合包和游戏资源 ----------
             self.commands.command("detect_modpack_type")(api.detect_modpack_type)
             self.commands.command("import_modpack")(api.import_modpack)
             self.commands.command("export_modpack")(api.export_modpack)
@@ -179,24 +171,80 @@ class Adapter:
             self.commands.command("open_shaderpacks_folder")(api.open_shaderpacks_folder)
             self.commands.command("open_saves_folder")(api.open_saves_folder)
 
-            # ---------- 在线 Mod ----------
             self.commands.command("search_mods")(api.search_mods)
             self.commands.command("get_mod_info")(api.get_mod_info)
             self.commands.command("get_mod_versions")(api.get_mod_versions)
             self.commands.command("download_mod")(api.download_mod)
 
-            # ---------- 启动器信息 ----------
             self.commands.command("launcher_info")(api.launcher_info)
             self.commands.command("info_card_get")(api.info_card_get)
             self.commands.command("list_sections")(api.list_sections)
 
-            # ---------- 文件系统和路径 ----------
             self.commands.command("fs_read_dir")(api.fs_read_dir)
             self.commands.command("fs_read_file")(api.fs_read_file)
             self.commands.command("fs_exists")(api.fs_exists)
             self.commands.command("file_resolve")(api.file_resolve)
 
+            # 订阅内部事件，转发到前端（前端就绪后才实际推送）
+            EventBus().subscribe("config:updated", self._forward_config_to_frontend)
+            self._subscribe_plugin_events()
+
             return True
         except Exception:
             self.logger.exception("注册 IPC 命令时发生异常")
             return False
+
+    def _forward_config_to_frontend(self, section: str, data: Any) -> None:
+        """
+        将配置变更事件转发到前端，前端可据此刷新 UI 状态
+        :param section: 变更的配置分区
+        :param data: 变更后的配置数据
+        """
+        self.frontend_api_instance.emit_to_frontend("config:updated", {"section": section, "data": data})
+
+    def _subscribe_plugin_events(self) -> None:
+        """订阅插件系统事件，转换为前端期望的格式后推送"""
+        bus = EventBus()
+        api = self.frontend_api_instance
+
+        # 状态变更：plugin:enabled / plugin:disabled / plugin:unloaded → plugin:status_changed
+        def on_enabled(plugin):
+            api.emit_to_frontend("plugin:status_changed", {"name": plugin.name, "action": "enabled", "result": True})
+            # 前端就绪后通知插件注入 UI 资源
+            PluginFramework().on_frontend_ready()
+        bus.subscribe("plugin:enabled", on_enabled)
+
+        def on_disabled(plugin):
+            api.emit_to_frontend("plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True})
+        bus.subscribe("plugin:disabled", on_disabled)
+
+        def on_unloaded(name):
+            api.emit_to_frontend("plugin:status_changed", {"name": name, "action": "unloaded", "result": True})
+        bus.subscribe("plugin:unloaded", on_unloaded)
+
+        def on_installed(name):
+            api.emit_to_frontend("plugin:installed", {"name": name})
+        bus.subscribe("plugin:installed", on_installed)
+
+        # 前端资源注入：直接转发
+        bus.subscribe("plugin:css_injected", lambda *args: api.emit_to_frontend("plugin:css_injected", {"plugin": args[0], "css": args[1]}))
+        bus.subscribe("plugin:html_injected", lambda *args: api.emit_to_frontend("plugin:html_injected", {"plugin": args[0], "slot": args[1], "html": args[2]}))
+        bus.subscribe("plugin:script_injected", lambda *args: api.emit_to_frontend("plugin:script_injected", {"plugin": args[0], "script": args[1]}))
+        bus.subscribe("plugin:typescript_injected", lambda *args: api.emit_to_frontend("plugin:typescript_injected", {"plugin": args[0], "script": args[1]}))
+
+        # 路由注册
+        bus.subscribe("plugin:route_registered", lambda *args: api.emit_to_frontend("plugin:route_registered", {"plugin": args[0], "path": args[1], "title": args[2], "icon": args[3] if len(args) > 3 else ""}))
+
+        # 设置变更
+        bus.subscribe("plugin:settings_changed", lambda *args: api.emit_to_frontend("plugin:settings_changed", {"plugin": args[0], "key": args[1], "old_value": args[2], "new_value": args[3]}))
+
+        # Vue 组件注册
+        bus.subscribe("plugin:vue_slot_registered", lambda *args: api.emit_to_frontend("plugin:vue_slot_registered", {
+            "plugin": args[0], "slot": args[1], "component_name": args[2],
+            "template": args[3], "script": args[4], "style": args[5],
+        }))
+        bus.subscribe("plugin:vue_route_registered", lambda *args: api.emit_to_frontend("plugin:vue_route_registered", {
+            "plugin": args[0], "path": args[1], "title": args[2],
+            "component_name": args[3], "template": args[4], "script": args[5],
+            "style": args[6], "icon": args[7] if len(args) > 7 else "",
+        }))

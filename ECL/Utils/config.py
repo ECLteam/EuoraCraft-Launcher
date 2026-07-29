@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from ECL.Utils.event_bus import EventBus
 from ECL.Utils.logger import get_logger
 
 default_config = {
@@ -50,7 +51,7 @@ default_config = {
 
 
 class ConfigManager:
-    """JSON 配置文件管理器，支持读写、分区操作和写入"""
+    """全局配置管理器"""
 
     _instance = None
     _initialized = False
@@ -165,5 +166,7 @@ class ConfigManager:
         config_data[section] = data
         if self._write_config(config_data):
             self.logger.info(f"配置分区已保存: {section}")
+            # 通知其他组件配置已变更，例如调试模式热切换、主题实时生效
+            EventBus().emit("config:updated", section, data)
             return True
         return False

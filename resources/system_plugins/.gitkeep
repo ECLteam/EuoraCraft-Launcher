@@ -1,0 +1,2 @@
+# 系统插件目录，打包时内置的插件放在此处
+# 与 plugins/ 目录使用相同的 plugin.json + main.py 结构
