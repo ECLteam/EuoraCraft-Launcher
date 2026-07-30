@@ -12,10 +12,17 @@
   "ignoreDeps": ["cryptography","python","node","pnpm"],
   "packageRules": [
     {
-      "matchManagers":["poetry"],
-      "matchUpdateTypes":"patch",
+      "matchManagers":["pep621"],
+      "matchUpdateTypes":["minor","patch"],
       "groupName": "python-dependencies",
-      "addLabels": ["pypi"]
+      "labels": ["pypi"]
+    },
+    {
+      "matchManagers":["pep621"],
+      "matchDepTypes":["optional-dependencies"],
+      "matchUpdateTypes":["minor","patch"],
+      "groupName": "python-dev-dependencies",
+      "labels": ["pypi"]
     },
     {
       "matchCategories":["ci"],
@@ -23,7 +30,7 @@
       "matchDatasources":["github-tags"],
       "matchUpdateTypes":"major",
       "groupName": "action-dependencies",
-      "addLabels": ["github_actions"]
+      "labels": ["github_actions"]
     },
     {
       "matchCategories":["ci"],
