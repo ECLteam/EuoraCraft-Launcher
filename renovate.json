@@ -2,5 +2,20 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "timezone": "Asia/Shanghai",
+  "addLabels": ["dependencies"],
+  "commitMessagePrefix": "deps(pypi):",
+  "schedule": [
+	"on friday"
+  ],
+  "packageRules": [
+    {
+      "matchManagers":["pip_setup","pip_requirements"]
+    },
+    {
+      "matchPackageNames":["cryptography"],
+      "enabled": false
+    }
   ]
 }
