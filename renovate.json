@@ -5,16 +5,31 @@
   ],
   "timezone": "Asia/Shanghai",
   "addLabels": ["dependencies"],
-  "commitMessagePrefix": "deps(pypi):",
+  "commitMessagePrefix": "deps:",
   "schedule": [
 	"on friday"
   ],
   "packageRules": [
     {
-      "matchManagers":["pip_setup","pip_requirements"]
+      "matchManagers":["pip_setup","pip_requirements"],
+      "groupName": "python-deps"
     },
     {
+      "matchManagers":["pip_setup","pip_requirements"],
       "matchPackageNames":["cryptography"],
+      "enabled": false
+    },
+    {
+      "matchCategories":["ci"],
+      "matchDepTypes":["action"],
+      "matchDatasources":["github-tags"],
+      "groupName": "action-deps"
+    },
+    {
+      "matchCategories":["ci"],
+      "matchDepTypes":["action"],
+      "matchDatasources":["github-tags"],
+      "matchPackageNames":["/^luyanci\\//"],
       "enabled": false
     }
   ]
