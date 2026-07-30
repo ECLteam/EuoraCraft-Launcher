@@ -4,26 +4,26 @@
     "config:recommended"
   ],
   "timezone": "Asia/Shanghai",
-  "addLabels": ["dependencies"],
+  "addLabels": ["renavate","dependencies"],
   "commitMessagePrefix": "deps:",
   "schedule": [
 	"on friday"
   ],
-  "ignoreDeps": ["cryptography"],
+  "ignoreDeps": ["cryptography","python","node","pnpm"],
   "packageRules": [
     {
-      "matchManagers":["pip_setup","pip_requirements"],
-      "matchUpdateTypes":"minor",
-      "groupName": "python-deps",
-      "addLabels": ["pip"],
+      "matchManagers":["poetry"],
+      "matchUpdateTypes":"patch",
+      "groupName": "python-dependencies",
+      "addLabels": ["pypi"]
     },
     {
       "matchCategories":["ci"],
       "matchDepTypes":["action"],
       "matchDatasources":["github-tags"],
       "matchUpdateTypes":"major",
-      "groupName": "action-deps",
-      "addLabels": ["github_actions"],
+      "groupName": "action-dependencies",
+      "addLabels": ["github_actions"]
     },
     {
       "matchCategories":["ci"],
