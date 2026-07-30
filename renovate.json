@@ -9,21 +9,21 @@
   "schedule": [
 	"on friday"
   ],
+  "ignoreDeps": ["cryptography"],
   "packageRules": [
     {
       "matchManagers":["pip_setup","pip_requirements"],
-      "groupName": "python-deps"
-    },
-    {
-      "matchManagers":["pip_setup","pip_requirements"],
-      "matchPackageNames":["cryptography"],
-      "enabled": false
+      "matchUpdateTypes":"minor",
+      "groupName": "python-deps",
+      "addLabels": ["pip"],
     },
     {
       "matchCategories":["ci"],
       "matchDepTypes":["action"],
       "matchDatasources":["github-tags"],
-      "groupName": "action-deps"
+      "matchUpdateTypes":"major",
+      "groupName": "action-deps",
+      "addLabels": ["github_actions"],
     },
     {
       "matchCategories":["ci"],
