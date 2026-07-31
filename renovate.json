@@ -4,7 +4,7 @@
     "config:recommended"
   ],
   "timezone": "Asia/Shanghai",
-  "addLabels": ["renavate","dependencies"],
+  "addLabels": ["renovate","dependencies"],
   "commitMessagePrefix": "deps:",
   "schedule": [
 	"on friday"
