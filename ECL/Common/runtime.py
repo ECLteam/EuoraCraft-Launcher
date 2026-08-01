@@ -8,13 +8,20 @@ def get_runtime_info() -> dict:
     获取当前运行环境信息
     :return: 环境信息字典
         - is_frozen: bool，是否为打包环境；True=打包，False=开发源码运行
-        - app_path: Path，程序根目录路径对象
+        - app_path: Path，可执行程序所在目录；开发环境下为项目根目录
+        - resource_path: Path，打包资源解压目录；开发环境下与 app_path 相同
     """
     is_frozen = bool(getattr(sys, "frozen", False))
-    app_path = Path(sys.argv[0]).resolve().parent if is_frozen else Path(__file__).resolve().parent.parent.parent
+    if is_frozen:
+        app_path = Path(sys.executable).resolve().parent
+        resource_path = Path(getattr(sys, "_MEIPASS", app_path)).resolve()
+    else:
+        app_path = Path(__file__).resolve().parent.parent.parent
+        resource_path = app_path
     return {
         "is_frozen": is_frozen,
         "app_path": app_path,
+        "resource_path": resource_path,
     }
 
 

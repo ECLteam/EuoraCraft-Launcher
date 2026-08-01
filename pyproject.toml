@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "EuoraCraft-Launcher"
-version = "0.1.0"
+dynamic = ["version"]
 description = "EuoraCraft Launcher"
 authors = [
     {name = "ECLTeam", email = "ECL@eclteam.top"},
@@ -23,6 +23,7 @@ dependencies = [
     "Pillow>=10.0.0",
     "pydantic>=2.0.0",
     "httpx[http2]>=0.28.0",
+    "lxml>=5.0.0",
     "psutil>=7.2.0",
     "dotenv"
 ]
@@ -73,9 +74,11 @@ dev = [
 where = ["."]
 include = ["ECL*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "ECL.Common.version.__version__"}
+
 [tool.semantic_release]
-# version_toml = ["pyproject.toml:project.version"]
-version_variables = ["ECL/common/version.py:__version__"]
+version_variables = ["ECL/Common/version.py:__version__"]
 branch = "main"
 upload_to_pypi = false
 upload_to_release = true
@@ -149,8 +152,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"ECL/game/Core/*.py" = ["E701"]
-"ECL/common/logger.py" = ["N802", "N803"]
+"ECL/Game/Core/*.py" = ["E701"]
+"ECL/Infrastructure/logging.py" = ["N802", "N803"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -3,11 +3,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ECL.Utils.event_bus import EventBus
-from ECL.Utils.logger import get_logger
+from ECL.Events import EventBus
+from ECL.Infrastructure import get_logger
 
 if TYPE_CHECKING:
-    from ECL.plugin.framework import PluginFramework
+    from ECL.Plugin.framework import PluginFramework
 
 
 class Plugin:

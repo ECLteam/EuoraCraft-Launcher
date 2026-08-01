@@ -90,14 +90,20 @@ class LoggerManager:
     _instance = None
     _initialized = False
 
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, colored: bool = True):
+    def __init__(self, colored: bool = True, data_path: Path | None = None):
         if LoggerManager._initialized:
             return
+        if data_path is None:
+            from ECL.Common import get_runtime_info
+
+            data_path = Path(get_runtime_info()["app_path"]) / "ECL_data"
+        self.data_path = Path(data_path)
+        self.log_dir = self.data_path / "logs"
         self._root_logger = logging.getLogger("EuoraCraft-Launcher")
         self._root_logger.setLevel(logging.DEBUG)
         self._setup_handlers(colored)
@@ -110,8 +116,7 @@ class LoggerManager:
         """
         if self._root_logger.handlers:
             return
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         base_formatter = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] [%(name)s] [%(filename)s:%(lineno)d] - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
@@ -128,12 +133,20 @@ class LoggerManager:
         console_handler.setFormatter(console_formatter)
         self._console_handler = console_handler
         file_handler = CompressedTimedRotatingFileHandler(
-            log_dir / "EuoraCraft-Launcher.log", when="midnight", interval=1, backup_count=30, encoding="utf-8"
+            self.log_dir / "EuoraCraft-Launcher.log",
+            when="midnight",
+            interval=1,
+            backup_count=30,
+            encoding="utf-8",
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(base_formatter)
         error_handler = CompressedTimedRotatingFileHandler(
-            log_dir / "error.log", when="midnight", interval=1, backup_count=30, encoding="utf-8"
+            self.log_dir / "error.log",
+            when="midnight",
+            interval=1,
+            backup_count=30,
+            encoding="utf-8",
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(base_formatter)

@@ -4,15 +4,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ECL.plugin.plugin import Plugin
-from ECL.Utils.event_bus import EventBus
-from ECL.Utils.logger import get_logger
+from ECL.Events import EventBus
+from ECL.Infrastructure import get_logger
+from ECL.Plugin.plugin import Plugin
 
 
 class PluginFramework:
     """
     插件框架管理器，负责插件发现、加载、生命周期管理。
-    插件来源：plugins/（用户插件）、resources/system_plugins/（系统插件）。
+    插件来源：ECL_data/plugins/（用户插件）、resources/system_plugins/（系统插件）。
     """
 
     _instance = None
@@ -43,21 +43,28 @@ class PluginFramework:
         self._vue_routes: list[dict[str, Any]] = []
         # 已注册的 Vue 组件（去重），component_name → {plugin, template, script, style}
         self._vue_components: dict[str, dict[str, Any]] = {}
+        self._event_handlers_registered = False
 
-    def initialize(self, app_path: Path) -> None:
+    def initialize(self, data_path: Path, resource_path: Path | None = None) -> None:
         """
         扫描插件目录，加载所有插件
-        :param app_path: 启动器根目录
+        :param data_path: 启动器可写数据目录
+        :param resource_path: 启动器只读资源目录
         """
-        self._app_path = app_path
-        self._plugin_config_dir = app_path / "plugin_config"
+        self._data_path = Path(data_path)
+        self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
+        self._plugin_dir = self._data_path / "plugins"
+        self._plugin_dir.mkdir(parents=True, exist_ok=True)
+        self._plugin_config_dir = self._data_path / "plugin_config"
         self._plugin_config_dir.mkdir(parents=True, exist_ok=True)
         # 订阅 HTML 注入事件，收集插槽内容
-        EventBus().subscribe("plugin:html_injected", self._on_html_injected)
-        # 订阅 Vue 组件注册事件，收集 Vue 插槽和路由
-        EventBus().subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
-        self._discover_and_load(app_path / "plugins", is_system=False)
-        self._discover_and_load(app_path / "resources" / "system_plugins", is_system=True)
+        if not self._event_handlers_registered:
+            EventBus().subscribe("plugin:html_injected", self._on_html_injected)
+            # 订阅 Vue 组件注册事件，收集 Vue 插槽和路由
+            EventBus().subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
+            self._event_handlers_registered = True
+        self._discover_and_load(self._plugin_dir, is_system=False)
+        self._discover_and_load(self._resource_path / "resources" / "system_plugins", is_system=True)
         self._enable_all()
         self.logger.info("插件框架初始化完成，已加载 %d 个插件", len(self._plugins))
 
@@ -230,7 +237,7 @@ class PluginFramework:
         target_name = json.loads(metadata_path.read_text(encoding="utf-8")).get("name")
         if not target_name:
             return False
-        target_dir = self._app_path / "plugins" / target_name
+        target_dir = self._plugin_dir / target_name
         # 用 shutil.copytree 复制整个插件目录，覆盖已存在的
         import shutil
         if target_dir.exists():
@@ -250,6 +257,32 @@ class PluginFramework:
                 plugin.on_frontend_ready()
             except Exception:
                 self.logger.exception("插件 %s on_frontend_ready 失败", name)
+
+    def close(self) -> None:
+        """按禁用、卸载顺序退出全部插件并解除框架事件订阅。"""
+        plugin_names = list(reversed(self._plugins))
+        self.logger.info("正在退出插件框架，共 %d 个插件", len(plugin_names))
+        for name in plugin_names:
+            try:
+                if not self.unload(name):
+                    self.logger.warning("退出时未能卸载插件: %s", name)
+            except Exception:
+                self.logger.exception("退出时卸载插件失败: %s", name)
+
+        if self._event_handlers_registered:
+            bus = EventBus()
+            bus.unsubscribe("plugin:html_injected", self._on_html_injected)
+            bus.unsubscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
+            self._event_handlers_registered = False
+
+        self._routes.clear()
+        self._vue_routes.clear()
+        self._slots.clear()
+        self._vue_slots.clear()
+        self._vue_components.clear()
+        self._config_values.clear()
+        self._config_paths.clear()
+        self.logger.info("插件框架已退出")
 
     def _register_route(self, plugin: Plugin, path: str, title: str, icon: str) -> None:
         self._routes.append({"plugin": plugin.name, "path": path, "title": title, "icon": icon})

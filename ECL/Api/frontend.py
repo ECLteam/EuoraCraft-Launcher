@@ -1,21 +1,32 @@
+import base64
 import json
 import webbrowser
+from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
+from PIL import Image
+
+from pytauri_plugins.dialog import DialogExt
+
+from anyio import to_thread
 from pytauri import EventTarget
 from pytauri.ffi import Emitter as _Emitter
 from pytauri.ipc import WebviewWindow
 
-from ECL.plugin import PluginFramework
-from ECL.Utils.event_bus import EventBus
-from ECL.Utils.logger import get_logger
+from ECL.Events import EventBus
+from ECL.Infrastructure import get_logger
+from ECL.Infrastructure.maintenance import schedule_debug_maintenance
+from ECL.Services import AccountError, AvatarError, GameServiceError, VersionScanError
 
 
 class FrontendApi:
     """EuoraCraft Launcher 前端 IPC API"""
 
+    _QUEUED_FRONTEND_EVENTS = frozenset({"launcher:error", "launcher:popup"})
+    _MAX_PENDING_FRONTEND_EVENTS = 50
     _instance = None
     _initialized = False
 
@@ -31,10 +42,23 @@ class FrontendApi:
         bus = EventBus()
         self.launcher = bus["launcher"]
         self.config = bus["config"]
-        self.app_path: Path = self.launcher.app_path # 启动器运行目录
-        self.data_path: Path = self.app_path / "ECL_data"
-        self._webview: WebviewWindow | None = None # 前端就绪后赋值，用于主动推送事件
+        self.accounts = bus["accounts"]
+        self.avatars = bus["avatars"]
+        self.info_card = bus["info_card"]
+        self.game = bus.get("game")
+        self.plugins = bus["plugins"]
+        self.app_path: Path = self.launcher.app_path  # 启动器运行目录
+        self.data_path: Path = self.launcher.data_path
+        self._webview: WebviewWindow | None = None  # 前端就绪后赋值，用于主动推送事件
+        self._pending_frontend_events: list[tuple[str, Any]] = []
         self._initialized = True
+
+    def _queue_frontend_event(self, event: str, payload: Any) -> None:
+        if event not in self._QUEUED_FRONTEND_EVENTS:
+            return
+        self._pending_frontend_events.append((event, payload))
+        if len(self._pending_frontend_events) > self._MAX_PENDING_FRONTEND_EVENTS:
+            self._pending_frontend_events.pop(0)
 
     def emit_to_frontend(self, event: str, payload: Any) -> None:
         """
@@ -43,10 +67,44 @@ class FrontendApi:
         :param payload: 事件负载数据
         """
         if self._webview is None:
+            self._queue_frontend_event(event, payload)
             return
-        # WebviewWindow 是 Rust-backed 对象，需通过 Emitter 的 emit_str_to 推送
-        # EventTarget.Any() 表示推送到所有监听该事件的窗口
-        _Emitter.emit_str_to(self._webview, EventTarget.Any(), event, json.dumps(payload))
+        try:
+            # WebviewWindow 是 Rust-backed 对象，需通过 Emitter 的 emit_str_to 推送
+            # EventTarget.Any() 表示推送到所有监听该事件的窗口
+            _Emitter.emit_str_to(self._webview, EventTarget.Any(), event, json.dumps(payload, ensure_ascii=False))
+        except (OSError, TypeError, ValueError, RuntimeError):
+            self.logger.exception("向前端推送事件失败: %s", event)
+            self._queue_frontend_event(event, payload)
+
+    def emit_popup_to_frontend(self, payload: dict[str, Any]) -> None:
+        """推送普通全局弹窗；cacheable 仅表示允许用户选择“不再显示”。"""
+        if not isinstance(payload, dict):
+            return
+        self.emit_to_frontend("launcher:popup", payload)
+
+    def emit_error_to_frontend(self, payload: dict[str, Any]) -> None:
+        """推送需要用户感知的后端错误。"""
+        if not isinstance(payload, dict):
+            return
+        message = payload.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return
+        normalized = {
+            "error_id": str(payload.get("error_id") or uuid4().hex),
+            "title": str(payload.get("title") or "启动器发生错误"),
+            "message": message.strip(),
+        }
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            normalized["detail"] = detail.strip()
+        self.emit_to_frontend("launcher:error", normalized)
+
+    def _flush_pending_frontend_events(self) -> None:
+        pending_events = self._pending_frontend_events
+        self._pending_frontend_events = []
+        for event, payload in pending_events:
+            self.emit_to_frontend(event, payload)
 
     def _get_effective_config(self) -> dict[str, Any]:
         """
@@ -106,6 +164,42 @@ class FrontendApi:
         authlib_config["servers"] = server_urls
         return self.config.save_config("authlib", authlib_config)
 
+    @staticmethod
+    def _account_error_response(exc: Exception) -> dict[str, Any]:
+        error_code = exc.error_code if isinstance(exc, AccountError) else "ACCOUNT_OPERATION_FAILED"
+        return {"success": False, "message": str(exc), "errorCode": error_code}
+
+    @staticmethod
+    def _game_error_response(exc: Exception, fallback_code: str = "GAME_OPERATION_FAILED") -> dict[str, Any]:
+        error_code = exc.error_code if isinstance(exc, GameServiceError) else fallback_code
+        return {"success": False, "message": str(exc), "errorCode": error_code}
+
+    def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
+        config = self._get_effective_config()
+        game_config = config.get("game") or {}
+        download_config = config.get("download") or {}
+        minecraft_paths = game_config.get("minecraft_paths") or []
+        first_path = None
+        if minecraft_paths:
+            first_item = minecraft_paths[0]
+            first_path = first_item.get("path") if isinstance(first_item, dict) else first_item
+        return {
+            "game_path": body.get("game_path") or game_config.get("last_install_path") or first_path,
+            "source": download_config.get("mirror_source") or "official",
+            "java_path": body.get("java_path") or game_config.get("java_path") or None,
+            "memory": body.get("memory") if body.get("memory") is not None else game_config.get("memory_size", 4096),
+            "width": body.get("width") if body.get("width") is not None else game_config.get("game_width", 854),
+            "height": body.get("height") if body.get("height") is not None else game_config.get("game_height", 480),
+            "jvm_args": body.get("jvm_args") if body.get("jvm_args") is not None else game_config.get("jvm_args", []),
+            "game_args": body.get("game_args") or [],
+            "version_isolation": bool(body.get("version_isolation", False)),
+            "download_threads": (
+                body.get("download_threads")
+                if body.get("download_threads") is not None
+                else download_config.get("download_threads", 16)
+            ),
+        }
+
     async def frontend_ready(self, body: dict[str, Any], webview_window: WebviewWindow) -> dict[str, Any]:
         """
         接收前端加载完成通知并显示主窗口
@@ -115,6 +209,22 @@ class FrontendApi:
         """
         self._webview = webview_window
         webview_window.show()
+        self._flush_pending_frontend_events()
+        self.plugins.on_frontend_ready()
+        if bool(self.launcher.debug):
+            self.emit_popup_to_frontend(
+                {
+                    "id": "launcher-development-mode",
+                    "title": "开发模式提示",
+                    "content": (
+                        "当前启动器正以 **开发模式** 运行，部分功能可能尚未完成或存在不稳定行为。\n\n"
+                        "如果遇到问题，请保留相关日志以便排查。"
+                    ),
+                    "level": "warning",
+                    "dismissible": True,
+                    "cacheable": True,
+                }
+            )
         self.logger.info("前端加载完成，已显示主窗口")
         return {"success": True}
 
@@ -233,8 +343,19 @@ class FrontendApi:
         :param body: 包含 filter_type 的请求参数
         :return: 临时 Minecraft 版本列表
         """
-        version_list: list[dict[str, Any]] = []
-        return {"success": True, "data": version_list}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        try:
+            source = (self._get_effective_config().get("download") or {}).get("mirror_source")
+            version_list = await to_thread.run_sync(
+                self.game.minecraft_versions,
+                body.get("filter_type"),
+                source,
+            )
+            return {"success": True, "data": version_list}
+        except Exception as exc:
+            self.logger.exception("获取 Minecraft 版本列表失败")
+            return self._game_error_response(exc, "VERSION_CATALOG_FAILED")
 
     async def minecraft_versions_classified(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -242,15 +363,15 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时分类版本数据
         """
-        version_catalog = {
-            "all": [],
-            "release": [],
-            "snapshot": [],
-            "april_fools": [],
-            "old_beta": [],
-            "old_alpha": [],
-        }
-        return {"success": True, "data": version_catalog}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        try:
+            source = (self._get_effective_config().get("download") or {}).get("mirror_source")
+            version_catalog = await to_thread.run_sync(self.game.minecraft_versions_classified, source)
+            return {"success": True, "data": version_catalog}
+        except Exception as exc:
+            self.logger.exception("获取 Minecraft 分类版本列表失败")
+            return self._game_error_response(exc, "VERSION_CATALOG_FAILED")
 
     async def fabric_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -258,8 +379,7 @@ class FrontendApi:
         :param body: 包含 game_version 的请求参数
         :return: 临时 Fabric 版本列表
         """
-        loader_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": loader_versions}
+        return await self._loader_versions_response("fabric", body)
 
     async def forge_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -267,8 +387,7 @@ class FrontendApi:
         :param body: 包含 game_version 的请求参数
         :return: 临时 Forge 版本列表
         """
-        loader_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": loader_versions}
+        return await self._loader_versions_response("forge", body)
 
     async def neoforge_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -276,8 +395,7 @@ class FrontendApi:
         :param body: 包含 game_version 的请求参数
         :return: 临时 NeoForge 版本列表
         """
-        loader_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": loader_versions}
+        return await self._loader_versions_response("neoforge", body)
 
     async def optifine_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -285,8 +403,11 @@ class FrontendApi:
         :param body: 包含 game_version 的请求参数
         :return: 临时 OptiFine 版本列表
         """
-        loader_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": loader_versions}
+        return {
+            "success": False,
+            "message": "当前 Game Core 尚未实现 OptiFine",
+            "errorCode": "UNSUPPORTED_LOADER",
+        }
 
     async def quilt_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -294,8 +415,23 @@ class FrontendApi:
         :param body: 包含 game_version 的请求参数
         :return: 临时 Quilt 版本列表
         """
-        loader_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": loader_versions}
+        return await self._loader_versions_response("quilt", body)
+
+    async def _loader_versions_response(self, loader: str, body: dict[str, Any]) -> dict[str, Any]:
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        try:
+            source = (self._get_effective_config().get("download") or {}).get("mirror_source")
+            loader_versions = await to_thread.run_sync(
+                self.game.loader_versions,
+                loader,
+                body.get("game_version"),
+                source,
+            )
+            return {"success": True, "data": loader_versions}
+        except Exception as exc:
+            self.logger.exception("获取 %s 版本列表失败", loader)
+            return self._game_error_response(exc, "LOADER_VERSIONS_FAILED")
 
     async def scan_versions(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -303,17 +439,52 @@ class FrontendApi:
         :param body: 包含 path 的请求参数
         :return: 临时本地版本列表
         """
-        scanned_versions: list[dict[str, Any]] = []
-        return {"success": True, "data": scanned_versions}
+        requested_paths = body.get("path")
+        if requested_paths is None:
+            minecraft_paths = (self._get_effective_config().get("game") or {}).get("minecraft_paths") or []
+            requested_paths = [
+                item.get("path") if isinstance(item, dict) else item
+                for item in minecraft_paths
+            ]
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        try:
+            scanned_versions = await to_thread.run_sync(self.game.scan_versions, requested_paths)
+            return {"success": True, "data": scanned_versions}
+        except VersionScanError as exc:
+            return {
+                "success": False,
+                "message": str(exc),
+                "errorCode": exc.error_code,
+            }
+        except Exception as exc:
+            self.logger.exception("扫描本地 Minecraft 版本失败")
+            return {
+                "success": False,
+                "message": f"扫描本地版本失败: {exc}",
+                "errorCode": "VERSION_SCAN_FAILED",
+            }
 
     async def install_version(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         安装 Minecraft 游戏版本
         :param body: 包含版本和加载器选项的请求参数
-        :return: 临时安装结果
+        :return: 后台安装任务是否成功创建
         """
-        install_result = None
-        return {"success": True, "data": install_result}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        options = self._game_runtime_options(body)
+        try:
+            self.game.start_install(
+                body,
+                game_path=options["game_path"],
+                source=options["source"],
+                java_path=options["java_path"],
+                download_threads=options["download_threads"],
+            )
+            return {"success": True, "data": None}
+        except Exception as exc:
+            return self._game_error_response(exc, "VERSION_INSTALL_FAILED")
 
     async def uninstall_version(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -321,8 +492,18 @@ class FrontendApi:
         :param body: 包含 version_id 和 game_path 的请求参数
         :return: 临时卸载结果
         """
-        uninstall_result = None
-        return {"success": True, "data": uninstall_result}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        options = self._game_runtime_options(body)
+        try:
+            await to_thread.run_sync(
+                self.game.uninstall_version,
+                body.get("version_id"),
+                options["game_path"],
+            )
+            return {"success": True, "data": None}
+        except Exception as exc:
+            return self._game_error_response(exc, "VERSION_UNINSTALL_FAILED")
 
     # 账户
 
@@ -332,8 +513,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时账户列表和当前账户
         """
-        account_data = {"accounts": [], "current": None}
-        return {"success": True, "data": account_data}
+        return {"success": True, "data": self.accounts.list_accounts()}
 
     async def accounts_current(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -341,17 +521,19 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时当前账户
         """
-        current_account = None
-        return {"success": True, "data": current_account}
+        return {"success": True, "data": self.accounts.current_account()}
 
     async def accounts_add_offline(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         添加离线账户
-        :param body: 包含 username 的请求参数
+        :param body: 包含 username 和可选 uuid 的请求参数
         :return: 临时离线账户数据
         """
-        account_data: dict[str, Any] = {}
-        return {"success": True, "data": account_data}
+        try:
+            account_data = self.accounts.add_offline(body.get("username"), body.get("uuid"))
+            return {"success": True, "data": account_data}
+        except Exception as exc:
+            return self._account_error_response(exc)
 
     async def accounts_add_authlib(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -359,22 +541,11 @@ class FrontendApi:
         :param body: 包含服务器地址和登录凭据的请求参数
         :return: 临时 Authlib 账户数据
         """
-        server_url = self._normalize_authlib_server_url(body.get("server_url"))
-        if server_url is None:
-            return {
-                "success": False,
-                "message": "外置登录服务器地址无效",
-                "errorCode": "INVALID_AUTHLIB_SERVER_URL",
-            }
-
-        account_data: dict[str, Any] = {}
-        if not self._remember_authlib_server_url(server_url):
-            return {
-                "success": False,
-                "message": "保存外置登录服务器地址失败",
-                "errorCode": "AUTHLIB_SERVER_SAVE_FAILED",
-            }
-        return {"success": True, "data": account_data}
+        return {
+            "success": False,
+            "message": "外置登录暂未开发",
+            "errorCode": "AUTHLIB_NOT_IMPLEMENTED",
+        }
 
     async def accounts_start_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -382,8 +553,14 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时 Microsoft 登录数据
         """
-        login_data: dict[str, Any] = {}
-        return {"success": True, "data": login_data}
+        try:
+            login_data = await to_thread.run_sync(self.accounts.start_microsoft_login)
+            return {"success": True, "data": login_data}
+        except Exception as exc:
+            return self._account_error_response(exc)
+
+    async def accounts_microsoft_login_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        return {"success": True, "data": self.accounts.microsoft_login_config()}
 
     async def accounts_poll_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -391,8 +568,15 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时 Microsoft 登录状态
         """
-        login_status = {"status": "pending"}
-        return {"success": True, "data": login_status}
+        return {"success": True, "data": self.accounts.poll_microsoft_login()}
+
+    async def accounts_cancel_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        取消 Microsoft 设备代码登录
+        :param body: 前端传递的请求参数
+        :return: 是否取消了进行中的登录
+        """
+        return {"success": True, "data": {"cancelled": self.accounts.cancel_microsoft_login()}}
 
     async def accounts_complete_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -400,8 +584,11 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时 Microsoft 登录结果
         """
-        login_result: dict[str, Any] = {}
-        return {"success": True, "data": login_result}
+        try:
+            login_result = self.accounts.complete_microsoft_login()
+            return {"success": True, "data": login_result}
+        except Exception as exc:
+            return self._account_error_response(exc)
 
     async def accounts_switch(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -409,8 +596,11 @@ class FrontendApi:
         :param body: 包含 account_id 的请求参数
         :return: 临时账户切换结果
         """
-        switch_result = None
-        return {"success": True, "data": switch_result}
+        try:
+            self.accounts.switch_account(body.get("account_id"))
+            return {"success": True}
+        except Exception as exc:
+            return self._account_error_response(exc)
 
     async def accounts_remove(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -418,8 +608,11 @@ class FrontendApi:
         :param body: 包含 account_id 的请求参数
         :return: 临时账户移除结果
         """
-        remove_result = None
-        return {"success": True, "data": remove_result}
+        try:
+            self.accounts.remove_account(body.get("account_id"))
+            return {"success": True}
+        except Exception as exc:
+            return self._account_error_response(exc)
 
     async def accounts_refresh_profile(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -427,8 +620,14 @@ class FrontendApi:
         :param body: 包含 account_id 的请求参数
         :return: 临时资料刷新结果
         """
-        refresh_result = None
-        return {"success": True, "data": refresh_result}
+        try:
+            refresh_result = await to_thread.run_sync(
+                self.accounts.refresh_account,
+                body.get("account_id"),
+            )
+            return {"success": True, "data": refresh_result}
+        except Exception as exc:
+            return self._account_error_response(exc)
 
     async def authlib_servers(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -497,23 +696,87 @@ class FrontendApi:
         save_result = {"path": ""}
         return {"success": True, "data": save_result}
 
+    @staticmethod
+    def _normalize_file_path(path: str) -> str:
+        """统一 file:// URL 和普通路径为本地绝对路径。"""
+        if path.startswith("file://"):
+            parsed = urlsplit(path)
+            return unquote(parsed.path)
+        return path
+
     async def image_read_file(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        读取本地图片并转换为 Data URL
+        读取本地图片并转换为 Data URL 和 base64，自动压缩过大的图片避免 IPC 传输失败
         :param body: 包含 path 的请求参数
-        :return: 临时图片数据
+        :return: 图片数据，包含 dataUrl 和 base64
         """
-        image_data = {"dataUrl": "", "base64": ""}
-        return {"success": True, "data": image_data}
+        raw_path = body.get("path", "")
+        if not raw_path:
+            return {"success": False, "message": "路径不能为空", "errorCode": "INVALID_PATH"}
+
+        path = self._normalize_file_path(raw_path)
+        self.logger.info("读取本地图片: %s", path)
+
+        def _read():
+            file_path = Path(path)
+            if not file_path.is_file():
+                self.logger.warning("图片文件不存在: %s", file_path)
+                return None
+            ext = file_path.suffix.lower()
+            mime_map = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".bmp": "image/bmp",
+                ".webp": "image/webp",
+            }
+            mime = mime_map.get(ext, "image/png")
+
+            with Image.open(file_path) as img:
+                img = img.convert("RGB") if img.mode in ("RGBA", "P") and mime == "image/jpeg" else img
+                max_size = (1920, 1080)
+                img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                buffer = BytesIO()
+                if mime == "image/png":
+                    img.save(buffer, format="PNG", optimize=True)
+                elif mime == "image/webp":
+                    img.save(buffer, format="WEBP", quality=85)
+                else:
+                    img.save(buffer, format="JPEG", quality=85)
+                b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+            self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, len(b64))
+            return {"b64": b64, "mime": mime}
+
+        try:
+            result = await to_thread.run_sync(_read)
+        except Exception as exc:
+            self.logger.exception("读取图片时发生异常: %s", path)
+            return {"success": False, "message": f"读取图片失败: {exc}", "errorCode": "IMAGE_READ_ERROR"}
+
+        if result is None:
+            return {"success": False, "message": "图片文件不存在", "errorCode": "FILE_NOT_FOUND"}
+
+        data_url = f"data:{result['mime']};base64,{result['b64']}"
+        return {"success": True, "data": {"dataUrl": data_url, "base64": result["b64"]}}
 
     async def avatar_data_url(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取 Minecraft 头像 Data URL
         :param body: 包含头像渲染选项的请求参数
-        :return: 临时头像数据
+        :return: PNG 格式头像数据
         """
-        avatar_data = {"dataUrl": "", "base64": ""}
-        return {"success": True, "data": avatar_data}
+        try:
+            avatar_data = await to_thread.run_sync(
+                self.avatars.render_avatar,
+                body.get("uuid"),
+                body.get("size", 64),
+                bool(body.get("use_default_skin", False)),
+            )
+            return {"success": True, "data": avatar_data}
+        except Exception as exc:
+            error_code = exc.error_code if isinstance(exc, AvatarError) else "AVATAR_RENDER_FAILED"
+            return {"success": False, "message": str(exc), "errorCode": error_code}
 
     # 文件选择
 
@@ -521,37 +784,96 @@ class FrontendApi:
         """
         打开目录选择对话框
         :param body: 前端传递的请求参数
-        :return: 临时目录选择结果
+        :return: 目录选择结果
         """
-        selection_result = {"path": ""}
-        return {"success": True, "data": selection_result}
+        if self._webview is None:
+            return {"success": True, "data": {"path": ""}}
+
+        def _pick():
+            dialog = DialogExt.file(self._webview)
+            return dialog.blocking_pick_folder(set_title="选择游戏目录")
+
+        try:
+            file_path = await to_thread.run_sync(_pick)
+        except Exception as exc:
+            self.logger.exception("打开目录选择对话框失败")
+            return {"success": False, "message": f"选择目录失败: {exc}", "errorCode": "SELECT_DIRECTORY_ERROR"}
+
+        path = self._normalize_file_path(str(file_path)) if file_path else ""
+        self.logger.info("目录选择结果: %s", path)
+        return {"success": True, "data": {"path": path}}
 
     async def select_java(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         打开 Java 可执行文件选择对话框
         :param body: 前端传递的请求参数
-        :return: 临时 Java 路径选择结果
+        :return: Java 路径选择结果
         """
-        selection_result = {"path": ""}
-        return {"success": True, "data": selection_result}
+        if self._webview is None:
+            return {"success": True, "data": {"path": ""}}
+
+        def _pick():
+            dialog = DialogExt.file(self._webview)
+            return dialog.blocking_pick_file(set_title="选择 Java 可执行文件")
+
+        try:
+            file_path = await to_thread.run_sync(_pick)
+        except Exception as exc:
+            self.logger.exception("打开 Java 选择对话框失败")
+            return {"success": False, "message": f"选择 Java 失败: {exc}", "errorCode": "SELECT_JAVA_ERROR"}
+
+        path = self._normalize_file_path(str(file_path)) if file_path else ""
+        self.logger.info("Java 选择结果: %s", path)
+        return {"success": True, "data": {"path": path}}
 
     async def select_image(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         打开图片选择对话框
         :param body: 前端传递的请求参数
-        :return: 临时图片选择结果
+        :return: 图片选择结果，包含 path 和 base64
         """
-        selection_result = {"path": "", "base64": ""}
-        return {"success": True, "data": selection_result}
+        if self._webview is None:
+            return {"success": True, "data": {"path": "", "base64": ""}}
+
+        def _pick():
+            dialog = DialogExt.file(self._webview)
+            return dialog.blocking_pick_file(
+                add_filter=("图片文件", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
+                set_title="选择背景图片",
+            )
+
+        try:
+            file_path = await to_thread.run_sync(_pick)
+        except Exception as exc:
+            self.logger.exception("打开图片选择对话框失败")
+            return {"success": False, "message": f"选择图片失败: {exc}", "errorCode": "SELECT_IMAGE_ERROR"}
+
+        path = self._normalize_file_path(str(file_path)) if file_path else ""
+        self.logger.info("图片选择结果: %s", path)
+        return {"success": True, "data": {"path": path, "base64": ""}}
 
     async def select_file(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         打开文件选择对话框
         :param body: 前端传递的请求参数
-        :return: 临时文件选择结果
+        :return: 文件选择结果
         """
-        selection_result = {"path": ""}
-        return {"success": True, "data": selection_result}
+        if self._webview is None:
+            return {"success": True, "data": {"path": ""}}
+
+        def _pick():
+            dialog = DialogExt.file(self._webview)
+            return dialog.blocking_pick_file(set_title="选择文件")
+
+        try:
+            file_path = await to_thread.run_sync(_pick)
+        except Exception as exc:
+            self.logger.exception("打开文件选择对话框失败")
+            return {"success": False, "message": f"选择文件失败: {exc}", "errorCode": "SELECT_FILE_ERROR"}
+
+        path = self._normalize_file_path(str(file_path)) if file_path else ""
+        self.logger.info("文件选择结果: %s", path)
+        return {"success": True, "data": {"path": path}}
 
     async def open_folder(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -595,8 +917,9 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时游戏实例列表
         """
-        instance_list: list[dict[str, Any]] = []
-        return {"success": True, "data": instance_list}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        return {"success": True, "data": self.game.list_instances()}
 
     async def launch_instance(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -604,8 +927,14 @@ class FrontendApi:
         :param body: 包含游戏版本和启动选项的请求参数
         :return: 临时实例启动结果
         """
-        launch_result = None
-        return {"success": True, "data": launch_result}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        options = self._game_runtime_options(body)
+        try:
+            await self.game.launch_instance(body, **options)
+            return {"success": True, "data": None}
+        except Exception as exc:
+            return self._game_error_response(exc, "GAME_LAUNCH_FAILED")
 
     async def cancel_launch(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -613,8 +942,12 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 临时取消结果
         """
-        cancel_result = None
-        return {"success": True, "data": cancel_result}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        cancelled = self.game.cancel_launch()
+        if not cancelled:
+            return {"success": False, "message": "当前没有可取消的启动任务", "errorCode": "NO_ACTIVE_LAUNCH"}
+        return {"success": True, "data": None}
 
     async def instance_stop(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -622,8 +955,13 @@ class FrontendApi:
         :param body: 包含 instance_id 的请求参数
         :return: 临时实例停止结果
         """
-        stop_result = None
-        return {"success": True, "data": stop_result}
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        try:
+            await to_thread.run_sync(self.game.stop_instance, body.get("instance_id"))
+            return {"success": True, "data": None}
+        except Exception as exc:
+            return self._game_error_response(exc, "INSTANCE_STOP_FAILED")
 
     async def export_logs(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -642,7 +980,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 插件列表
         """
-        return {"success": True, "data": PluginFramework().list_plugins()}
+        return {"success": True, "data": self.plugins.list_plugins()}
 
     async def plugin_info(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -651,7 +989,7 @@ class FrontendApi:
         :return: 插件信息
         """
         plugin_name = body.get("plugin_name")
-        plugin = PluginFramework().get_plugin(plugin_name)
+        plugin = self.plugins.get_plugin(plugin_name)
         if plugin is None:
             return {"success": False, "message": f"插件不存在: {plugin_name}", "errorCode": "PLUGIN_NOT_FOUND"}
         return {"success": True, "data": plugin.metadata}
@@ -663,7 +1001,7 @@ class FrontendApi:
         :return: 启用结果
         """
         plugin_name = body.get("plugin_name")
-        if not PluginFramework()._enable(plugin_name):
+        if not self.plugins._enable(plugin_name):
             return {"success": False, "message": f"启用插件失败: {plugin_name}", "errorCode": "PLUGIN_ENABLE_FAILED"}
         return {"success": True}
 
@@ -674,7 +1012,7 @@ class FrontendApi:
         :return: 禁用结果
         """
         plugin_name = body.get("plugin_name")
-        if not PluginFramework().disable(plugin_name):
+        if not self.plugins.disable(plugin_name):
             return {"success": False, "message": f"禁用插件失败: {plugin_name}", "errorCode": "PLUGIN_DISABLE_FAILED"}
         return {"success": True}
 
@@ -685,7 +1023,7 @@ class FrontendApi:
         :return: 卸载结果
         """
         plugin_name = body.get("plugin_name")
-        if not PluginFramework().unload(plugin_name):
+        if not self.plugins.unload(plugin_name):
             return {"success": False, "message": f"卸载插件失败: {plugin_name}", "errorCode": "PLUGIN_UNLOAD_FAILED"}
         return {"success": True}
 
@@ -696,7 +1034,7 @@ class FrontendApi:
         :return: 重载结果
         """
         plugin_name = body.get("plugin_name")
-        if not PluginFramework().reload(plugin_name):
+        if not self.plugins.reload(plugin_name):
             return {"success": False, "message": f"重载插件失败: {plugin_name}", "errorCode": "PLUGIN_RELOAD_FAILED"}
         return {"success": True}
 
@@ -707,7 +1045,7 @@ class FrontendApi:
         :return: 安装结果
         """
         plugin_path = body.get("plugin_path")
-        if not PluginFramework().install(plugin_path):
+        if not self.plugins.install(plugin_path):
             return {"success": False, "message": "安装插件失败", "errorCode": "PLUGIN_INSTALL_FAILED"}
         return {"success": True}
 
@@ -717,7 +1055,7 @@ class FrontendApi:
         :param body: 包含可选 plugin_id 的请求参数
         :return: 插件路由列表
         """
-        return {"success": True, "data": PluginFramework().get_routes()}
+        return {"success": True, "data": self.plugins.get_routes()}
 
     async def plugin_get_slots(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -725,7 +1063,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: 插件插槽映射
         """
-        return {"success": True, "data": PluginFramework().get_slots()}
+        return {"success": True, "data": self.plugins.get_slots()}
 
     async def plugin_get_vue_slots(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -733,7 +1071,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: slot_id → [{plugin, component_name, template, script, style}, ...]
         """
-        return {"success": True, "data": PluginFramework().get_vue_slots()}
+        return {"success": True, "data": self.plugins.get_vue_slots()}
 
     async def plugin_get_vue_components(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -741,7 +1079,7 @@ class FrontendApi:
         :param body: 前端传递的请求参数
         :return: component_name → {plugin, template, script, style}
         """
-        return {"success": True, "data": PluginFramework().get_vue_components()}
+        return {"success": True, "data": self.plugins.get_vue_components()}
 
     async def plugin_call_command(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -750,7 +1088,7 @@ class FrontendApi:
         :return: 插件命令结果
         """
         command = body.get("command")
-        result = PluginFramework().call_command(command, body.get("params", {}))
+        result = self.plugins.call_command(command, body.get("params", {}))
         return {"success": True, "data": result}
 
     async def plugin_get_settings(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -760,7 +1098,7 @@ class FrontendApi:
         :return: 插件设置数据
         """
         plugin_name = body.get("plugin_name")
-        return {"success": True, "data": PluginFramework().get_settings(plugin_name)}
+        return {"success": True, "data": self.plugins.get_settings(plugin_name)}
 
     async def plugin_update_setting(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -770,7 +1108,7 @@ class FrontendApi:
         """
         plugin_name = body.get("plugin_name")
         key = body.get("key")
-        if not PluginFramework().update_setting(plugin_name, key, body.get("value")):
+        if not self.plugins.update_setting(plugin_name, key, body.get("value")):
             return {"success": False, "message": "更新设置失败", "errorCode": "SETTING_UPDATE_FAILED"}
         return {"success": True}
 
@@ -989,15 +1327,36 @@ class FrontendApi:
         """
         获取游戏页信息卡数据
         :param body: 前端传递的请求参数
-        :return: 临时信息卡数据
+        :return: 后端首页信息服务中的提示和公告
         """
-        info_card_data = {
-            "mode": "auto",
-            "tips": [],
-            "announcements": [],
-            "welcome": None,
-        }
-        return {"success": True, "data": info_card_data}
+        data = await to_thread.run_sync(self.info_card.get_info_card)
+        return {"success": True, "data": data}
+
+    def _schedule_debug_maintenance(self, action: str) -> dict[str, Any]:
+        if not bool(self.launcher.debug):
+            return {
+                "success": False,
+                "message": "此操作仅在启动器调试模式下可用",
+                "errorCode": "DEBUG_MODE_REQUIRED",
+            }
+        try:
+            result = schedule_debug_maintenance(self.data_path, action)
+        except (OSError, TypeError, ValueError) as exc:
+            self.logger.exception("安排调试维护操作失败: %s", action)
+            return {
+                "success": False,
+                "message": f"安排维护操作失败: {exc}",
+                "errorCode": "DEBUG_MAINTENANCE_FAILED",
+            }
+        return {"success": True, "data": result}
+
+    async def debug_reset_launcher_data(self, body: dict[str, Any]) -> dict[str, Any]:
+        """安排在下次启动时还原启动器数据。"""
+        return self._schedule_debug_maintenance("reset_launcher_data")
+
+    async def debug_clear_plugins(self, body: dict[str, Any]) -> dict[str, Any]:
+        """安排在下次启动时清理用户插件与插件配置。"""
+        return self._schedule_debug_maintenance("clear_plugins")
 
     async def list_sections(self, body: dict[str, Any]) -> dict[str, Any]:
         """

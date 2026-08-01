@@ -2,8 +2,6 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from ECL.Utils.logger import get_logger
-
 EventHandler = Callable[..., None]
 
 
@@ -23,6 +21,8 @@ class EventBus:
     def __init__(self):
         if self._initialized:
             return
+        from ECL.Infrastructure.logging import get_logger
+
         self.logger = get_logger("EventBus")
         self._handlers: dict[str, list[EventHandler]] = defaultdict(list)
         # 共享实例注册表

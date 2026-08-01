@@ -4,8 +4,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ECL.Utils.event_bus import EventBus
-from ECL.Utils.logger import get_logger
+from ECL.Events import EventBus
+from ECL.Infrastructure.logging import get_logger
 
 default_config = {
     "launcher": {
@@ -33,16 +33,16 @@ default_config = {
             "mode": "system",
             "primary_color": "#6f8cff",
             "blur_amount": 18,
-            "sidebar_collapsed": False,
+            "sidebar_collapsed": True,
             "navigation_mode": "sidebar",
             "titlebar_hidden": False,
             "transparent_bg": False,
-            "background_opacity": 0.16,
+            "background_opacity": 1.0,
         },
         "background": {
             "type": "default",
             "path": "",
-            "opacity": 0.16,
+            "opacity": 1.0,
             "blur": 18,
         },
     },
@@ -70,6 +70,33 @@ class ConfigManager:
         self._initialized: bool = True
         self.config_data: dict[str, Any] | None = None
 
+    @property
+    def default_minecraft_path(self) -> Path:
+        return (self.data_path.parent / ".minecraft").resolve()
+
+    def _create_default_config(self) -> dict[str, Any]:
+        minecraft_path = self.default_minecraft_path
+        minecraft_path.mkdir(parents=True, exist_ok=True)
+        config_data = deepcopy(default_config)
+        config_data["game"]["minecraft_paths"] = [{"name": "默认路径", "path": str(minecraft_path)}]
+        config_data["game"]["last_install_path"] = str(minecraft_path)
+        return config_data
+
+    def _ensure_default_minecraft_path(self, config_data: dict[str, Any]) -> bool:
+        game_config = config_data.get("game")
+        if not isinstance(game_config, dict):
+            return False
+        minecraft_paths = game_config.get("minecraft_paths")
+        if isinstance(minecraft_paths, list) and minecraft_paths:
+            return False
+
+        minecraft_path = self.default_minecraft_path
+        minecraft_path.mkdir(parents=True, exist_ok=True)
+        game_config["minecraft_paths"] = [{"name": "默认路径", "path": str(minecraft_path)}]
+        if not game_config.get("last_install_path"):
+            game_config["last_install_path"] = str(minecraft_path)
+        return True
+
     def _config_init(self) -> bool:
         """
         初始化配置文件目录和默认配置文件
@@ -79,8 +106,9 @@ class ConfigManager:
             self.data_path.mkdir(parents=True, exist_ok=True)
             if not self.config_path.exists():
                 self.logger.info(f"配置文件不存在，正在创建: {self.config_path}")
+                config_data = self._create_default_config()
                 self.config_path.write_text(
-                    json.dumps(default_config, ensure_ascii=False, indent=4),
+                    json.dumps(config_data, ensure_ascii=False, indent=4),
                     encoding="utf-8",
                 )
                 self.logger.info("已创建默认配置文件")
@@ -122,12 +150,17 @@ class ConfigManager:
                     if not isinstance(loaded_config, dict):
                         raise ValueError("配置文件根节点必须是对象")
                     self.config_data = loaded_config
+                    try:
+                        if self._ensure_default_minecraft_path(self.config_data):
+                            self._write_config(self.config_data)
+                    except OSError as exc:
+                        self.logger.error(f"创建默认 Minecraft 目录失败: {exc}")
                 except (OSError, json.JSONDecodeError, ValueError) as exc:
                     backup_path = self.config_path.with_suffix(".json.bak")
                     self.logger.warning(f"配置文件无效，将恢复默认配置: {exc}")
                     with suppress(OSError):
                         self.config_path.replace(backup_path)
-                    self.config_data = deepcopy(default_config)
+                    self.config_data = self._create_default_config()
                     if self._write_config(self.config_data):
                         self.logger.info(f"已恢复默认配置，原配置备份路径: {backup_path}")
             else:

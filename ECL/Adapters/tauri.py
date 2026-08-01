@@ -3,12 +3,12 @@ from typing import Any
 
 from anyio.from_thread import start_blocking_portal
 from pytauri import Commands
+from pytauri_plugins.dialog import init as dialog_init
 from pytauri_wheel.lib import builder_factory, context_factory
 
-from ECL.Api.frontend import FrontendApi
-from ECL.plugin import PluginFramework
-from ECL.Utils.event_bus import EventBus
-from ECL.Utils.logger import get_logger
+from ECL.Api import FrontendApi
+from ECL.Events import EventBus
+from ECL.Infrastructure import get_logger
 
 
 class Adapter:
@@ -29,14 +29,13 @@ class Adapter:
         self._initialized: bool = True
         self.commands = Commands()
         launcher = EventBus()["launcher"]
-        self.tauri_config: dict | None = None # tauri配置
-        self.app_path: Path = launcher.app_path # 启动器运行目录
-        self.is_frozen: bool = launcher.is_frozen # 是否已经打包
-        self.config: dict = launcher.config # 配置
-        self.launcher_version: str = launcher.launcher_version # 启动器版本
+        self.tauri_config: dict | None = None  # tauri配置
+        self.resource_path: Path = launcher.resource_path  # 前端等只读资源目录
+        self.is_frozen: bool = launcher.is_frozen  # 是否已经打包
+        self.config: dict = launcher.config  # 配置
+        self.launcher_version: str = launcher.launcher_version  # 启动器版本
+        self.plugin_framework_instance = EventBus()["plugins"]
         self.frontend_api_instance = FrontendApi()
-        # 初始化插件框架，扫描并加载所有插件
-        PluginFramework().initialize(self.app_path)
 
     def run_adapter(self) -> bool:
         """
@@ -58,18 +57,19 @@ class Adapter:
                         "title": self.config.get("tauri", {}).get("title", "EuoraCraft Launcher"),
                         "width": self.config.get("tauri", {}).get("width", 900),
                         "height": self.config.get("tauri", {}).get("height", 600),
-                        "minWidth": 966, # 真奇葩，窗口会无缘无故多了几个px出来
+                        "minWidth": 966,  # 真奇葩，窗口会无缘无故多了几个px出来
                         "minHeight": 609,
-                        "visible": False, # 初始不可见，前端加载完成后可见
+                        "visible": False,  # 初始不可见，前端加载完成后可见
                     }
                 ]
             },
         }
-        with start_blocking_portal("asyncio") as portal: # 允许异步方法
-            context = context_factory(self.app_path, tauri_config=self.tauri_config)
+        with start_blocking_portal("asyncio") as portal:  # 允许异步方法
+            context = context_factory(self.resource_path, tauri_config=self.tauri_config)
             app = builder_factory().build(
                 context=context,
                 invoke_handler=self.commands.generate_handler(portal),
+                plugins=[dialog_init()],
             )
             self.logger.info("初始化前端适配器完成")
             app.run_return()
@@ -101,15 +101,18 @@ class Adapter:
             self.commands.command("optifine_versions")(api.optifine_versions)
             self.commands.command("quilt_versions")(api.quilt_versions)
             self.commands.command("scan_versions")(api.scan_versions)
-            self.commands.command("install_version")(api.install_version)
-            self.commands.command("uninstall_version")(api.uninstall_version)
+            # 临时禁用：游戏安装相关 IPC
+            # self.commands.command("install_version")(api.install_version)
+            # self.commands.command("uninstall_version")(api.uninstall_version)
 
             self.commands.command("accounts_list")(api.accounts_list)
             self.commands.command("accounts_current")(api.accounts_current)
             self.commands.command("accounts_add_offline")(api.accounts_add_offline)
             self.commands.command("accounts_add_authlib")(api.accounts_add_authlib)
+            self.commands.command("accounts_microsoft_login_config")(api.accounts_microsoft_login_config)
             self.commands.command("accounts_start_microsoft_login")(api.accounts_start_microsoft_login)
             self.commands.command("accounts_poll_microsoft_login")(api.accounts_poll_microsoft_login)
+            self.commands.command("accounts_cancel_microsoft_login")(api.accounts_cancel_microsoft_login)
             self.commands.command("accounts_complete_microsoft_login")(api.accounts_complete_microsoft_login)
             self.commands.command("accounts_switch")(api.accounts_switch)
             self.commands.command("accounts_remove")(api.accounts_remove)
@@ -132,9 +135,10 @@ class Adapter:
             self.commands.command("open_url")(api.open_url)
 
             self.commands.command("instances_list")(api.instances_list)
-            self.commands.command("launch_instance")(api.launch_instance)
-            self.commands.command("cancel_launch")(api.cancel_launch)
-            self.commands.command("instance_stop")(api.instance_stop)
+            # 临时禁用：游戏启动相关 IPC
+            # self.commands.command("launch_instance")(api.launch_instance)
+            # self.commands.command("cancel_launch")(api.cancel_launch)
+            # self.commands.command("instance_stop")(api.instance_stop)
             self.commands.command("export_logs")(api.export_logs)
 
             self.commands.command("plugin_list")(api.plugin_list)
@@ -179,6 +183,8 @@ class Adapter:
             self.commands.command("launcher_info")(api.launcher_info)
             self.commands.command("info_card_get")(api.info_card_get)
             self.commands.command("list_sections")(api.list_sections)
+            self.commands.command("debug_reset_launcher_data")(api.debug_reset_launcher_data)
+            self.commands.command("debug_clear_plugins")(api.debug_clear_plugins)
 
             self.commands.command("fs_read_dir")(api.fs_read_dir)
             self.commands.command("fs_read_file")(api.fs_read_file)
@@ -187,6 +193,18 @@ class Adapter:
 
             # 订阅内部事件，转发到前端（前端就绪后才实际推送）
             EventBus().subscribe("config:updated", self._forward_config_to_frontend)
+            EventBus().subscribe("accounts:changed", self._forward_accounts_to_frontend)
+            EventBus().subscribe("accounts:microsoft_login_status", self._forward_microsoft_login_to_frontend)
+            EventBus().subscribe("launcher:error", api.emit_error_to_frontend)
+            EventBus().subscribe("launcher:popup", api.emit_popup_to_frontend)
+            EventBus().subscribe(
+                "game:install_progress",
+                lambda payload: api.emit_to_frontend("game:install_progress", payload),
+            )
+            EventBus().subscribe(
+                "game:launch_progress",
+                lambda payload: api.emit_to_frontend("game:launch_progress", payload),
+            )
             self._subscribe_plugin_events()
 
             return True
@@ -202,6 +220,12 @@ class Adapter:
         """
         self.frontend_api_instance.emit_to_frontend("config:updated", {"section": section, "data": data})
 
+    def _forward_accounts_to_frontend(self, data: dict[str, Any]) -> None:
+        self.frontend_api_instance.emit_to_frontend("accounts_changed", data)
+
+    def _forward_microsoft_login_to_frontend(self, data: dict[str, Any]) -> None:
+        self.frontend_api_instance.emit_to_frontend("accounts_microsoft_login_status", data)
+
     def _subscribe_plugin_events(self) -> None:
         """订阅插件系统事件，转换为前端期望的格式后推送"""
         bus = EventBus()
@@ -211,40 +235,91 @@ class Adapter:
         def on_enabled(plugin):
             api.emit_to_frontend("plugin:status_changed", {"name": plugin.name, "action": "enabled", "result": True})
             # 前端就绪后通知插件注入 UI 资源
-            PluginFramework().on_frontend_ready()
+            self.plugin_framework_instance.on_frontend_ready()
+
         bus.subscribe("plugin:enabled", on_enabled)
 
         def on_disabled(plugin):
             api.emit_to_frontend("plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True})
+
         bus.subscribe("plugin:disabled", on_disabled)
 
         def on_unloaded(name):
             api.emit_to_frontend("plugin:status_changed", {"name": name, "action": "unloaded", "result": True})
+
         bus.subscribe("plugin:unloaded", on_unloaded)
 
         def on_installed(name):
             api.emit_to_frontend("plugin:installed", {"name": name})
+
         bus.subscribe("plugin:installed", on_installed)
 
         # 前端资源注入：直接转发
-        bus.subscribe("plugin:css_injected", lambda *args: api.emit_to_frontend("plugin:css_injected", {"plugin": args[0], "css": args[1]}))
-        bus.subscribe("plugin:html_injected", lambda *args: api.emit_to_frontend("plugin:html_injected", {"plugin": args[0], "slot": args[1], "html": args[2]}))
-        bus.subscribe("plugin:script_injected", lambda *args: api.emit_to_frontend("plugin:script_injected", {"plugin": args[0], "script": args[1]}))
-        bus.subscribe("plugin:typescript_injected", lambda *args: api.emit_to_frontend("plugin:typescript_injected", {"plugin": args[0], "script": args[1]}))
+        bus.subscribe(
+            "plugin:css_injected",
+            lambda *args: api.emit_to_frontend("plugin:css_injected", {"plugin": args[0], "css": args[1]}),
+        )
+        bus.subscribe(
+            "plugin:html_injected",
+            lambda *args: api.emit_to_frontend(
+                "plugin:html_injected", {"plugin": args[0], "slot": args[1], "html": args[2]}
+            ),
+        )
+        bus.subscribe(
+            "plugin:script_injected",
+            lambda *args: api.emit_to_frontend("plugin:script_injected", {"plugin": args[0], "script": args[1]}),
+        )
+        bus.subscribe(
+            "plugin:typescript_injected",
+            lambda *args: api.emit_to_frontend("plugin:typescript_injected", {"plugin": args[0], "script": args[1]}),
+        )
 
         # 路由注册
-        bus.subscribe("plugin:route_registered", lambda *args: api.emit_to_frontend("plugin:route_registered", {"plugin": args[0], "path": args[1], "title": args[2], "icon": args[3] if len(args) > 3 else ""}))
+        bus.subscribe(
+            "plugin:route_registered",
+            lambda *args: api.emit_to_frontend(
+                "plugin:route_registered",
+                {"plugin": args[0], "path": args[1], "title": args[2], "icon": args[3] if len(args) > 3 else ""},
+            ),
+        )
 
         # 设置变更
-        bus.subscribe("plugin:settings_changed", lambda *args: api.emit_to_frontend("plugin:settings_changed", {"plugin": args[0], "key": args[1], "old_value": args[2], "new_value": args[3]}))
+        bus.subscribe(
+            "plugin:settings_changed",
+            lambda *args: api.emit_to_frontend(
+                "plugin:settings_changed",
+                {"plugin": args[0], "key": args[1], "old_value": args[2], "new_value": args[3]},
+            ),
+        )
 
         # Vue 组件注册
-        bus.subscribe("plugin:vue_slot_registered", lambda *args: api.emit_to_frontend("plugin:vue_slot_registered", {
-            "plugin": args[0], "slot": args[1], "component_name": args[2],
-            "template": args[3], "script": args[4], "style": args[5],
-        }))
-        bus.subscribe("plugin:vue_route_registered", lambda *args: api.emit_to_frontend("plugin:vue_route_registered", {
-            "plugin": args[0], "path": args[1], "title": args[2],
-            "component_name": args[3], "template": args[4], "script": args[5],
-            "style": args[6], "icon": args[7] if len(args) > 7 else "",
-        }))
+        bus.subscribe(
+            "plugin:vue_slot_registered",
+            lambda *args: api.emit_to_frontend(
+                "plugin:vue_slot_registered",
+                {
+                    "plugin": args[0],
+                    "slot": args[1],
+                    "component_name": args[2],
+                    "template": args[3],
+                    "script": args[4],
+                    "style": args[5],
+                },
+            ),
+        )
+        bus.subscribe(
+            "plugin:vue_route_registered",
+            lambda *args: api.emit_to_frontend(
+                "plugin:vue_route_registered",
+                {
+                    "plugin": args[0],
+                    "path": args[1],
+                    "title": args[2],
+                    "component_name": args[3],
+                    "template": args[4],
+                    "script": args[5],
+                    "style": args[6],
+                    "icon": args[7] if len(args) > 7 else "",
+                },
+            ),
+        )

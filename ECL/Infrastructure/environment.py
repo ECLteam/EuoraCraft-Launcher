@@ -3,7 +3,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from ECL.Utils.logger import get_logger
+from ECL.Infrastructure.logging import get_logger
 
 
 class EnvManager:
@@ -26,18 +26,30 @@ class EnvManager:
         self._initialized: bool = True
         self.app_path: Path = Path(app_path)
 
-    def get_env(self) -> dict | None:
+    def get_env(self) -> dict:
         """
         获取环境变量数据
-        :return: 合并 .env 文件和系统环境变量的字典，不存在时返回 None
+        :return: 合并 .env 文件和系统环境变量的字典
         """
-        if not self.env_path.exists():
-            return None
         if self.env_data is not None:
             return self.env_data
-        self.env_data = dotenv_values(self.env_path)
-        self.env_data.update({k: v for k, v in os.environ.items() if k.startswith("ECL_")})
+        self.env_data = dict(dotenv_values(self.env_path)) if self.env_path.exists() else {}
+        self.env_data.update({key: value for key, value in os.environ.items() if key.startswith("ECL_")})
+        system_client_id = os.environ.get("MICROSOFT_CLIENT_ID") or os.environ.get("ECL_MICROSOFT_CLIENT_ID")
+        if system_client_id:
+            self.env_data["MICROSOFT_CLIENT_ID"] = system_client_id
+        elif not self.env_data.get("MICROSOFT_CLIENT_ID") and self.env_data.get("ECL_MICROSOFT_CLIENT_ID"):
+            self.env_data["MICROSOFT_CLIENT_ID"] = self.env_data["ECL_MICROSOFT_CLIENT_ID"]
         return self.env_data
+
+    def get_value(self, *keys: str, default: str | None = None) -> str | None:
+        """按顺序读取第一个非空环境变量。"""
+        env_data = self.get_env()
+        for key in keys:
+            value = env_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return default
 
     def _convert_env_value(self, value: str) -> bool | int | float | str:
         """
@@ -66,8 +78,6 @@ class EnvManager:
         if config is None:
             return None
         env_data = self.get_env()
-        if env_data is None:
-            return config
         prefix = "ECL_CONFIG_"
         for env_key, env_value in env_data.items():
             if not env_key.startswith(prefix):

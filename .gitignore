@@ -45,6 +45,7 @@ Thumbs.db
 logs/
 
 # Runtime generated data
+ECL_data/
 setting.json
 .minecraft/
 ECL_Libs/
