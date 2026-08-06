@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ECL.Infrastructure.maintenance import (
+from ECL.Services.maintenance import (
     PENDING_MAINTENANCE_FILE,
     DebugMaintenanceError,
     apply_pending_debug_maintenance,
@@ -27,15 +27,15 @@ def test_reset_launcher_data_moves_only_declared_targets_to_backup(tmp_path) -> 
     scheduled = schedule_debug_maintenance(data_path, "reset_launcher_data")
     results = apply_pending_debug_maintenance(data_path)
 
-    assert scheduled["restart_required"] is True
-    assert results[0]["action"] == "reset_launcher_data"
-    assert set(results[0]["moved_targets"]) == {
+    assert scheduled.restart_required is True
+    assert results[0].action == "reset_launcher_data"
+    assert set(results[0].moved_targets) == {
         "setting.json",
         "accounts",
         "info_card.json",
         "notice.json",
     }
-    backup_path = results[0]["backup_path"]
+    backup_path = results[0].backup_path
     assert backup_path is not None
     assert (data_path / "plugins" / "example" / "plugin.json").is_file()
     assert (data_path / "logs" / "launcher.log").is_file()
@@ -56,7 +56,7 @@ def test_clear_plugins_can_be_scheduled_with_data_reset(tmp_path) -> None:
 
     results = apply_pending_debug_maintenance(data_path)
 
-    assert [result["action"] for result in results] == ["reset_launcher_data", "clear_plugins"]
+    assert [result.action for result in results] == ["reset_launcher_data", "clear_plugins"]
     assert not (data_path / "plugins").exists()
     assert not (data_path / "plugin_config").exists()
 

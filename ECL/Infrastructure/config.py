@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from contextlib import suppress
 from copy import deepcopy
@@ -7,10 +9,8 @@ from typing import Any
 from ECL.Events import EventBus
 from ECL.Infrastructure.logging import get_logger
 
-default_config = {
-    "launcher": {
-        "debug": False,
-    },
+default_config: dict[str, Any] = {
+    "launcher": {"debug": False},
     "game": {
         "minecraft_paths": [],
         "java_auto": True,
@@ -23,10 +23,7 @@ default_config = {
         "fullscreen": False,
         "last_install_path": "",
     },
-    "download": {
-        "mirror_source": "official",
-        "download_threads": 16,
-    },
+    "download": {"mirror_source": "official"},
     "ui": {
         "locale": "zh-CN",
         "theme": {
@@ -39,15 +36,18 @@ default_config = {
             "transparent_bg": False,
             "background_opacity": 1.0,
         },
-        "background": {
-            "type": "default",
-            "path": "",
-            "opacity": 1.0,
-            "blur": 18,
-        },
+        "background": {"type": "default", "path": "", "opacity": 1.0, "blur": 18},
     },
     "version_settings": {},
 }
+
+
+class ConfigError(RuntimeError):
+    """配置错误。"""
+
+
+class ConfigValidationError(ConfigError, ValueError):
+    """配置参数错误。"""
 
 
 class ConfigManager:
@@ -61,25 +61,28 @@ class ConfigManager:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, data_path: Path | None = None):
+    def __init__(self, data_path: Path | None = None) -> None:
         if self._initialized:
             return
+        if data_path is None:
+            raise ValueError("首次创建 ConfigManager 时必须提供 data_path")
         self.logger = get_logger("config")
-        self.data_path: Path = Path(data_path)
-        self.config_path: Path = self.data_path / "setting.json"
-        self._initialized: bool = True
+        self.data_path = Path(data_path)
+        self.config_path = self.data_path / "setting.json"
         self.config_data: dict[str, Any] | None = None
+        self._initialized = True
 
     @property
     def default_minecraft_path(self) -> Path:
+        """
+        获取默认 Minecraft 目录
+        :return: 默认 Minecraft 目录
+        """
         return (self.data_path.parent / ".minecraft").resolve()
 
     def _create_default_config(self) -> dict[str, Any]:
-        minecraft_path = self.default_minecraft_path
-        minecraft_path.mkdir(parents=True, exist_ok=True)
         config_data = deepcopy(default_config)
-        config_data["game"]["minecraft_paths"] = [{"name": "默认路径", "path": str(minecraft_path)}]
-        config_data["game"]["last_install_path"] = str(minecraft_path)
+        self._ensure_default_minecraft_path(config_data)
         return config_data
 
     def _ensure_default_minecraft_path(self, config_data: dict[str, Any]) -> bool:
@@ -89,7 +92,6 @@ class ConfigManager:
         minecraft_paths = game_config.get("minecraft_paths")
         if isinstance(minecraft_paths, list) and minecraft_paths:
             return False
-
         minecraft_path = self.default_minecraft_path
         minecraft_path.mkdir(parents=True, exist_ok=True)
         game_config["minecraft_paths"] = [{"name": "默认路径", "path": str(minecraft_path)}]
@@ -97,74 +99,56 @@ class ConfigManager:
             game_config["last_install_path"] = str(minecraft_path)
         return True
 
-    def _config_init(self) -> bool:
-        """
-        初始化配置文件目录和默认配置文件
-        :return: 初始化是否成功
-        """
-        try:
-            self.data_path.mkdir(parents=True, exist_ok=True)
-            if not self.config_path.exists():
-                self.logger.info(f"配置文件不存在，正在创建: {self.config_path}")
-                config_data = self._create_default_config()
-                self.config_path.write_text(
-                    json.dumps(config_data, ensure_ascii=False, indent=4),
-                    encoding="utf-8",
-                )
-                self.logger.info("已创建默认配置文件")
-            return True
-        except OSError as exc:
-            self.logger.error(f"初始化配置文件失败: {exc}")
-            return False
+    def _initialize_file(self) -> None:
+        self.data_path.mkdir(parents=True, exist_ok=True)
+        if self.config_path.exists():
+            return
+        self.logger.info("配置文件不存在，正在创建: %s", self.config_path)
+        self._write_config(self._create_default_config())
 
-    def _write_config(self, config_data: dict[str, Any]) -> bool:
-        """
-        原子写入配置到文件
-        :param config_data: 待写入的配置数据
-        :return: 写入是否成功
-        """
+    def _write_config(self, config_data: dict[str, Any]) -> None:
         temporary_path = self.config_path.with_suffix(".json.tmp")
         try:
             serialized_config = json.dumps(config_data, ensure_ascii=False, indent=4)
             self.data_path.mkdir(parents=True, exist_ok=True)
             temporary_path.write_text(serialized_config, encoding="utf-8")
             temporary_path.replace(self.config_path)
-            self.config_data = deepcopy(config_data)
-            return True
         except (OSError, TypeError, ValueError) as exc:
-            self.logger.error(f"写入配置文件失败: {exc}")
             with suppress(OSError):
                 temporary_path.unlink(missing_ok=True)
-            return False
+            raise ConfigError(f"写入配置文件失败: {self.config_path}") from exc
+        self.config_data = deepcopy(config_data)
+
+    def _load_config(self) -> dict[str, Any]:
+        try:
+            self._initialize_file()
+            loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("配置文件根节点必须是对象")
+            if self._ensure_default_minecraft_path(loaded):
+                self._write_config(loaded)
+            return loaded
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return self._restore_default_config(exc)
+
+    def _restore_default_config(self, cause: Exception) -> dict[str, Any]:
+        backup_path = self.config_path.with_suffix(".json.bak")
+        self.logger.warning("配置文件无效，将恢复默认配置: %s", cause)
+        with suppress(OSError):
+            self.config_path.replace(backup_path)
+        restored = self._create_default_config()
+        self._write_config(restored)
+        self.logger.info("已恢复默认配置，原配置备份路径: %s", backup_path)
+        return restored
 
     def get_config(self, section: str | None = None) -> Any:
         """
         获取配置数据
-        :param section: 可选，指定配置分区名称；为 None 时返回全部配置
-        :return: 配置数据或指定分区的配置数据
+        :param section: 配置分区，为 None 时返回全部配置
+        :return: 配置数据
         """
         if self.config_data is None:
-            if self._config_init():
-                try:
-                    loaded_config = json.loads(self.config_path.read_text(encoding="utf-8"))
-                    if not isinstance(loaded_config, dict):
-                        raise ValueError("配置文件根节点必须是对象")
-                    self.config_data = loaded_config
-                    try:
-                        if self._ensure_default_minecraft_path(self.config_data):
-                            self._write_config(self.config_data)
-                    except OSError as exc:
-                        self.logger.error(f"创建默认 Minecraft 目录失败: {exc}")
-                except (OSError, json.JSONDecodeError, ValueError) as exc:
-                    backup_path = self.config_path.with_suffix(".json.bak")
-                    self.logger.warning(f"配置文件无效，将恢复默认配置: {exc}")
-                    with suppress(OSError):
-                        self.config_path.replace(backup_path)
-                    self.config_data = self._create_default_config()
-                    if self._write_config(self.config_data):
-                        self.logger.info(f"已恢复默认配置，原配置备份路径: {backup_path}")
-            else:
-                self.config_data = deepcopy(default_config)
+            self.config_data = self._load_config()
         if section is None:
             return deepcopy(self.config_data)
         return deepcopy(self.config_data.get(section))
@@ -174,32 +158,29 @@ class ConfigManager:
         获取全部配置分区名称
         :return: 配置分区名称列表
         """
-        return list(self.get_config().keys())
+        return list(self.get_config())
 
     def get_many(self, sections: list[str]) -> dict[str, Any]:
         """
-        批量获取指定配置分区
+        批量获取配置分区
         :param sections: 配置分区名称列表
-        :return: 分区名到配置数据的映射
+        :return: 配置分区及其数据
         """
         config_data = self.get_config()
         return {section: config_data.get(section) for section in dict.fromkeys(sections)}
 
-    def save_config(self, section: str, data: Any) -> bool:
+    def save_config(self, section: str, data: Any) -> None:
         """
-        保存指定配置分区
+        保存配置分区
         :param section: 配置分区名称
-        :param data: 待保存的配置数据
-        :return: 保存是否成功
+        :param data: 配置数据
         """
         if not isinstance(section, str) or not section.strip():
-            self.logger.error("配置分区名称不能为空")
-            return False
+            raise ConfigValidationError("配置分区名称不能为空")
+        normalized_section = section.strip()
         config_data = self.get_config()
-        config_data[section] = data
-        if self._write_config(config_data):
-            self.logger.info(f"配置分区已保存: {section}")
-            # 通知其他组件配置已变更，例如调试模式热切换、主题实时生效
-            EventBus().emit("config:updated", section, data)
-            return True
-        return False
+        config_data[normalized_section] = deepcopy(data)
+        self._write_config(config_data)
+        # self.logger.info(f"配置分区已保存: {section}")
+        # 通知其他组件配置已变更
+        EventBus().emit("config:updated", normalized_section, deepcopy(data))

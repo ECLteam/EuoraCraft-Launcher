@@ -7,13 +7,17 @@ from threading import Event, RLock, Thread
 from typing import Any
 from uuid import UUID
 
+import httpx
+
 from ECL.Common import MICROSOFT_CLIENT_ID
 from ECL.Events import EventBus
 from ECL.Game.Core.Libs import name_to_uuid
 from ECL.Game.Core.MicrosoftAuth import MicrosoftAuthManager
 from ECL.Infrastructure import get_logger
+from ECL.Services.authlib import AuthlibAccountManager, AuthlibError
+from ECL.Services.microsoft import LauncherMicrosoftAccountManager
 
-MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2 # 轮询间隔秒
+MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2
 
 
 class AccountError(Exception):
@@ -28,6 +32,7 @@ class AccountManager:
         data_path: Path | str,
         microsoft_manager: MicrosoftAuthManager | None = None,
         microsoft_client_id: str | None = None,
+        authlib_manager: AuthlibAccountManager | None = None,
     ):
         self.logger = get_logger("AccountManager")
         self.data_path = Path(data_path) / "accounts"
@@ -47,20 +52,21 @@ class AccountManager:
         effective_client_id = (microsoft_client_id or MICROSOFT_CLIENT_ID).strip()
         self._microsoft_login_available = manager_was_provided or bool(effective_client_id)
         if microsoft_manager is None:
-            microsoft_options = {
-                "cache_path": self.data_path / "microsoft",
-                "on_device_code": self._on_device_code,
-            }
-            if effective_client_id:
-                microsoft_options["client_id"] = effective_client_id
-            microsoft_manager = MicrosoftAuthManager(**microsoft_options)
+            microsoft_manager = LauncherMicrosoftAccountManager(
+                client_id=effective_client_id,
+                cache_path=Path(data_path),
+                on_device_code=self._on_device_code,
+                on_progress=self._on_microsoft_progress,
+            )
         else:
             microsoft_manager.on_device_code = self._on_device_code
         self.microsoft_manager = microsoft_manager
+        self.authlib_manager = authlib_manager or AuthlibAccountManager(Path(data_path))
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
 
     def microsoft_login_config(self) -> dict[str, bool]:
+        """返回微软设备代码登录是否具备有效客户端配置。"""
         return {
             "available": self._microsoft_login_available,
             "needs_client_id": not self._microsoft_login_available,
@@ -105,24 +111,6 @@ class AccountManager:
             raise AccountError("离线用户名必须为 1 到 16 个不含空格的字符", "INVALID_OFFLINE_USERNAME")
         return normalized
 
-    @staticmethod
-    def _microsoft_skin_url(info: dict[str, Any]) -> str | None:
-        profile = info.get("Profile") or {}
-        skins = profile.get("skins") or []
-        if skins and isinstance(skins[0], dict):
-            skin_url = skins[0].get("url")
-            if isinstance(skin_url, str) and skin_url:
-                return skin_url
-
-        skin_info = info.get("Skin") or {}
-        for item in skin_info.get("properties") or []:
-            if item.get("name") != "textures" or not isinstance(item.get("value"), dict):
-                continue
-            texture = ((item["value"].get("textures") or {}).get("SKIN") or {}).get("url")
-            if isinstance(texture, str) and texture:
-                return texture
-        return None
-
     def _microsoft_account(self, account_id: str, info: dict[str, Any]) -> dict[str, Any]:
         profile = info.get("Profile") or {}
         account = {
@@ -133,9 +121,13 @@ class AccountManager:
             "uuid": profile.get("id") or "",
             "isCurrent": account_id == self._current_account_id,
         }
-        skin_url = self._microsoft_skin_url(info)
-        if skin_url:
-            account["skinUrl"] = skin_url
+
+        skins = profile.get("skins") or []
+        if skins and isinstance(skins[0], dict):
+            skin_url = skins[0].get("url")
+            if isinstance(skin_url, str) and skin_url:
+                account["skinUrl"] = skin_url
+
         return account
 
     @staticmethod
@@ -149,6 +141,28 @@ class AccountManager:
         if isinstance(email, str) and email.strip():
             return f"email:{email.strip().casefold()}"
         return None
+
+    def _authlib_account(self, account_id: str, info: dict[str, Any]) -> dict[str, Any]:
+        profiles = info.get("Profiles") or {}
+        profile = profiles.get("selectedProfile") or {}
+        available_profiles = [
+            {"id": item.get("id") or "", "name": item.get("name") or ""}
+            for item in profiles.get("availableProfiles") or []
+            if isinstance(item, dict) and item.get("id")
+        ]
+        account = {
+            "id": account_id,
+            "alias": profile.get("name") or "未选择角色",
+            "type": "authlib",
+            "email": info.get("Username") or "",
+            "uuid": profile.get("id") or "",
+            "auth_server": info.get("YggdrasilAPI") or "",
+            "isCurrent": account_id == self._current_account_id,
+        }
+        if not profile and available_profiles:
+            account["available_profiles"] = available_profiles
+            account["profile_selection_required"] = True
+        return account
 
     def _deduplicate_microsoft_accounts(self, preferred_id: str | None = None) -> str | None:
         accounts = self.microsoft_manager.get_microsoft_accounts()
@@ -201,7 +215,10 @@ class AccountManager:
             self._microsoft_account(account_id, info)
             for account_id, info in self.microsoft_manager.get_microsoft_accounts().items()
         ]
-        accounts = offline_accounts + microsoft_accounts
+        authlib_accounts = [
+            self._authlib_account(account_id, info) for account_id, info in self.authlib_manager.list_accounts().items()
+        ]
+        accounts = offline_accounts + microsoft_accounts + authlib_accounts
         for account in accounts:
             account["isCurrent"] = account["id"] == self._current_account_id
         return accounts
@@ -217,16 +234,18 @@ class AccountManager:
                 self._save_state()
 
     def list_accounts(self) -> dict[str, Any]:
+        """返回所有账户以及当前账户标识。"""
         with self._lock:
             accounts = self._all_accounts()
             current = next((account for account in accounts if account["isCurrent"]), None)
             return {"accounts": accounts, "current": current}
 
     def current_account(self) -> dict[str, Any] | None:
+        """获取当前账户。"""
         return self.list_accounts()["current"]
 
     def get_launch_credentials(self) -> dict[str, str]:
-        """返回当前账户用于启动 Minecraft 的最小凭据集合。"""
+        """返回启动游戏所需的当前账户凭据。"""
         with self._lock:
             current = next(
                 (account for account in self._all_accounts() if account["id"] == self._current_account_id),
@@ -254,6 +273,18 @@ class AccountManager:
                 "user_type": "msa",
                 "access_token": token,
             }
+        if current.get("type") == "authlib":
+            try:
+                token = self.authlib_manager.get_token(current["id"])
+            except (AuthlibError, httpx.HTTPError, OSError, KeyError, TypeError, ValueError) as exc:
+                raise AccountError(f"刷新外置登录令牌失败: {exc}", "AUTHLIB_TOKEN_FAILED") from exc
+            return {
+                "player_name": player_name,
+                "uuid": account_uuid,
+                "user_type": "yggdrasil",
+                "access_token": token["AccessToken"],
+                "auth_server": token["YggdrasilAPI"],
+            }
         raise AccountError("当前账户类型暂不支持启动游戏", "ACCOUNT_TYPE_UNSUPPORTED")
 
     @staticmethod
@@ -273,6 +304,7 @@ class AccountManager:
             raise AccountError("自定义 UUID 格式无效", "INVALID_OFFLINE_UUID") from exc
 
     def add_offline(self, username: Any, custom_uuid: Any = None) -> dict[str, Any]:
+        """添加离线账户。"""
         normalized = self._validate_username(username)
         account_uuid = self._resolve_offline_uuid(normalized, custom_uuid)
         account_id = f"offline:{account_uuid}"
@@ -290,7 +322,105 @@ class AccountManager:
         self._emit_changed()
         return deepcopy(account)
 
+    def add_authlib(self, server_url: Any, username: Any, password: Any) -> dict[str, Any]:
+        """添加外置登录账户。"""
+        if not isinstance(server_url, str) or not server_url.strip():
+            raise AccountError("外置登录服务器不能为空", "INVALID_AUTHLIB_SERVER")
+        if not isinstance(username, str) or not username.strip():
+            raise AccountError("外置登录用户名不能为空", "INVALID_AUTHLIB_USERNAME")
+        if not isinstance(password, str) or not password:
+            raise AccountError("外置登录密码不能为空", "INVALID_AUTHLIB_PASSWORD")
+        try:
+            account_id, info = self.authlib_manager.add_account(
+                server_url.strip(),
+                username.strip(),
+                password,
+            )
+        except httpx.HTTPStatusError as exc:
+            try:
+                error = exc.response.json()
+            except json.JSONDecodeError:
+                error = {}
+
+            message = None
+            if isinstance(error, dict):
+                message = error.get("errorMessage") or error.get("error")
+            if not isinstance(message, str) or not message.strip():
+                message = f"认证服务器返回 {exc.response.status_code} {exc.response.reason_phrase}"
+            raise AccountError(f"外置登录失败: {message.strip()}", "AUTHLIB_LOGIN_FAILED") from exc
+        except (httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
+            raise AccountError(f"外置登录失败: {exc}", "AUTHLIB_LOGIN_FAILED") from exc
+        with self._lock:
+            self._current_account_id = account_id
+            self._save_state()
+            account = self._authlib_account(account_id, info)
+        self._emit_changed()
+        return account
+
+    def select_authlib_profiles(
+        self,
+        account_id: Any,
+        profile_ids: Any,
+        password: Any = None,
+    ) -> list[dict[str, Any]]:
+        """为外置登录账户选择一个或多个角色。"""
+        if not isinstance(account_id, str) or not account_id:
+            raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
+        if not isinstance(profile_ids, list):
+            raise AccountError("请选择角色", "INVALID_AUTHLIB_PROFILE")
+        selected_ids = list(dict.fromkeys(item for item in profile_ids if isinstance(item, str) and item))
+        if not selected_ids:
+            raise AccountError("请选择角色", "INVALID_AUTHLIB_PROFILE")
+
+        account_info = self.authlib_manager.list_accounts().get(account_id)
+        if account_info is None:
+            raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
+        available_ids = {
+            profile.get("id")
+            for profile in (account_info.get("Profiles") or {}).get("availableProfiles") or []
+            if isinstance(profile, dict)
+        }
+        if any(profile_id not in available_ids for profile_id in selected_ids):
+            raise AccountError("选择的角色不存在", "INVALID_AUTHLIB_PROFILE")
+        if len(selected_ids) > 1 and (not isinstance(password, str) or not password):
+            raise AccountError("登录多个角色需要重新输入密码", "AUTHLIB_PASSWORD_REQUIRED")
+
+        username = account_info.get("Username")
+        server_url = account_info.get("YggdrasilAPI")
+        if len(selected_ids) > 1 and (
+            not isinstance(username, str) or not username or not isinstance(server_url, str) or not server_url
+        ):
+            raise AccountError("账户缺少邮箱或皮肤站地址，请重新登录", "AUTHLIB_LOGIN_INFO_MISSING")
+        created_account_ids: list[str] = []
+        selected_accounts: list[tuple[str, dict[str, Any]]] = []
+        try:
+            for profile_id in selected_ids[1:]:
+                new_account_id, _ = self.authlib_manager.add_account(server_url, username, password)
+                created_account_ids.append(new_account_id)
+                info = self.authlib_manager.select_profile(new_account_id, profile_id)
+                selected_accounts.append((new_account_id, info))
+            info = self.authlib_manager.select_profile(account_id, selected_ids[0])
+            selected_accounts.insert(0, (account_id, info))
+        except httpx.HTTPStatusError as exc:
+            for created_account_id in created_account_ids:
+                self.authlib_manager.delete_account(created_account_id)
+            raise AccountError(
+                f"选择外置登录角色失败: 认证服务器返回 {exc.response.status_code} {exc.response.reason_phrase}",
+                "AUTHLIB_PROFILE_FAILED",
+            ) from exc
+        except (httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
+            for created_account_id in created_account_ids:
+                self.authlib_manager.delete_account(created_account_id)
+            raise AccountError(f"选择外置登录角色失败: {exc}", "AUTHLIB_PROFILE_FAILED") from exc
+        with self._lock:
+            self._current_account_id = account_id
+            self._save_state()
+            accounts = [self._authlib_account(selected_id, info) for selected_id, info in selected_accounts]
+        self._emit_changed()
+        return accounts
+
     def switch_account(self, account_id: Any) -> None:
+        """切换当前账户；账户不存在时抛出 ``AccountError``。"""
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         with self._lock:
@@ -302,6 +432,7 @@ class AccountManager:
         self._emit_changed()
 
     def remove_account(self, account_id: Any) -> None:
+        """移除账户并自动选择剩余账户。"""
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         with self._lock:
@@ -309,6 +440,8 @@ class AccountManager:
                 self._offline_accounts.pop(account_id)
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
                 self.microsoft_manager.del_microsoft_account(account_id)
+            elif account_id in self.authlib_manager.list_accounts():
+                self.authlib_manager.delete_account(account_id)
             else:
                 raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
 
@@ -319,6 +452,7 @@ class AccountManager:
         self._emit_changed()
 
     def refresh_account(self, account_id: Any) -> dict[str, Any]:
+        """刷新账户信息。"""
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         with self._lock:
@@ -328,6 +462,9 @@ class AccountManager:
                 self.microsoft_manager.refresh_profile(account_id)
                 info = self.microsoft_manager.get_microsoft_accounts()[account_id]
                 account = self._microsoft_account(account_id, info)
+            elif account_id in self.authlib_manager.list_accounts():
+                info = self.authlib_manager.refresh_account(account_id)
+                account = self._authlib_account(account_id, info)
             else:
                 raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
         self._emit_changed()
@@ -350,6 +487,18 @@ class AccountManager:
                 "interval": MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS,
             }
             self._login_event.set()
+
+    def _on_microsoft_progress(self, stage: str) -> None:
+        with self._lock:
+            self._login_state = {"status": "progress", "stage": stage}
+        EventBus().emit(
+            "accounts:microsoft_login_status",
+            {
+                "status": "progress",
+                "stage": stage,
+                "focus": stage == "authorization_confirmed",
+            },
+        )
 
     def _run_microsoft_login(self) -> None:
         frontend_event: dict[str, Any] | None = None
@@ -378,6 +527,7 @@ class AccountManager:
             EventBus().emit("accounts:microsoft_login_status", frontend_event)
 
     def start_microsoft_login(self) -> dict[str, Any]:
+        """开始微软登录。"""
         if not self._microsoft_login_available:
             raise AccountError(
                 "需要配置 MICROSOFT_CLIENT_ID 后才能使用正版登录",
@@ -415,6 +565,8 @@ class AccountManager:
             raise AccountError("获取 Microsoft 设备代码超时，请重试", "MICROSOFT_LOGIN_TIMEOUT")
         if state.get("status") == "ready":
             return {"status": "completed"}
+        if state.get("status") == "progress":
+            return {"status": "progress", "stage": state.get("stage")}
         return {
             "status": "pending",
             "userCode": state.get("userCode", ""),
@@ -424,6 +576,7 @@ class AccountManager:
         }
 
     def poll_microsoft_login(self) -> dict[str, Any]:
+        """获取微软登录状态。"""
         with self._lock:
             state = deepcopy(self._login_state)
         status = state.get("status")
@@ -433,22 +586,32 @@ class AccountManager:
             return {"status": "error", "message": state.get("message") or "Microsoft 登录失败"}
         if status == "cancelled":
             return {"status": "error", "message": "Microsoft 登录已取消"}
-        if status in {"starting", "pending"}:
-            return {"status": "pending", "retry_after": state.get("interval", 5)}
+        if status in {"starting", "pending", "progress"}:
+            result = {
+                "status": "progress" if status == "progress" else "pending",
+                "retry_after": state.get("interval", 5),
+            }
+            if state.get("stage"):
+                result["stage"] = state["stage"]
+            return result
         return {"status": "error", "message": "当前没有进行中的 Microsoft 登录"}
 
     def complete_microsoft_login(self) -> dict[str, Any]:
+        """完成已授权的微软登录并返回保存后的账户。"""
         with self._lock:
             state = deepcopy(self._login_state)
             if state.get("status") == "error":
                 raise AccountError(state.get("message") or "Microsoft 登录失败", "MICROSOFT_LOGIN_FAILED")
             if state.get("status") == "cancelled":
                 raise AccountError("Microsoft 登录已取消", "MICROSOFT_LOGIN_CANCELLED")
-            if state.get("status") in {"starting", "pending"}:
-                return {
+            if state.get("status") in {"starting", "pending", "progress"}:
+                result = {
                     "status": "pending",
                     "retry_after": state.get("interval", 5),
                 }
+                if state.get("stage"):
+                    result["stage"] = state["stage"]
+                return result
             if state.get("status") != "ready":
                 raise AccountError("当前没有可完成的 Microsoft 登录", "MICROSOFT_LOGIN_NOT_STARTED")
 
@@ -463,6 +626,7 @@ class AccountManager:
         return {"status": "completed", "account": account}
 
     def cancel_microsoft_login(self) -> bool:
+        """取消登录流程；返回本次调用是否实际取消了任务。"""
         with self._lock:
             login_thread = self._login_thread
             is_active = bool(login_thread and login_thread.is_alive())
@@ -481,5 +645,7 @@ class AccountManager:
         EventBus().emit("accounts:changed", self.list_accounts())
 
     def close(self) -> None:
+        """取消仍在运行的认证任务并释放认证客户端。"""
         self.cancel_microsoft_login()
         self.microsoft_manager.close()
+        self.authlib_manager.close()

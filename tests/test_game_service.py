@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from ECL.Events import EventBus
-from ECL.Services.game import GameService, GameServiceError, _ResumableDownloader
+from ECL.Services.game import GameService, GameServiceError
 
 
 class FakeAccounts:
@@ -84,38 +85,6 @@ class FakeDownloader:
         return None
 
 
-class FakeStreamResponse:
-    status_code = 206
-
-    def __init__(self, chunks):
-        self.headers = {"content-length": str(sum(len(chunk) for chunk in chunks))}
-        self._chunks = chunks
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return None
-
-    def raise_for_status(self):
-        return None
-
-    async def aiter_bytes(self, _chunk_size):
-        for chunk in self._chunks:
-            yield chunk
-
-
-class FakeDownloadClient:
-    def __init__(self, chunks):
-        self.chunks = chunks
-        self.headers = None
-
-    def stream(self, _method, _url, *, headers, timeout):
-        self.headers = headers
-        assert timeout.read == 120.0
-        return FakeStreamResponse(self.chunks)
-
-
 def _reset_event_bus() -> None:
     EventBus._instance = None
     EventBus._initialized = False
@@ -149,6 +118,70 @@ def test_scan_versions_is_owned_by_game_service(tmp_path) -> None:
     assert requested_paths == [game_path]
 
 
+def test_java_scanner_result_is_exposed_and_used_for_required_version(tmp_path) -> None:
+    java8 = SimpleNamespace(
+        path=tmp_path / "java8.exe",
+        version="1.8.0_451",
+        vendor="Eclipse Adoptium",
+        architecture="amd64",
+        is_jdk=False,
+    )
+    java21 = SimpleNamespace(
+        path=tmp_path / "java21.exe",
+        version="21.0.7",
+        vendor="Microsoft",
+        architecture="aarch64",
+        is_jdk=True,
+    )
+    scanner_options = {}
+
+    class FakeJavaScanner:
+        def __init__(self, **options):
+            scanner_options.update(options)
+
+        def scan(self):
+            return [java8, java21]
+
+    service = _build_service(java_scanner_factory=FakeJavaScanner, data_path=tmp_path)
+
+    installations = service.scan_java([str(java8.path)])
+
+    assert [item["major_version"] for item in installations] == [21, 8]
+    assert installations[0]["arch"] == "arm64"
+    assert installations[1]["sources"] == ["user"]
+    assert scanner_options["cache_file"] == tmp_path / "java_cache.json"
+    assert service._resolve_java_path(None, 8) == str(java8.path)
+
+
+def test_automatic_java_selection_uses_nearest_compatible_higher_version(tmp_path) -> None:
+    java21 = SimpleNamespace(
+        path=tmp_path / "java21.exe",
+        version="21.0.7",
+        vendor="Microsoft",
+        architecture="amd64",
+        is_jdk=True,
+    )
+    java25 = SimpleNamespace(
+        path=tmp_path / "java25.exe",
+        version="25.0.1",
+        vendor="Eclipse Adoptium",
+        architecture="amd64",
+        is_jdk=True,
+    )
+
+    class FakeJavaScanner:
+        def __init__(self, **_options):
+            pass
+
+        def scan(self):
+            return [java25, java21]
+
+    service = _build_service(java_scanner_factory=FakeJavaScanner)
+
+    assert service._resolve_java_path(None, 17) == str(java21.path)
+    assert service._resolve_java_path(None, 21) == str(java21.path)
+
+
 def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatch) -> None:
     _reset_event_bus()
     events = []
@@ -168,26 +201,31 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
         lambda *_args: SimpleNamespace(games=FakeGames()),
     )
 
-    asyncio.run(
-        service.install_version(
+    async def install():
+        result = service.install_version(
             {
                 "version_id": "1.21.8",
                 "version_name": "My 1.21.8",
                 "task_id": "install-task",
             },
             game_path=tmp_path,
-            download_threads=12,
         )
-    )
+        await service._install_tasks[result["taskId"]]
+        return result
 
+    result = asyncio.run(install())
+
+    assert result == {
+        "taskId": "install-task",
+        "versionId": "1.21.8",
+        "versionName": "My 1.21.8",
+    }
     assert built == [("1.21.8", "My 1.21.8")]
     assert [event["phase"] for event in events] == ["install", "download", "download", "done"]
     assert events[-1]["task_id"] == "install-task"
     log_messages = [call.args[0] for call in service.logger.info.call_args_list]
-    assert any("开始执行安装任务" in message for message in log_messages)
-    assert any("安装文件列表生成完成" in message for message in log_messages)
-    assert any("开始下载游戏文件" in message for message in log_messages)
-    assert any("安装任务完成" in message for message in log_messages)
+    assert any("开始安装" in message for message in log_messages)
+    assert any("版本安装完成" in message for message in log_messages)
 
 
 def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> None:
@@ -212,19 +250,21 @@ def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> N
         ),
     )
 
-    with pytest.raises(GameServiceError) as error:
-        asyncio.run(
-            service.install_version(
-                {"version_id": "1.21.8", "task_id": "failed-task"},
-                game_path=tmp_path,
-            )
+    async def install():
+        result = service.install_version(
+            {"version_id": "1.21.8", "task_id": "failed-task"},
+            game_path=tmp_path,
         )
+        await service._install_tasks[result["taskId"]]
 
-    assert error.value.error_code == "GAME_DOWNLOAD_FAILED"
+    asyncio.run(install())
+
     assert events[-1]["phase"] == "error"
+    assert events[-1]["errorCode"] == "GAME_DOWNLOAD_FAILED"
+    assert "client.jar" in events[-1]["message"]
 
 
-def test_start_install_returns_immediately_and_rejects_duplicate_task(tmp_path, monkeypatch) -> None:
+def test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path, monkeypatch) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -249,22 +289,24 @@ def test_start_install_returns_immediately_and_rejects_duplicate_task(tmp_path, 
     )
 
     async def scenario():
-        task_id = service.start_install(
+        result = service.install_version(
             {"version_id": "1.21.8", "task_id": "background-install"},
             game_path=tmp_path,
         )
-        assert task_id == "background-install"
+        task_id = result["taskId"]
+        assert result == {
+            "taskId": "background-install",
+            "versionId": "1.21.8",
+            "versionName": "1.21.8",
+        }
         assert started.is_set() is False
-        assert any(
-            "安装任务已创建" in call.args[0]
-            for call in service.logger.info.call_args_list
-        )
+        assert any("开始安装" in call.args[0] for call in service.logger.info.call_args_list)
 
         await asyncio.wait_for(started.wait(), timeout=1)
         install_task = service._install_tasks[task_id]
         assert install_task.done() is False
         with pytest.raises(GameServiceError) as error:
-            service.start_install(
+            service.install_version(
                 {"version_id": "1.21.8", "task_id": task_id},
                 game_path=tmp_path,
             )
@@ -278,29 +320,17 @@ def test_start_install_returns_immediately_and_rejects_duplicate_task(tmp_path, 
     asyncio.run(scenario())
 
 
-def test_resumable_downloader_continues_existing_temp_file(tmp_path) -> None:
-    target = tmp_path / "client.jar"
-    target.with_suffix(".jar.tmp").write_bytes(b"abcd")
+def test_install_version_rejects_incomplete_loader_options(tmp_path) -> None:
+    service = _build_service()
 
-    async def run_download():
-        downloader = _ResumableDownloader([("https://example.com/client.jar", target)])
-        client = FakeDownloadClient([b"efgh"])
-        downloader.client = client
-        downloader.total_bytes = 8
-        result = await downloader._download_file_once(
-            "https://example.com/client.jar",
-            target,
-            8,
+    with pytest.raises(GameServiceError) as error:
+        service.install_version(
+            {"version_id": "1.21.8", "loader_type": "fabric"},
+            game_path=tmp_path,
         )
-        await asyncio.sleep(0)
-        return result, client
 
-    result, client = asyncio.run(run_download())
-
-    assert result is True
-    assert client.headers["Range"] == "bytes=4-"
-    assert target.read_bytes() == b"abcdefgh"
-    assert not target.with_suffix(".jar.tmp").exists()
+    assert error.value.error_code == "LOADER_VERSION_REQUIRED"
+    assert service._install_tasks == {}
 
 
 def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path, monkeypatch) -> None:
@@ -333,14 +363,18 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
             width=1280,
             height=720,
             jvm_args=["-Dexample=true"],
-            game_args=["--demo"],
+            game_args=["--demo", "hello world"],
         )
     )
 
-    assert instance_id == "minecraft-instance"
+    assert instance_id == {
+        "instanceId": "minecraft-instance",
+        "versionId": "1.21.8",
+        "gamePath": str(game_path.resolve()),
+    }
     assert captured_configs[0].player_name == "Steve"
     assert captured_configs[0].use_ram == 6144
-    assert instances.created["args"].endswith("--demo")
+    assert shlex.split(instances.created["args"])[-2:] == ["--demo", "hello world"]
     assert service.list_instances() == [
         {
             "id": "minecraft-instance",
@@ -350,6 +384,64 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
             "version": "1.21.8",
         }
     ]
+
+
+def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> None:
+    class AuthlibAccounts:
+        def get_launch_credentials(self):
+            return {
+                "player_name": "Player",
+                "uuid": "0123456789abcdef0123456789abcdef",
+                "user_type": "yggdrasil",
+                "access_token": "access-token",
+                "auth_server": "https://skin.example.com/api/yggdrasil",
+            }
+
+    class FakeInjector:
+        def __init__(self, path):
+            self.path = path
+
+        def ensure(self):
+            return self.path
+
+        def close(self):
+            pass
+
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    injector_path = tmp_path / "authlib-injector.jar"
+    injector_path.write_bytes(b"jar")
+    captured_configs = []
+    service = GameService(
+        AuthlibAccounts(),
+        search_factory=EmptySearchMinecraft,
+        instances_manager=FakeInstances(),
+        downloader_factory=FakeDownloader,
+        command_builder=lambda config: captured_configs.append(config) or '"java.exe" game.Main',
+        authlib_injector=FakeInjector(injector_path),
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+        )
+    )
+
+    config = captured_configs[0]
+    assert config.user_type == "yggdrasil"
+    assert config.authlib_path == injector_path
+    assert config.yggdrasil_api == "https://skin.example.com/api/yggdrasil"
 
 
 def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None:
@@ -404,6 +496,43 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
 
     assert error.error_code == "LAUNCH_CANCELLED"
     assert str(error) == "启动已取消"
+
+
+def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None:
+    _reset_event_bus()
+    events = []
+    EventBus().subscribe("game:launch_progress", events.append)
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "broken"
+    version_path.mkdir(parents=True)
+    (version_path / "broken.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+
+    def fail_to_build(_config):
+        raise KeyError("mainClass")
+
+    service = _build_service(command_builder=fail_to_build)
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+
+    with pytest.raises(GameServiceError) as error:
+        asyncio.run(
+            service.launch_instance(
+                {"version_id": "broken"},
+                game_path=game_path,
+                java_path=java_path,
+            )
+        )
+
+    assert error.value.error_code == "GAME_LAUNCH_FAILED"
+    assert "mainClass" in str(error.value)
+    assert events[-1]["phase"] == "error"
+    assert events[-1]["errorCode"] == "GAME_LAUNCH_FAILED"
+    assert "mainClass" in events[-1]["message"]
 
 
 def test_uninstall_version_only_removes_selected_version(tmp_path) -> None:

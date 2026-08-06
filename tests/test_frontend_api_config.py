@@ -19,11 +19,17 @@ pytauri_ffi_module.Emitter = SimpleNamespace(emit_str_to=lambda *args: None)  # 
 pytauri_ipc_module = ModuleType("pytauri.ipc")
 pytauri_ipc_module.WebviewWindow = object  # type: ignore[attr-defined]
 
+pytauri_plugins_dialog_module = ModuleType("pytauri_plugins.dialog")
+pytauri_plugins_dialog_module.DialogExt = object  # type: ignore[attr-defined]
+pytauri_plugins_dialog_module.init = lambda: None  # type: ignore[attr-defined]
+
 sys.modules["pytauri"] = pytauri_module
 sys.modules["pytauri.ffi"] = pytauri_ffi_module
 sys.modules["pytauri.ipc"] = pytauri_ipc_module
+sys.modules["pytauri_plugins.dialog"] = pytauri_plugins_dialog_module
 
 FrontendApi = import_module("ECL.Api").FrontendApi
+Adapter = import_module("ECL.Adapters.tauri").Adapter
 frontend_module = import_module("ECL.Api.frontend")
 ConfigManager = import_module("ECL.Infrastructure").ConfigManager
 EventBus = import_module("ECL.Events").EventBus
@@ -34,10 +40,33 @@ class FakeAccounts:
         self.last_offline_input = (username, custom_uuid)
         return {"id": "offline-id", "alias": username, "type": "offline", "uuid": "offline-uuid"}
 
+    def add_authlib(self, server_url, username, password):
+        self.last_authlib_input = (server_url, username, password)
+        return {
+            "id": "authlib-id",
+            "alias": "AuthlibPlayer",
+            "type": "authlib",
+            "uuid": "authlib-uuid",
+            "auth_server": server_url,
+        }
+
+    def select_authlib_profiles(self, account_id, profile_ids, password=None):
+        self.last_authlib_profiles = (account_id, profile_ids, password)
+        return [
+            {
+                "id": f"authlib-{profile_id}",
+                "alias": profile_id,
+                "type": "authlib",
+                "uuid": profile_id,
+            }
+            for profile_id in profile_ids
+        ]
+
 
 class FakePlugins:
     def __init__(self):
         self.frontend_ready_count = 0
+        self.sidebar_states = []
 
     def on_frontend_ready(self) -> None:
         self.frontend_ready_count += 1
@@ -45,11 +74,21 @@ class FakePlugins:
     def list_plugins(self):
         return [{"name": "example", "status": "enabled"}]
 
+    def set_sidebar_state(self, collapsed: bool) -> None:
+        self.sidebar_states.append(collapsed)
+
 
 class FakeAvatars:
-    def render_avatar(self, account_uuid, size, use_default_skin):
+    def render_avatar(
+        self,
+        account_uuid,
+        size,
+        use_default_skin,
+        account_type=None,
+        account_id=None,
+    ):
         return {
-            "dataUrl": f"data:image/png;base64,{account_uuid}:{size}:{use_default_skin}",
+            "dataUrl": (f"data:image/png;base64,{account_uuid}:{size}:{use_default_skin}:{account_type}:{account_id}"),
             "base64": "avatar",
         }
 
@@ -75,21 +114,52 @@ class FakeGame:
         self.requested_paths = paths
         return [{"id": "1.20.1", "versionId": "1.20.1"}]
 
-    def start_install(self, body, **options):
+    def scan_java(self, user_paths):
+        return [
+            {
+                "path": user_paths[0] if user_paths else "C:/Java/bin/java.exe",
+                "version": "21.0.7",
+                "major_version": 21,
+                "java_type": "OpenJDK",
+                "arch": "x64",
+                "sources": ["system"],
+            }
+        ]
+
+    def install_version(self, body, **options):
         self.install_call = (body, options)
-        return str(body.get("task_id") or "install-task")
+        return {
+            "taskId": str(body.get("task_id") or "install-task"),
+            "versionId": body["version_id"],
+            "versionName": body.get("version_name") or body["version_id"],
+        }
 
     async def launch_instance(self, body, **options):
         self.launch_call = (body, options)
-        return "instance-id"
+        return {
+            "instanceId": "instance-id",
+            "versionId": body["version_id"],
+            "gamePath": options["game_path"],
+        }
 
 
 class FakeWebviewWindow:
     def __init__(self):
         self.visible = False
+        self.minimized = True
+        self.focused = False
 
     def show(self) -> None:
         self.visible = True
+
+    def unminimize(self) -> None:
+        self.minimized = False
+
+    def set_focus(self) -> None:
+        self.focused = True
+
+    def run_on_main_thread(self, handler) -> None:
+        handler()
 
 
 def _reset_singletons() -> None:
@@ -159,6 +229,17 @@ def test_info_card_delegates_to_registered_service(tmp_path) -> None:
     _reset_singletons()
 
 
+def test_java_scan_delegates_to_game_service(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.java_scan({}))
+
+    assert result["success"] is True
+    assert result["data"][0]["major_version"] == 21
+    assert result["data"][0]["path"] == "C:/Java/bin/java.exe"
+    _reset_singletons()
+
+
 def test_scan_versions_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
@@ -182,16 +263,17 @@ def test_install_version_delegates_to_game_service_with_runtime_options(tmp_path
             {
                 "version_id": "1.21.8",
                 "game_path": str(game_path),
-                "download_threads": 12,
             }
         )
     )
 
-    assert result == {"success": True, "data": None}
+    assert result == {
+        "success": True,
+        "data": {"taskId": "install-task", "versionId": "1.21.8", "versionName": "1.21.8"},
+    }
     assert api.game.install_call[0]["version_id"] == "1.21.8"
     assert api.game.install_call[1]["game_path"] == str(game_path)
     assert api.game.install_call[1]["source"] == "official"
-    assert api.game.install_call[1]["download_threads"] == 12
     _reset_singletons()
 
 
@@ -211,10 +293,16 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
         )
     )
 
-    assert result == {"success": True, "data": None}
+    assert result == {
+        "success": True,
+        "data": {
+            "instanceId": "instance-id",
+            "versionId": "1.21.8",
+            "gamePath": str(tmp_path / ".minecraft"),
+        },
+    }
     assert api.game.launch_call[1]["memory"] == 6144
     assert api.game.launch_call[1]["version_isolation"] is True
-    assert api.game.launch_call[1]["download_threads"] == 16
     _reset_singletons()
 
 
@@ -250,22 +338,58 @@ def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
     _reset_singletons()
 
 
-def test_authlib_login_reports_not_implemented(tmp_path) -> None:
+def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(
         api.accounts_add_authlib(
             {
-                "server_url": "https://skin.example.com/api/yggdrasil",
+                "server_url": "https://skin.example.com/api/yggdrasil/",
                 "email": "player@example.com",
                 "password": "secret-password",
             }
         )
     )
 
-    assert result["success"] is False
-    assert result["errorCode"] == "AUTHLIB_NOT_IMPLEMENTED"
-    assert result["message"] == "外置登录暂未开发"
+    assert result["success"] is True
+    assert result["data"]["id"] == "authlib-id"
+    assert api.accounts.last_authlib_input == (
+        "https://skin.example.com/api/yggdrasil/",
+        "player@example.com",
+        "secret-password",
+    )
+    assert api.config.get_config("authlib")["servers"] == [
+        {
+            "url": "https://skin.example.com/api/yggdrasil/",
+            "email": "player@example.com",
+        }
+    ]
+    saved_servers = asyncio.run(api.authlib_servers({}))
+    assert saved_servers["data"][0]["url"] == "https://skin.example.com/api/yggdrasil/"
+    assert saved_servers["data"][0]["email"] == "player@example.com"
+    _reset_singletons()
+
+
+def test_authlib_profile_selection_supports_multiple_accounts(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(
+        api.accounts_select_authlib_profiles(
+            {
+                "account_id": "pending-account",
+                "profile_ids": ["profile-one", "profile-two"],
+                "password": "secret-password",
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert [account["uuid"] for account in result["data"]] == ["profile-one", "profile-two"]
+    assert api.accounts.last_authlib_profiles == (
+        "pending-account",
+        ["profile-one", "profile-two"],
+        "secret-password",
+    )
     _reset_singletons()
 
 
@@ -280,6 +404,50 @@ def test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> Non
     assert webview_window.visible is True
     assert api.plugins.frontend_ready_count == 1
     assert plugin_result["data"] == [{"name": "example", "status": "enabled"}]
+    _reset_singletons()
+
+
+def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    webview_window = FakeWebviewWindow()
+    asyncio.run(api.frontend_ready({}, webview_window))
+
+    assert api.focus_window() is True
+    assert webview_window.minimized is False
+    assert webview_window.visible is True
+    assert webview_window.focused is True
+    _reset_singletons()
+
+
+def test_microsoft_authorization_event_focuses_before_forwarding() -> None:
+    calls = []
+    api = SimpleNamespace(
+        focus_window=lambda: calls.append("focus"),
+        emit_to_frontend=lambda event, data: calls.append((event, data)),
+    )
+    adapter = object.__new__(Adapter)
+    adapter.frontend_api_instance = api
+    event = {"status": "progress", "stage": "authorization_confirmed", "focus": True}
+
+    adapter._forward_microsoft_login_status(event)
+
+    assert calls == ["focus", ("accounts_microsoft_login_status", event)]
+
+
+def test_sidebar_state_is_forwarded_to_plugins(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.plugin_notify_sidebar_state({"collapsed": True}))
+
+    assert result["success"] is True
+    assert api.plugins.sidebar_states == [True]
+
+    invalid = asyncio.run(api.plugin_notify_sidebar_state({"collapsed": "yes"}))
+    assert invalid == {
+        "success": False,
+        "message": "侧栏状态必须是布尔值",
+        "errorCode": "INVALID_SIDEBAR_STATE",
+    }
     _reset_singletons()
 
 
@@ -359,12 +527,14 @@ def test_avatar_data_url_delegates_to_registered_avatar_service(tmp_path) -> Non
                 "uuid": "avatar-id",
                 "size": 48,
                 "use_default_skin": True,
+                "type_name": "authlib",
+                "account_id": "authlib-account",
             }
         )
     )
 
     assert result["success"] is True
-    assert result["data"]["dataUrl"].endswith("avatar-id:48:True")
+    assert result["data"]["dataUrl"].endswith("avatar-id:48:True:authlib:authlib-account")
     _reset_singletons()
 
 

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import time
+from importlib import import_module
 from typing import Any
 
+import httpx
 import pytest
 
 import ECL.Services.accounts as accounts_service
 from ECL.Events import EventBus
 from ECL.Services import AccountManager
+from ECL.Services.microsoft import LauncherMicrosoftAccountManager
 
 
 class FakeMicrosoftManager:
@@ -50,6 +53,54 @@ class FakeMicrosoftManager:
     def get_minecraft_token(self, account_id: str) -> str:
         assert account_id in self.accounts
         return "minecraft-access-token"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeAuthlibManager:
+    def __init__(self):
+        self.accounts: dict[str, dict[str, Any]] = {}
+        self.closed = False
+
+    def list_accounts(self) -> dict[str, dict[str, Any]]:
+        return self.accounts.copy()
+
+    def add_account(self, url: str, username: str, password: str) -> tuple[str, dict[str, Any]]:
+        assert password == "secret-password"
+        account_id = "yggdrasil-account"
+        self.accounts[account_id] = {
+            "AccountId": account_id,
+            "YggdrasilAPI": url,
+            "Username": username,
+            "Profiles": {
+                "selectedProfile": {
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "name": "AuthlibPlayer",
+                }
+            },
+        }
+        return account_id, self.accounts[account_id]
+
+    def delete_account(self, account_id: str) -> None:
+        self.accounts.pop(account_id)
+
+    def select_profile(self, account_id: str, profile_id: str) -> dict[str, Any]:
+        profiles = self.accounts[account_id]["Profiles"]
+        selected_profile = next(profile for profile in profiles["availableProfiles"] if profile["id"] == profile_id)
+        self.accounts[account_id]["Profiles"] = {"selectedProfile": selected_profile}
+        return self.accounts[account_id]
+
+    def refresh_account(self, account_id: str) -> dict[str, Any]:
+        return self.accounts[account_id]
+
+    def get_token(self, account_id: str) -> dict[str, str]:
+        assert account_id in self.accounts
+        return {
+            "AccessToken": "yggdrasil-access-token",
+            "ClientToken": account_id,
+            "YggdrasilAPI": self.accounts[account_id]["YggdrasilAPI"],
+        }
 
     def close(self) -> None:
         self.closed = True
@@ -155,6 +206,144 @@ def test_offline_account_rejects_invalid_custom_uuid(tmp_path) -> None:
     assert error.value.error_code == "INVALID_OFFLINE_UUID"
 
 
+def test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None:
+    authlib_manager = FakeAuthlibManager()
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=authlib_manager,
+    )
+
+    account = manager.add_authlib(
+        "https://skin.example.com/api/yggdrasil",
+        "player@example.com",
+        "secret-password",
+    )
+
+    assert account == {
+        "id": "yggdrasil-account",
+        "alias": "AuthlibPlayer",
+        "type": "authlib",
+        "email": "player@example.com",
+        "uuid": "0123456789abcdef0123456789abcdef",
+        "auth_server": "https://skin.example.com/api/yggdrasil",
+        "isCurrent": True,
+    }
+    assert manager.get_launch_credentials() == {
+        "player_name": "AuthlibPlayer",
+        "uuid": "0123456789abcdef0123456789abcdef",
+        "user_type": "yggdrasil",
+        "access_token": "yggdrasil-access-token",
+        "auth_server": "https://skin.example.com/api/yggdrasil",
+    }
+    assert manager.refresh_account(account["id"])["alias"] == "AuthlibPlayer"
+
+    manager.remove_account(account["id"])
+
+    assert manager.list_accounts()["accounts"] == []
+
+
+def test_authlib_account_requires_profile_selection(tmp_path) -> None:
+    authlib_manager = FakeAuthlibManager()
+    authlib_manager.accounts["pending-account"] = {
+        "AccountId": "pending-account",
+        "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
+        "Profiles": {
+            "availableProfiles": [
+                {"id": "profile-one", "name": "PlayerOne"},
+                {"id": "profile-two", "name": "PlayerTwo"},
+            ]
+        },
+    }
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=authlib_manager,
+    )
+
+    pending_account = manager.list_accounts()["accounts"][0]
+    selected_accounts = manager.select_authlib_profiles("pending-account", ["profile-two"])
+
+    assert pending_account["profile_selection_required"] is True
+    assert pending_account["available_profiles"][1]["name"] == "PlayerTwo"
+    assert selected_accounts[0]["alias"] == "PlayerTwo"
+    assert selected_accounts[0]["uuid"] == "profile-two"
+
+
+def test_authlib_login_can_save_multiple_profiles(tmp_path) -> None:
+    authlib_manager = FakeAuthlibManager()
+    available_profiles = [
+        {"id": "profile-one", "name": "PlayerOne"},
+        {"id": "profile-two", "name": "PlayerTwo"},
+    ]
+    authlib_manager.accounts["pending-account"] = {
+        "AccountId": "pending-account",
+        "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
+        "Username": "player@example.com",
+        "Profiles": {"availableProfiles": available_profiles},
+    }
+
+    def add_pending_account(url: str, username: str, password: str):
+        assert password == "secret-password"
+        account_id = "second-account"
+        info = {
+            "AccountId": account_id,
+            "YggdrasilAPI": url,
+            "Username": username,
+            "Profiles": {"availableProfiles": available_profiles},
+        }
+        authlib_manager.accounts[account_id] = info
+        return account_id, info
+
+    authlib_manager.add_account = add_pending_account
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=authlib_manager,
+    )
+
+    selected_accounts = manager.select_authlib_profiles(
+        "pending-account",
+        ["profile-one", "profile-two"],
+        "secret-password",
+    )
+
+    assert [account["alias"] for account in selected_accounts] == ["PlayerOne", "PlayerTwo"]
+    assert [account["auth_server"] for account in manager.list_accounts()["accounts"]] == [
+        "https://skin.example.com/api/yggdrasil",
+        "https://skin.example.com/api/yggdrasil",
+    ]
+
+
+def test_authlib_login_uses_server_error_message(tmp_path, monkeypatch) -> None:
+    authlib_manager = FakeAuthlibManager()
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=authlib_manager,
+    )
+
+    def reject_login(url: str, username: str, password: str):
+        request = httpx.Request("POST", f"{url}/authserver/authenticate")
+        response = httpx.Response(
+            403,
+            request=request,
+            json={
+                "error": "ForbiddenOperationException",
+                "errorMessage": "Invalid credentials. Invalid username or password.",
+            },
+        )
+        raise httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
+
+    monkeypatch.setattr(authlib_manager, "add_account", reject_login)
+
+    with pytest.raises(accounts_service.AccountError) as error:
+        manager.add_authlib("https://littleskin.cn/api/yggdrasil", "player@example.com", "wrong")
+
+    assert error.value.error_code == "AUTHLIB_LOGIN_FAILED"
+    assert str(error.value) == "外置登录失败: Invalid credentials. Invalid username or password."
+
+
 def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch) -> None:
     captured_options = {}
 
@@ -163,11 +352,12 @@ def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch)
             super().__init__()
             captured_options.update(options)
 
-    monkeypatch.setattr(accounts_service, "MicrosoftAuthManager", CapturingMicrosoftManager)
+    monkeypatch.setattr(accounts_service, "LauncherMicrosoftAccountManager", CapturingMicrosoftManager)
 
     manager = AccountManager(tmp_path, microsoft_client_id="runtime-client-id")
 
     assert captured_options["client_id"] == "runtime-client-id"
+    assert captured_options["cache_path"] == tmp_path
     assert manager.microsoft_login_config() == {"available": True, "needs_client_id": False}
     manager.close()
 
@@ -178,7 +368,7 @@ def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) ->
             super().__init__()
 
     monkeypatch.setattr(accounts_service, "MICROSOFT_CLIENT_ID", "")
-    monkeypatch.setattr(accounts_service, "MicrosoftAuthManager", CapturingMicrosoftManager)
+    monkeypatch.setattr(accounts_service, "LauncherMicrosoftAccountManager", CapturingMicrosoftManager)
     manager = AccountManager(tmp_path)
 
     assert manager.microsoft_login_config() == {"available": False, "needs_client_id": True}
@@ -214,6 +404,46 @@ def test_microsoft_device_login_flow(tmp_path) -> None:
     assert account_list["current"]["type"] == "microsoft"
     assert account_list["current"]["skinUrl"] == "https://textures.example.com/skin.png"
     assert login_events[-1] == {"status": "ready"}
+
+
+def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None:
+    microsoft_auth_core = import_module("ECL.Game.Core.MicrosoftAuth")
+    stages = []
+
+    class FakeMicrosoftAuth:
+        def __init__(self, **_options):
+            pass
+
+        def get_token(self):
+            return "microsoft-token", "player@example.com"
+
+    class FakeMinecraftClient:
+        def get_minecraft_token(self, token):
+            assert token == "microsoft-token"
+            return "minecraft-token", 0.0, 3600
+
+        def get_profile(self, token):
+            assert token == "minecraft-token"
+            return {"id": "profile-id", "name": "Player", "skins": []}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(microsoft_auth_core, "MicrosoftAuth", FakeMicrosoftAuth)
+    manager = LauncherMicrosoftAccountManager(
+        "client-id",
+        cache_path=tmp_path,
+        on_device_code=lambda _flow: None,
+        on_progress=stages.append,
+    )
+    manager._progress_client.client.close()
+    manager._progress_client.client = FakeMinecraftClient()
+
+    account_id = manager.add_microsoft_account()
+
+    assert account_id in manager.get_microsoft_accounts()
+    assert stages == ["authorization_confirmed", "minecraft_token", "profile", "saving"]
+    manager.close()
 
 
 def test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None:

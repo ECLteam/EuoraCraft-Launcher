@@ -1,3 +1,4 @@
+# 非必要情况下请勿修改本文件，配置由适配器统一注入
 "$schema" = "https://schema.tauri.app/config/2"
 productName = "EuoraCraft Launcher"
 #version = "0.1.0"

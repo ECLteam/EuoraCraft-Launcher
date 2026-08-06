@@ -66,6 +66,7 @@ class InfoCardManager:
 
     @staticmethod
     def _download_notice(url: str) -> Any:
+        # 忽略 SSL 证书验证，避免系统证书缺失导致公告获取失败
         response = httpx.get(
             url,
             headers={
@@ -74,6 +75,7 @@ class InfoCardManager:
             },
             follow_redirects=True,
             timeout=NOTICE_TIMEOUT_SECONDS,
+            #verify=False,
         )
         response.raise_for_status()
         return response.json()
@@ -194,6 +196,7 @@ class InfoCardManager:
         return deepcopy(announcements)
 
     def get_info_card(self) -> dict[str, Any]:
+        """返回首页轮播模式、提示、公告和欢迎卡片数据。"""
         with self._lock:
             data = deepcopy(DEFAULT_INFO_CARD)
             data["announcements"] = self._load_announcements()

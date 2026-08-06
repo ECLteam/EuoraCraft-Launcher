@@ -33,7 +33,8 @@ def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
     resource_path = tmp_path / "_MEI12345"
     framework = PluginFramework()
-    framework._discover_and_load = Mock()
+    framework._collect_candidates = Mock(return_value=[])
+    framework._load_plugins_in_order = Mock()
     framework._enable_all = Mock()
 
     framework.initialize(data_path, resource_path)
@@ -42,7 +43,7 @@ def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
     assert framework._plugin_config_dir == data_path / "plugin_config"
     assert framework._plugin_dir.is_dir()
     assert framework._plugin_config_dir.is_dir()
-    framework._discover_and_load.assert_has_calls(
+    framework._collect_candidates.assert_has_calls(
         [
             call(data_path / "plugins", is_system=False),
             call(resource_path / "resources" / "system_plugins", is_system=True),
@@ -54,21 +55,19 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     _reset_plugin_runtime()
     data_path = tmp_path / "ECL_data"
     framework = PluginFramework()
-    framework._discover_and_load = Mock()
+    framework._collect_candidates = Mock(return_value=[])
+    framework._load_plugins_in_order = Mock()
     framework._enable_all = Mock()
     framework.initialize(data_path, tmp_path / "resources")
 
     source_path = tmp_path / "source_plugin"
     source_path.mkdir()
     (source_path / "plugin.json").write_text(json.dumps({"name": "example"}), encoding="utf-8")
-    framework._load_plugin = Mock()
-    framework._enable = Mock(return_value=True)
+    (source_path / "main.py").write_text(
+        "from ECL.Plugin import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
+    )
 
-    assert framework.install(str(source_path)) is True
+    assert framework.install(str(source_path)).success is True
     installed_path = data_path / "plugins" / "example"
     assert (installed_path / "plugin.json").is_file()
-    framework._load_plugin.assert_called_once_with(
-        installed_path,
-        installed_path / "plugin.json",
-        is_system=False,
-    )
+    assert "example" in framework._plugins

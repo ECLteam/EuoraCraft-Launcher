@@ -49,7 +49,7 @@ class CompressedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandl
         self.backup_count = backup_count
         super().__init__(filename, when, interval, backup_count, encoding, delay, utc)
 
-    def dorollover(self) -> None:
+    def doRollover(self) -> None:
         """执行日志轮转，将旧日志压缩为 .gz 文件"""
         if self.stream:
             self.stream.close()
@@ -110,10 +110,6 @@ class LoggerManager:
         LoggerManager._initialized = True
 
     def _setup_handlers(self, colored: bool) -> None:
-        """
-        初始化日志处理器
-        :param colored: 是否启用彩色控制台输出
-        """
         if self._root_logger.handlers:
             return
         self.log_dir.mkdir(parents=True, exist_ok=True)

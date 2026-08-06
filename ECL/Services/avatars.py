@@ -8,6 +8,7 @@ import httpx
 from PIL import Image
 
 from ECL.Infrastructure import get_logger
+from ECL.Services.authlib import AuthlibAccountManager
 
 
 class AvatarError(Exception):
@@ -17,6 +18,10 @@ class AvatarError(Exception):
 
 
 class AvatarManager:
+    ONLINE_AVATAR_URLS = (
+        "https://api.mcheads.org/head/{uuid}/{size}",
+        "https://crafatar.com/avatars/{uuid}?size={size}&overlay=true",
+    )
     DEFAULT_SKINS = (
         "Alex.png",
         "Ari.png",
@@ -29,9 +34,14 @@ class AvatarManager:
         "Zuri.png",
     )
 
-    def __init__(self, resource_path: Path | str):
+    def __init__(
+        self,
+        resource_path: Path | str,
+        authlib_manager: AuthlibAccountManager | None = None,
+    ):
         self.logger = get_logger("AvatarManager")
         self.skin_path = Path(resource_path) / "resources" / "Skins"
+        self.authlib_manager = authlib_manager
         self.client = httpx.Client(
             timeout=httpx.Timeout(10, connect=5),
             follow_redirects=True,
@@ -94,21 +104,30 @@ class AvatarManager:
             return self._encode_image(self._render_skin_head(image, size))
 
     def _render_online_avatar(self, account_uuid: str, size: int) -> dict[str, str]:
-        response = self.client.get(
-            f"https://crafatar.com/avatars/{account_uuid}",
-            params={"size": size, "overlay": "true", "default": "MHF_Steve"},
-        )
-        response.raise_for_status()
-        with Image.open(BytesIO(response.content)) as image:
-            avatar = image.convert("RGBA").resize((size, size), Image.Resampling.NEAREST)
-            return self._encode_image(avatar)
+        last_error = None
+        for url in self.ONLINE_AVATAR_URLS:
+            try:
+                response = self.client.get(url.format(uuid=account_uuid, size=size))
+                response.raise_for_status()
+                with Image.open(BytesIO(response.content)) as image:
+                    avatar = image.convert("RGBA").resize((size, size), Image.Resampling.NEAREST)
+                    return self._encode_image(avatar)
+            except (httpx.HTTPError, OSError, ValueError) as exc:
+                last_error = exc
+
+        if last_error is not None:
+            raise last_error
+        raise AvatarError("没有可用的在线头像源", "AVATAR_PROVIDER_UNAVAILABLE")
 
     def render_avatar(
         self,
         account_uuid: Any,
         size: Any = 64,
         use_default_skin: bool = False,
+        account_type: Any = None,
+        account_id: Any = None,
     ) -> dict[str, str]:
+        """渲染在线或默认皮肤头像，并返回 data URL 与 Base64 数据。"""
         normalized_size = self._validate_size(size)
         normalized_uuid = self._normalize_uuid(account_uuid)
         identifier = normalized_uuid or str(account_uuid or "Player")
@@ -116,11 +135,36 @@ class AvatarManager:
         if use_default_skin or not normalized_uuid:
             return self._render_default_avatar(identifier, normalized_size)
 
+        is_authlib = str(account_type or "").casefold() == "authlib"
+        if is_authlib and (self.authlib_manager is None or not isinstance(account_id, str) or not account_id):
+            return self._render_default_avatar(normalized_uuid, normalized_size)
+
         try:
+            if is_authlib:
+                avatar_source = self.authlib_manager.get_avatar(account_id, normalized_size)
+                if avatar_source is None:
+                    return self._render_default_avatar(normalized_uuid, normalized_size)
+                with Image.open(BytesIO(avatar_source.data)) as image:
+                    if avatar_source.is_skin:
+                        avatar = self._render_skin_head(image, normalized_size)
+                    else:
+                        avatar = image.convert("RGBA").resize(
+                            (normalized_size, normalized_size),
+                            Image.Resampling.NEAREST,
+                        )
+                    return self._encode_image(avatar)
             return self._render_online_avatar(normalized_uuid, normalized_size)
         except (httpx.HTTPError, OSError, ValueError) as exc:
-            self.logger.warning("在线头像获取失败，使用默认皮肤: %s", exc)
+            if isinstance(exc, httpx.HTTPStatusError):
+                reason = f"HTTP {exc.response.status_code}"
+                if exc.response.reason_phrase:
+                    reason += f" {exc.response.reason_phrase}"
+            else:
+                reason = str(exc)
+            source = "外置登录皮肤" if is_authlib else "在线头像源"
+            self.logger.warning("%s不可用，使用默认皮肤: %s", source, reason)
             return self._render_default_avatar(normalized_uuid, normalized_size)
 
     def close(self) -> None:
+        """关闭头像下载客户端。"""
         self.client.close()

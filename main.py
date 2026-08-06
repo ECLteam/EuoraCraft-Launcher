@@ -9,10 +9,8 @@ import sys
 from ECL.launcher import EuoraCraftLauncher
 
 
-def run_launcher() -> bool:
-    launcher = EuoraCraftLauncher()
-    return launcher.main_run()
+def run_launcher() -> int:
+    return int(EuoraCraftLauncher().run())
 
 if __name__ == "__main__":
-    if not run_launcher():
-        sys.exit(1)
+    sys.exit(run_launcher())

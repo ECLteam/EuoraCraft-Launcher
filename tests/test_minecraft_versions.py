@@ -35,6 +35,7 @@ def test_version_service_normalizes_scanner_output(tmp_path) -> None:
                     "VersionPath": str(game_path / "versions" / "fabric-profile"),
                     "RequestJava": "17",
                     "LoaderType": "Fabric",
+                    "LoaderVersion": "0.16.14",
                 }
             }
 
@@ -51,7 +52,9 @@ def test_version_service_normalizes_scanner_output(tmp_path) -> None:
             "path": str(game_path),
             "displayName": "fabric-profile",
             "primaryLoader": "Fabric",
+            "loaderVersion": "0.16.14",
             "vanillaName": "1.20.1",
+            "requiredJava": 17,
             "hasForge": False,
             "hasNeoForge": False,
             "hasFabric": True,

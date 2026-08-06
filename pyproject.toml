@@ -10,21 +10,18 @@ authors = [
     {name = "ECLTeam", email = "ECL@eclteam.top"},
 ]
 dependencies = [
-    "pytauri-wheel==0.8.0",
-    "pytauri==0.8.0",
+    "pytauri-wheel>=0.8.0",
+    "pytauri>=0.8.0",
     "anyio>=4.0",
     "colorama>=0.4.0",
     "pyperclip>=1.8.0",
-    "cryptography==46.0.3",
-    "keyring>=24.0.0",
-    "keyrings-alt>=4.0.0",
     "msal>=1.20.0",
     "Pillow>=10.0.0",
     "pydantic>=2.0.0",
     "httpx[http2]>=0.28.0",
     "lxml>=5.0.0",
     "psutil>=7.2.0",
-    "dotenv"
+    "dotenv>=0.9.9"
 ]
 requires-python = ">=3.11"
 readme = "README.md"

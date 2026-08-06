@@ -5,9 +5,37 @@ from typing import TYPE_CHECKING, Any
 
 from ECL.Events import EventBus
 from ECL.Infrastructure import get_logger
+from ECL.Plugin.permissions import Permission, PermissionAction, PermissionScope
 
 if TYPE_CHECKING:
     from ECL.Plugin.framework import PluginFramework
+
+
+def _register_decorated(cls) -> None:
+    """扫描类的 __dict__，将装饰器在函数对象上留下的标记转换为注册表条目。"""
+    for name, value in cls.__dict__.items():
+        meta = getattr(value, "_ecl_decorator", None)
+        if meta is None:
+            continue
+        kind, args = meta
+        if kind == "event":
+            cls._event_handlers.append((args[0], name))
+        elif kind == "command":
+            cls._command_handlers.append((args[0], name, args[1]))
+        elif kind == "setting":
+            cls._setting_definitions.append((args[0], args[1], args[2], args[3]))
+        elif kind == "route":
+            cls._route_definitions.append((args[0], args[1], args[2]))
+        elif kind == "css":
+            cls._frontend_injections.append(("css", (args[0],)))
+        elif kind == "html":
+            cls._frontend_injections.append(("html", (args[0], args[1])))
+        elif kind == "script":
+            cls._frontend_injections.append(("script", (args[0],)))
+        elif kind == "vue_slot":
+            cls._frontend_injections.append(("vue_slot", (args[0], args[1], args[2])))
+        elif kind == "vue_route":
+            cls._frontend_injections.append(("vue_route", (args[0], args[1], args[2], args[3], args[4])))
 
 
 class Plugin:
@@ -54,14 +82,21 @@ class Plugin:
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        # 为每个子类创建独立的注册表副本，避免子类间互相污染
+        # 为每个子类创建独立的注册表，并从当前类 __dict__ 中收集被装饰的方法
         cls._event_handlers = []
         cls._command_handlers = []
         cls._setting_definitions = []
         cls._route_definitions = []
         cls._frontend_injections = []
+        _register_decorated(cls)
 
-    def __init__(self, framework: "PluginFramework", plugin_dir: Path, metadata: dict[str, Any]):
+    def __init__(
+        self,
+        framework: "PluginFramework",
+        plugin_dir: Path,
+        metadata: dict[str, Any],
+        is_system: bool = False,
+    ) -> None:
         self.framework = framework
         self.plugin_dir: Path = plugin_dir # 插件根目录，用于读取 resources/
         self.name: str = metadata["name"]
@@ -70,6 +105,7 @@ class Plugin:
         self.description: str = metadata.get("description", "")
         self.author: str = metadata.get("author", "")
         self.metadata: dict[str, Any] = metadata
+        self.is_system = is_system
         self.logger = get_logger(f"Plugin.{self.name}")
         # 插件注册的命令映射，framework 调用时查表
         self._commands: dict[str, Callable] = {}
@@ -77,6 +113,16 @@ class Plugin:
         self._settings: dict[str, dict[str, Any]] = {}
         # 消费装饰器注册表，绑定到实例
         self._apply_decorators()
+
+    def _check_permission(
+        self, scope: PermissionScope, action: PermissionAction, resource: str = "*"
+    ) -> None:
+        """系统插件跳过权限校验，普通插件必须声明对应权限。"""
+        if self.is_system:
+            return
+        self.framework._permission_manager.check_permission(
+            self.name, Permission(scope, action, resource)
+        )
 
     def _apply_decorators(self) -> None:
         """将类级别的装饰器注册表绑定到当前实例"""
@@ -92,31 +138,31 @@ class Plugin:
         self._routes_to_register = list(self._route_definitions)
         self._injections_to_apply = list(self._frontend_injections)
 
-    @classmethod
-    def on_event(cls, event: str) -> Callable:
+    @staticmethod
+    def on_event(event: str) -> Callable:
         """
         装饰器：将方法注册为事件处理器，实例化时自动订阅
         :param event: 事件名称，如 "config:updated"
         """
         def wrapper(func):
-            cls._event_handlers.append((event, func.__name__))
+            func._ecl_decorator = ("event", (event,))
             return func
         return wrapper
 
-    @classmethod
-    def on_command(cls, name: str, description: str = "") -> Callable:
+    @staticmethod
+    def on_command(name: str, description: str = "") -> Callable:
         """
         装饰器：将方法注册为命令处理器，实例化时自动注册
         :param name: 命令名，调用时格式为 "插件名:命令名"
         :param description: 命令描述
         """
         def wrapper(func):
-            cls._command_handlers.append((name, func.__name__, description))
+            func._ecl_decorator = ("command", (name, description))
             return func
         return wrapper
 
-    @classmethod
-    def on_setting(cls, key: str, default: Any, type_: str = "string", description: str = "") -> Callable:
+    @staticmethod
+    def on_setting(key: str, default: Any, type_: str = "string", description: str = "") -> Callable:
         """
         装饰器：声明设置项，实例化时自动注册（被装饰的函数体可为空）
         :param key: 设置键名
@@ -125,12 +171,12 @@ class Plugin:
         :param description: 设置描述
         """
         def wrapper(func):
-            cls._setting_definitions.append((key, default, description, type_))
+            func._ecl_decorator = ("setting", (key, default, description, type_))
             return func
         return wrapper
 
-    @classmethod
-    def on_route(cls, path: str, title: str, icon: str = "") -> Callable:
+    @staticmethod
+    def on_route(path: str, title: str, icon: str = "") -> Callable:
         """
         装饰器：声明侧边栏路由，on_enable 时自动注册
         :param path: 路由路径，如 "/my-plugin"
@@ -138,46 +184,46 @@ class Plugin:
         :param icon: 图标名
         """
         def wrapper(func):
-            cls._route_definitions.append((path, title, icon))
+            func._ecl_decorator = ("route", (path, title, icon))
             return func
         return wrapper
 
-    @classmethod
-    def on_css(cls, file_path: str) -> Callable:
+    @staticmethod
+    def on_css(file_path: str) -> Callable:
         """
         装饰器：声明 CSS 文件，on_frontend_ready 时自动注入到前端
         :param file_path: 相对于插件目录的 CSS 文件路径，如 "style.css"
         """
         def wrapper(func):
-            cls._frontend_injections.append(("css", (file_path,)))
+            func._ecl_decorator = ("css", (file_path,))
             return func
         return wrapper
 
-    @classmethod
-    def on_html(cls, slot_id: str, file_path: str) -> Callable:
+    @staticmethod
+    def on_html(slot_id: str, file_path: str) -> Callable:
         """
         装饰器：声明 HTML 文件，on_frontend_ready 时自动注入到指定插槽
         :param slot_id: 插槽 ID
         :param file_path: 相对于插件目录的 HTML 文件路径，如 "sidebar.html"
         """
         def wrapper(func):
-            cls._frontend_injections.append(("html", (slot_id, file_path)))
+            func._ecl_decorator = ("html", (slot_id, file_path))
             return func
         return wrapper
 
-    @classmethod
-    def on_script(cls, file_path: str) -> Callable:
+    @staticmethod
+    def on_script(file_path: str) -> Callable:
         """
         装饰器：声明 JS 文件，on_frontend_ready 时自动注入到前端
         :param file_path: 相对于插件目录的 JS 文件路径，如 "counter.js"
         """
         def wrapper(func):
-            cls._frontend_injections.append(("script", (file_path,)))
+            func._ecl_decorator = ("script", (file_path,))
             return func
         return wrapper
 
-    @classmethod
-    def on_vue_slot(cls, slot_id: str, component_name: str, file_path: str) -> Callable:
+    @staticmethod
+    def on_vue_slot(slot_id: str, component_name: str, file_path: str) -> Callable:
         """
         装饰器：声明 Vue SFC 组件，on_frontend_ready 时自动注册到指定插槽
         :param slot_id: 插槽 ID
@@ -185,12 +231,12 @@ class Plugin:
         :param file_path: 相对于插件目录的 .vue 文件路径，如 "widget.vue"
         """
         def wrapper(func):
-            cls._frontend_injections.append(("vue_slot", (slot_id, component_name, file_path)))
+            func._ecl_decorator = ("vue_slot", (slot_id, component_name, file_path))
             return func
         return wrapper
 
-    @classmethod
-    def on_vue_route(cls, path: str, title: str, component_name: str,
+    @staticmethod
+    def on_vue_route(path: str, title: str, component_name: str,
                      file_path: str, icon: str = "") -> Callable:
         """
         装饰器：声明 Vue SFC 路由页面，on_enable 时自动注册
@@ -201,7 +247,7 @@ class Plugin:
         :param icon: 图标名
         """
         def wrapper(func):
-            cls._frontend_injections.append(("vue_route", (path, title, component_name, file_path, icon)))
+            func._ecl_decorator = ("vue_route", (path, title, component_name, file_path, icon))
             return func
         return wrapper
 
@@ -240,6 +286,7 @@ class Plugin:
         :param title: 显示名称
         :param icon: 图标名
         """
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework._register_route(self, path, title, icon)
 
     def register_command(self, name: str, handler: Callable, description: str = "") -> None:
@@ -249,6 +296,7 @@ class Plugin:
         :param handler: 命令处理函数
         :param description: 命令描述
         """
+        self._check_permission(PermissionScope.COMMANDS, PermissionAction.EXECUTE, name)
         self._commands[name] = handler
 
     def register_setting(self, key: str, default: Any, description: str = "", type_: str = "string") -> None:
@@ -259,6 +307,7 @@ class Plugin:
         :param description: 设置描述
         :param type_: 设置类型 bool | string | number | select
         """
+        self._check_permission(PermissionScope.SETTINGS, PermissionAction.WRITE, key)
         self._settings[key] = {
             "key": key,
             "default": default,
@@ -266,26 +315,31 @@ class Plugin:
             "type": type_,
         }
 
-    def inject_css(self, css: str) -> None:
+    def inject_css(self, css: str, key: str | None = None) -> None:
         """
-        向宿主前端注入 CSS 样式
+        向宿主前端注入仅作用于当前插件内容的 CSS 样式
         :param css: CSS 样式字符串
+        :param key: 更新已有样式时使用的稳定标识；不传则追加
         """
-        EventBus().emit("plugin:css_injected", self.name, css)
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
+        EventBus().emit("plugin:css_injected", self.name, css, key)
 
-    def inject_html(self, slot_id: str, html: str) -> None:
+    def inject_html(self, slot_id: str, html: str, key: str | None = None) -> None:
         """
         向宿主前端注入 HTML 片段
         :param slot_id: 插槽 ID，对应前端 plugin-slot 组件
         :param html: HTML 字符串
+        :param key: 更新已有条目时使用的稳定标识；不传则追加
         """
-        EventBus().emit("plugin:html_injected", self.name, slot_id, html)
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
+        EventBus().emit("plugin:html_injected", self.name, slot_id, html, key)
 
     def inject_script(self, script: str) -> None:
         """
         向宿主前端注入 JavaScript 脚本
         :param script: JS 代码字符串
         """
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         EventBus().emit("plugin:script_injected", self.name, script)
 
     def inject_typescript(self, script: str) -> None:
@@ -293,6 +347,7 @@ class Plugin:
         向宿主前端注入 TypeScript 脚本（前端会通过 sucrase 转译）
         :param script: TS 代码字符串
         """
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         EventBus().emit("plugin:typescript_injected", self.name, script)
 
     def register_html_file(self, slot_id: str, file_path: str) -> None:
@@ -303,7 +358,7 @@ class Plugin:
         """
         content = self.load_file(file_path)
         if content:
-            self.inject_html(slot_id, content)
+            self.inject_html(slot_id, content, file_path)
 
     def register_css_file(self, file_path: str) -> None:
         """
@@ -312,7 +367,7 @@ class Plugin:
         """
         content = self.load_file(file_path)
         if content:
-            self.inject_css(content)
+            self.inject_css(content, file_path)
 
     def register_script_file(self, file_path: str) -> None:
         """
@@ -377,6 +432,7 @@ class Plugin:
         :param style: 组件 scoped CSS
         :param icon: 图标名
         """
+        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework._register_vue_route(self, path, title, icon,
                                            component_name, template, script, style)
 
@@ -386,15 +442,17 @@ class Plugin:
         :param event: 事件名称，格式建议 "模块:动作"，如 "crash:detected"
         :param payload: 事件负载数据
         """
+        self._check_permission(PermissionScope.EVENTS, PermissionAction.EMIT, event)
         EventBus().emit(event, payload)
 
     def subscribe(self, event: str, handler: Callable) -> None:
         """
-        订阅全局事件
+        订阅全局事件；自动以当前插件名作为所有者。
         :param event: 事件名称
         :param handler: 回调函数
         """
-        EventBus().subscribe(event, handler)
+        self._check_permission(PermissionScope.EVENTS, PermissionAction.SUBSCRIBE, event)
+        EventBus().subscribe(event, handler, owner=self.name)
 
     def load_file(self, relative_path: str, encoding: str = "utf-8") -> str | None:
         """
@@ -403,6 +461,7 @@ class Plugin:
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
         """
+        self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
         path = self.plugin_dir / relative_path
         if not path.is_file():
             return None
@@ -423,6 +482,7 @@ class Plugin:
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
         """
+        self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
         path = self.resource_path(relative_path)
         if not path.is_file():
             return None
@@ -430,11 +490,6 @@ class Plugin:
 
     @staticmethod
     def _parse_vue_sfc(content: str) -> dict[str, str]:
-        """
-        解析 Vue SFC 文件，提取 template / script / style 区块
-        :param content: .vue 文件内容
-        :return: {"template": "...", "script": "...", "style": "..."}
-        """
         result: dict[str, str] = {"template": "", "script": "", "style": ""}
         for tag in ("template", "script", "style"):
             match = re.search(rf"<{tag}.*?>(.*?)</{tag}>", content, re.DOTALL)

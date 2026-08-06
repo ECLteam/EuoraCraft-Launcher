@@ -18,11 +18,6 @@ a = Analysis(
         ("Tauri.toml", "."),
     ] + copy_metadata("pytauri-wheel"),
     hiddenimports=[
-        "requests",
-        "charset_normalizer",
-        "idna",
-        "urllib3",
-        "certifi",
         "importlib_metadata",
         "pytauri",
         "pytauri.ffi",

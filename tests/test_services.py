@@ -6,6 +6,7 @@ class FakeService:
     def __init__(self, path, **options):
         self.path = path
         self.options = options
+        self.authlib_manager = object()
         self.closed = False
 
     def close(self) -> None:
@@ -22,7 +23,7 @@ def test_register_services_builds_and_registers_all_services(tmp_path, monkeypat
     monkeypatch.setattr(services, "AccountManager", FakeService)
     monkeypatch.setattr(services, "AvatarManager", FakeService)
     monkeypatch.setattr(services, "InfoCardManager", FakeService)
-    monkeypatch.setattr(services, "GameService", lambda accounts: FakeService("game"))
+    monkeypatch.setattr(services, "GameService", lambda accounts, **_options: FakeService("game"))
 
     accounts, avatars, info_card, game_service = services.register_services(
         tmp_path / "ECL_data",
@@ -36,6 +37,7 @@ def test_register_services_builds_and_registers_all_services(tmp_path, monkeypat
     assert bus["game"] is game_service
     assert accounts.path == tmp_path / "ECL_data"
     assert avatars.path == tmp_path / "resources"
+    assert avatars.options["authlib_manager"] is accounts.authlib_manager
     assert info_card.path == tmp_path / "ECL_data"
     assert game_service.path == "game"
     _reset_event_bus()
@@ -54,7 +56,7 @@ def test_register_services_passes_microsoft_client_id_from_environment(tmp_path,
     monkeypatch.setattr(services, "AccountManager", FakeService)
     monkeypatch.setattr(services, "AvatarManager", FakeService)
     monkeypatch.setattr(services, "InfoCardManager", FakeService)
-    monkeypatch.setattr(services, "GameService", lambda accounts: FakeService("game"))
+    monkeypatch.setattr(services, "GameService", lambda accounts, **_options: FakeService("game"))
 
     accounts, _, _, _ = services.register_services(tmp_path / "ECL_data", tmp_path / "resources")
 

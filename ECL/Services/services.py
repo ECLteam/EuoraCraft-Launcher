@@ -28,9 +28,12 @@ def register_services(
 
     try:
         account_manager = AccountManager(data_path, microsoft_client_id=microsoft_client_id)
-        avatar_manager = AvatarManager(resource_path)
+        avatar_manager = AvatarManager(
+            resource_path,
+            authlib_manager=account_manager.authlib_manager,
+        )
         info_card_manager = InfoCardManager(data_path)
-        game_service = GameService(account_manager)
+        game_service = GameService(account_manager, data_path=data_path)
     except Exception:
         if account_manager is not None:
             with suppress(Exception):

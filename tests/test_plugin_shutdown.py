@@ -14,6 +14,24 @@ def _reset_runtime() -> None:
 
 def test_plugin_framework_close_disables_and_unloads_every_plugin() -> None:
     _reset_runtime()
+
+
+def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
+    _reset_runtime()
+    framework = PluginFramework()
+    framework.logger = Mock()
+    plugin = Mock()
+    plugin.name = "loaded"
+    framework._plugins = {"loaded": plugin}
+    framework._status = {"loaded": "enabled", "disabled": "disabled"}
+    framework._dependency_resolution.load_order = ["loaded", "disabled"]
+
+    framework.close()
+
+    plugin.on_disable.assert_called_once_with()
+    plugin.on_unload.assert_called_once_with()
+    framework.logger.warning.assert_not_called()
+    _reset_runtime()
     framework = PluginFramework()
     first = Mock()
     second = Mock()
@@ -61,18 +79,18 @@ def test_launcher_shutdown_closes_plugins_before_backend_services() -> None:
     assert order == ["plugins", "game", "accounts"]
 
 
-def test_main_run_shuts_down_when_adapter_fails(monkeypatch) -> None:
+def test_run_shuts_down_when_adapter_fails(monkeypatch) -> None:
     class FailedAdapter:
-        def run_adapter(self):
+        def run(self):
             raise RuntimeError("adapter failed")
 
     launcher = object.__new__(launcher_module.EuoraCraftLauncher)
     launcher.logger = Mock()
     launcher.launcher_version = "test"
     launcher.launcher_version_type = "dev"
-    launcher._init = Mock(return_value=True)
+    launcher._initialize = Mock()
     launcher._shutdown = Mock()
     monkeypatch.setattr(launcher_module, "Adapter", FailedAdapter)
 
-    assert launcher.main_run() is False
+    assert launcher.run() is launcher_module.LauncherExitCode.FRONTEND_FAILED
     launcher._shutdown.assert_called_once_with()

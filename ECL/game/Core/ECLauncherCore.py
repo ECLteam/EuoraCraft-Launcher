@@ -13,7 +13,9 @@ class JvmArgumentBuilder:
         java_path: Path | str,
         version_name: str,
         use_ram: int,
-        use_gc: str = "G1GC"
+        use_gc: str = "G1GC",
+        authlib_path: Path | str | None = None,
+        yggdrasil_api: str | None = None
     ):
         """
         初始化
@@ -21,11 +23,15 @@ class JvmArgumentBuilder:
         :param version_name: 版本名称
         :param use_ram: 分配给 Minecraft 的内存(MB)
         :param use_gc: Jvm 使用什么 GC, 如 "G1GC" 或 "ZGC"
+        :param authlib_path: authlib-injector.jar 路径
+        :param yggdrasil_api: 提供 Yggdrasil 登录的网站 URL
         """
         self.java_path = Path(java_path)
         self.version_name = version_name
         self.use_ram = use_ram
         self.use_gc = use_gc
+        self.authlib_path = Path(authlib_path) if authlib_path else None
+        self.yggdrasil_api = yggdrasil_api
 
         self.system = platform.system()
         self.args = []
@@ -51,6 +57,9 @@ class JvmArgumentBuilder:
             self.args.append("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump")
         elif self.system == "Darwin":
             self.args.append("-XstartOnFirstThread")
+
+        if self.authlib_path and self.yggdrasil_api:
+            self.args.append(f'-javaagent:"{self.authlib_path}"={self.yggdrasil_api}')
 
     def add_jvm_args(self, version_json: dict) -> "JvmArgumentBuilder":
         """
@@ -227,7 +236,7 @@ class LaunchConfig:
     auth_uuid: str
     """登录的 UUID(UUID3)"""
     user_type: str = "legacy"
-    """用户类型, "legacy" 为离线登录, "msa" 为 Microsoft 登录"""
+    """用户类型, "legacy" 为离线登录, "microsoft" 为 Microsoft 登录, "yggdrasil" 为外置登录"""
     access_token: str = "None"
     """user_type 非 "legacy" 登录需要添加 Token 令牌"""
     use_gc: str = "G1GC"
@@ -244,6 +253,10 @@ class LaunchConfig:
     """Minecraft 窗口宽度(px)"""
     window_height: int | str = 480
     """Minecraft 窗口高度(px)"""
+    authlib_path: Path | str | None = None,
+    """authlib-injector.jar 路径"""
+    yggdrasil_api: str | None = None
+    """提供 Yggdrasil 登录的网站 URL"""
 
     def get(self, key_name: str) -> str | None:
         """
@@ -320,6 +333,11 @@ class PlaceholderReplacer:
         game_dir = Path(self.config.game_path) / "versions"
         if not self.version_isolation:
             game_dir = game_dir / self.config.version_name
+
+        user_type = self.config.user_type
+        if self.config.user_type.lower() == "yggdrasil":
+            user_type = "mojang"
+
         return {
             "library_directory": str(Path(self.config.game_path) / "libraries"),
             "assets_root": str(Path(self.config.game_path) / "assets"),
@@ -330,7 +348,7 @@ class PlaceholderReplacer:
             "launcher_version": self.config.launcher_version,
             "version_type": self.config.launcher_name,
             "auth_player_name": self.config.player_name,
-            "user_type": self.config.user_type,
+            "user_type": user_type,
             "auth_uuid": self.config.auth_uuid,
             "auth_access_token": self.config.access_token,
             "user_properties": "{}",
@@ -376,12 +394,19 @@ def build_minecraft_cmd(config: LaunchConfig) -> str:
     :param config: LaunchConfig 实例
     :return: 构建好的启动指令
     """
+    authlib_path = None
+    yggdrasil_api = None
+    if config.user_type.lower() == "yggdrasil":
+        authlib_path = config.authlib_path
+        yggdrasil_api = config.yggdrasil_api
 
     jvm_builder = JvmArgumentBuilder(
         java_path=config.java_path,
         version_name=config.version_name,
         use_ram=config.use_ram,
-        use_gc=config.use_gc
+        use_gc=config.use_gc,
+        authlib_path=authlib_path,
+        yggdrasil_api=yggdrasil_api
     )
 
     version_json = json.loads(

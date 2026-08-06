@@ -1,0 +1,81 @@
+from pathlib import Path
+
+from ECL.Events import EventBus
+from ECL.Plugin import Plugin, PluginFramework
+
+
+def _framework() -> PluginFramework:
+    EventBus._instance = None
+    EventBus._initialized = False
+    PluginFramework._instance = None
+    PluginFramework._initialized = False
+    return PluginFramework()
+
+
+def test_html_slot_appends_without_key_and_updates_matching_key() -> None:
+    framework = _framework()
+
+    framework._on_html_injected("demo", "sidebar-bottom", "first", None)
+    framework._on_html_injected("demo", "sidebar-bottom", "second", None)
+    framework._on_html_injected("demo", "sidebar-bottom", "old", "status")
+    framework._on_html_injected("demo", "sidebar-bottom", "new", "status")
+
+    assert framework.get_slots()["sidebar-bottom"] == [
+        {"plugin": "demo", "html": "first"},
+        {"plugin": "demo", "html": "second"},
+        {"plugin": "demo", "html": "new", "key": "status"},
+    ]
+
+
+def test_vue_slot_keeps_distinct_components_from_the_same_plugin() -> None:
+    framework = _framework()
+
+    framework._on_vue_slot_registered("demo", "sidebar-bottom", "clock", "old", "", "")
+    framework._on_vue_slot_registered("demo", "sidebar-bottom", "status", "status", "", "")
+    framework._on_vue_slot_registered("demo", "sidebar-bottom", "clock", "new", "", "")
+
+    entries = framework.get_vue_slots()["sidebar-bottom"]
+    assert [entry["component_name"] for entry in entries] == ["clock", "status"]
+    assert entries[0]["template"] == "new"
+
+
+def test_disable_removes_plugin_frontend_content() -> None:
+    framework = _framework()
+    plugin = Plugin(framework, Path(), {"name": "demo"})
+    framework._plugins["demo"] = plugin
+    framework._status["demo"] = "enabled"
+    framework._routes = [
+        {"plugin": "demo", "path": "/demo"},
+        {"plugin": "other", "path": "/other"},
+    ]
+    framework._vue_routes = [
+        {"plugin": "demo", "path": "/demo"},
+        {"plugin": "other", "path": "/other"},
+    ]
+    framework._slots = {
+        "sidebar-bottom": [
+            {"plugin": "demo", "html": "demo"},
+            {"plugin": "other", "html": "other"},
+        ]
+    }
+    framework._vue_slots = {
+        "sidebar-bottom": [
+            {"plugin": "demo", "component_name": "demo-card"},
+            {"plugin": "other", "component_name": "other-card"},
+        ]
+    }
+    framework._vue_components = {
+        "demo-card": {"plugin": "demo"},
+        "other-card": {"plugin": "other"},
+    }
+
+    result = framework.disable("demo", _persist_state=False)
+
+    assert result.status == "disabled"
+    assert framework._routes == [{"plugin": "other", "path": "/other"}]
+    assert framework._vue_routes == [{"plugin": "other", "path": "/other"}]
+    assert framework.get_slots()["sidebar-bottom"] == [{"plugin": "other", "html": "other"}]
+    assert framework.get_vue_slots()["sidebar-bottom"] == [
+        {"plugin": "other", "component_name": "other-card"}
+    ]
+    assert framework.get_vue_components() == {"other-card": {"plugin": "other"}}
