@@ -14,7 +14,7 @@ import httpx
 
 from ECL.Infrastructure import get_logger
 
-NOTICE_URL = "https://cdn.jsdelivr.net/gh/ECLteam/ECL-Api@main/notice.json"
+NOTICE_URL = "https://api.eclteam.top/raw/ECLteam/ECL-Api/main/notice.json"
 NOTICE_SCHEMA_VERSION = 1
 NOTICE_REFRESH_SECONDS = 300.0
 NOTICE_TIMEOUT_SECONDS = 5.0

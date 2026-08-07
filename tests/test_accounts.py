@@ -66,6 +66,9 @@ class FakeAuthlibManager:
     def list_accounts(self) -> dict[str, dict[str, Any]]:
         return self.accounts.copy()
 
+    def resolve_server(self, url: str) -> str:
+        return f"{url.rstrip('/')}/api/yggdrasil"
+
     def add_account(self, url: str, username: str, password: str) -> tuple[str, dict[str, Any]]:
         assert password == "secret-password"
         account_id = "yggdrasil-account"
@@ -85,14 +88,18 @@ class FakeAuthlibManager:
     def delete_account(self, account_id: str) -> None:
         self.accounts.pop(account_id)
 
-    def select_profile(self, account_id: str, profile_id: str) -> dict[str, Any]:
-        profiles = self.accounts[account_id]["Profiles"]
-        selected_profile = next(profile for profile in profiles["availableProfiles"] if profile["id"] == profile_id)
-        self.accounts[account_id]["Profiles"] = {"selectedProfile": selected_profile}
-        return self.accounts[account_id]
-
     def refresh_account(self, account_id: str) -> dict[str, Any]:
         return self.accounts[account_id]
+
+    def select_profile(self, account_id: str, profile_id: str) -> tuple[str, dict[str, Any]]:
+        account = {
+            "AccountId": account_id,
+            "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
+            "Username": "player@example.com",
+            "Profiles": {"selectedProfile": {"id": profile_id, "name": "SelectedPlayer"}},
+        }
+        self.accounts[account_id] = account
+        return account_id, account
 
     def get_token(self, account_id: str) -> dict[str, str]:
         assert account_id in self.accounts
@@ -104,6 +111,11 @@ class FakeAuthlibManager:
 
     def close(self) -> None:
         self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def _use_isolated_authlib_manager(monkeypatch):
+    monkeypatch.setattr(accounts_service, "AuthlibAccountManager", FakeAuthlibManager)
 
 
 class BlockingMicrosoftManager(FakeMicrosoftManager):
@@ -243,76 +255,52 @@ def test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None:
     assert manager.list_accounts()["accounts"] == []
 
 
-def test_authlib_account_requires_profile_selection(tmp_path) -> None:
-    authlib_manager = FakeAuthlibManager()
-    authlib_manager.accounts["pending-account"] = {
-        "AccountId": "pending-account",
-        "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
-        "Profiles": {
-            "availableProfiles": [
-                {"id": "profile-one", "name": "PlayerOne"},
-                {"id": "profile-two", "name": "PlayerTwo"},
-            ]
-        },
-    }
+def test_authlib_multi_profile_login_only_becomes_current_after_one_profile_is_selected(tmp_path) -> None:
+    class MultiProfileAuthlibManager(FakeAuthlibManager):
+        def add_account(self, url: str, username: str, password: str) -> tuple[str, dict[str, Any]]:
+            return "pending-authlib", {
+                "AccountId": "pending-authlib",
+                "YggdrasilAPI": url,
+                "Username": username,
+                "Profiles": {
+                    "availableProfiles": [
+                        {"id": "profile-one", "name": "PlayerOne"},
+                        {"id": "profile-two", "name": "PlayerTwo"},
+                    ]
+                },
+            }
+
     manager = AccountManager(
         tmp_path,
         microsoft_manager=FakeMicrosoftManager(),
-        authlib_manager=authlib_manager,
+        authlib_manager=MultiProfileAuthlibManager(),
     )
 
-    pending_account = manager.list_accounts()["accounts"][0]
-    selected_accounts = manager.select_authlib_profiles("pending-account", ["profile-two"])
-
-    assert pending_account["profile_selection_required"] is True
-    assert pending_account["available_profiles"][1]["name"] == "PlayerTwo"
-    assert selected_accounts[0]["alias"] == "PlayerTwo"
-    assert selected_accounts[0]["uuid"] == "profile-two"
-
-
-def test_authlib_login_can_save_multiple_profiles(tmp_path) -> None:
-    authlib_manager = FakeAuthlibManager()
-    available_profiles = [
-        {"id": "profile-one", "name": "PlayerOne"},
-        {"id": "profile-two", "name": "PlayerTwo"},
-    ]
-    authlib_manager.accounts["pending-account"] = {
-        "AccountId": "pending-account",
-        "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
-        "Username": "player@example.com",
-        "Profiles": {"availableProfiles": available_profiles},
-    }
-
-    def add_pending_account(url: str, username: str, password: str):
-        assert password == "secret-password"
-        account_id = "second-account"
-        info = {
-            "AccountId": account_id,
-            "YggdrasilAPI": url,
-            "Username": username,
-            "Profiles": {"availableProfiles": available_profiles},
-        }
-        authlib_manager.accounts[account_id] = info
-        return account_id, info
-
-    authlib_manager.add_account = add_pending_account
-    manager = AccountManager(
-        tmp_path,
-        microsoft_manager=FakeMicrosoftManager(),
-        authlib_manager=authlib_manager,
-    )
-
-    selected_accounts = manager.select_authlib_profiles(
-        "pending-account",
-        ["profile-one", "profile-two"],
+    pending = manager.add_authlib(
+        "https://skin.example.com/api/yggdrasil",
+        "player@example.com",
         "secret-password",
     )
 
-    assert [account["alias"] for account in selected_accounts] == ["PlayerOne", "PlayerTwo"]
-    assert [account["auth_server"] for account in manager.list_accounts()["accounts"]] == [
-        "https://skin.example.com/api/yggdrasil",
-        "https://skin.example.com/api/yggdrasil",
-    ]
+    assert pending["profile_selection_required"] is True
+    assert pending["available_profiles"][1]["name"] == "PlayerTwo"
+    assert manager.list_accounts()["current"] is None
+
+    account = manager.select_authlib_profile("pending-authlib", "profile-two")
+
+    assert account["alias"] == "SelectedPlayer"
+    assert account["uuid"] == "profile-two"
+    assert account["isCurrent"] is True
+
+
+def test_authlib_server_uses_ali_resolution(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=FakeAuthlibManager(),
+    )
+
+    assert manager.resolve_authlib_server("https://skin.example.com") == ("https://skin.example.com/api/yggdrasil")
 
 
 def test_authlib_login_uses_server_error_message(tmp_path, monkeypatch) -> None:
@@ -357,7 +345,7 @@ def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch)
     manager = AccountManager(tmp_path, microsoft_client_id="runtime-client-id")
 
     assert captured_options["client_id"] == "runtime-client-id"
-    assert captured_options["cache_path"] == tmp_path
+    assert "cache_path" not in captured_options
     assert manager.microsoft_login_config() == {"available": True, "needs_client_id": False}
     manager.close()
 

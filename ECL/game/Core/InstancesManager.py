@@ -88,6 +88,7 @@ class InstancesManager:
         std_in: bool = False,
         log_callback: Callable[[str, str], None] | None = None,
         exit_callback: Callable[[int, str], None] | None = None,
+        block_thread: bool = False
     ) -> str:
         """
         创建一个新的实例(子进程), 并启动日志读取线程
@@ -100,6 +101,7 @@ class InstancesManager:
         :param std_in: 是否开启 STDIN 管道
         :param log_callback: 接受一个这样的函数 (log: str, instance_id: str) -> None
         :param exit_callback: 接受一个这样的函数 (exit_code: int, instance_id: str) -> None
+        :param block_thread: 是否阻塞调用线程直到子进程退出
         :return: 实例 ID(uuid4.hex)
         """
         proc = subprocess.Popen(
@@ -154,6 +156,9 @@ class InstancesManager:
                     }
                 }
             )
+
+        if block_thread:
+            proc.wait()  # 等待进程退出
 
         return instance_id
 

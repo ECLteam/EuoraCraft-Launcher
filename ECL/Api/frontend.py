@@ -292,6 +292,8 @@ class FrontendApi:
         server_url = value.strip()
         if not server_url or " " in server_url:
             return None
+        if "://" not in server_url:
+            server_url = f"https://{server_url}"
         try:
             parsed = urlsplit(server_url)
         except ValueError:
@@ -493,7 +495,10 @@ class FrontendApi:
             requested_paths = [item.get("path") if isinstance(item, dict) else item for item in minecraft_paths]
         if self.game is None:
             return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
-        scanned_versions = await to_thread.run_sync(self.game.scan_versions, requested_paths)
+        if body.get("force"):
+            scanned_versions = await to_thread.run_sync(lambda: self.game.scan_versions(requested_paths, force=True))
+        else:
+            scanned_versions = await to_thread.run_sync(self.game.scan_versions, requested_paths)
         return {"success": True, "data": scanned_versions}
 
     @_ipc_handler("VERSION_INSTALL_FAILED")
@@ -554,16 +559,24 @@ class FrontendApi:
         self._remember_authlib_login(account.get("auth_server") or server_url, email)
         return {"success": True, "data": account}
 
-    @_ipc_handler("AUTHLIB_PROFILE_FAILED")
-    async def accounts_select_authlib_profiles(self, body: dict[str, Any]) -> dict[str, Any]:
-        """选择一个或多个外置登录角色。"""
-        accounts = await to_thread.run_sync(
-            self.accounts.select_authlib_profiles,
+    @_ipc_handler("AUTHLIB_PROFILE_SELECT_FAILED")
+    async def accounts_select_authlib_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+        """为多角色外置账户选择本次登录使用的单个角色。"""
+        account = await to_thread.run_sync(
+            self.accounts.select_authlib_profile,
             body.get("account_id"),
-            body.get("profile_ids"),
-            body.get("password"),
+            body.get("profile_id"),
         )
-        return {"success": True, "data": accounts}
+        return {"success": True, "data": account}
+
+    @_ipc_handler("AUTHLIB_SERVER_RESOLVE_FAILED")
+    async def authlib_resolve_server(self, body: dict[str, Any]) -> dict[str, Any]:
+        """解析外置登录网站实际使用的 API 地址。"""
+        server_url = self._normalize_authlib_server_url(body.get("server_url"))
+        if server_url is None:
+            return {"success": False, "message": "外置登录服务器地址无效", "errorCode": "INVALID_AUTHLIB_SERVER"}
+        resolved_url = await to_thread.run_sync(self.accounts.resolve_authlib_server, server_url)
+        return {"success": True, "data": resolved_url}
 
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_start_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:

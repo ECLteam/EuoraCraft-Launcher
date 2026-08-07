@@ -50,17 +50,18 @@ class FakeAccounts:
             "auth_server": server_url,
         }
 
-    def select_authlib_profiles(self, account_id, profile_ids, password=None):
-        self.last_authlib_profiles = (account_id, profile_ids, password)
-        return [
-            {
-                "id": f"authlib-{profile_id}",
-                "alias": profile_id,
-                "type": "authlib",
-                "uuid": profile_id,
-            }
-            for profile_id in profile_ids
-        ]
+    def resolve_authlib_server(self, server_url):
+        return f"{server_url.rstrip('/')}/api/yggdrasil"
+
+    def select_authlib_profile(self, account_id, profile_id):
+        self.last_authlib_profile = (account_id, profile_id)
+        return {
+            "id": account_id,
+            "alias": "SelectedPlayer",
+            "type": "authlib",
+            "uuid": profile_id,
+            "isCurrent": True,
+        }
 
 
 class FakePlugins:
@@ -109,9 +110,11 @@ class FakeGame:
         self.install_call = None
         self.launch_call = None
         self.requested_paths = None
+        self.scan_force = False
 
-    def scan_versions(self, paths):
+    def scan_versions(self, paths, *, force=False):
         self.requested_paths = paths
+        self.scan_force = force
         return [{"id": "1.20.1", "versionId": "1.20.1"}]
 
     def scan_java(self, user_paths):
@@ -250,6 +253,10 @@ def test_scan_versions_delegates_to_registered_service(tmp_path) -> None:
         "data": [{"id": "1.20.1", "versionId": "1.20.1"}],
     }
     assert api.game.requested_paths == ["D:/Games/.minecraft"]
+
+    forced_result = asyncio.run(api.scan_versions({"path": ["D:/Games/.minecraft"], "force": True}))
+    assert forced_result["success"] is True
+    assert api.game.scan_force is True
     _reset_singletons()
 
 
@@ -370,26 +377,30 @@ def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> No
     _reset_singletons()
 
 
-def test_authlib_profile_selection_supports_multiple_accounts(tmp_path) -> None:
+def test_authlib_profile_selection_is_forwarded_to_account_manager(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(
-        api.accounts_select_authlib_profiles(
-            {
-                "account_id": "pending-account",
-                "profile_ids": ["profile-one", "profile-two"],
-                "password": "secret-password",
-            }
+        api.accounts_select_authlib_profile(
+            {"account_id": "pending-authlib", "profile_id": "profile-two"}
         )
     )
 
     assert result["success"] is True
-    assert [account["uuid"] for account in result["data"]] == ["profile-one", "profile-two"]
-    assert api.accounts.last_authlib_profiles == (
-        "pending-account",
-        ["profile-one", "profile-two"],
-        "secret-password",
-    )
+    assert result["data"]["uuid"] == "profile-two"
+    assert api.accounts.last_authlib_profile == ("pending-authlib", "profile-two")
+    _reset_singletons()
+
+
+def test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.authlib_resolve_server({"server_url": "skin.example.com"}))
+
+    assert result == {
+        "success": True,
+        "data": "https://skin.example.com/api/yggdrasil",
+    }
     _reset_singletons()
 
 

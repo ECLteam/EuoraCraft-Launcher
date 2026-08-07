@@ -52,9 +52,9 @@ class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
     def __init__(
         self,
         client_id: str,
-        cache_path: Path | str,
         on_device_code: Callable[[dict[str, str]], None],
         on_progress: Callable[[str], None],
+        cache_path: Path | str | None = None,
     ) -> None:
         super().__init__(client_id, cache_path, on_device_code)
         self._progress_client = _ProgressMinecraftClient(self.minecraft_client, on_progress)

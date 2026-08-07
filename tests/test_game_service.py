@@ -12,6 +12,9 @@ from ECL.Services.game import GameService, GameServiceError
 
 
 class FakeAccounts:
+    def current_account(self):
+        return {"id": "offline", "type": "offline"}
+
     def get_launch_credentials(self):
         return {
             "player_name": "Steve",
@@ -41,6 +44,7 @@ class FakeInstances:
     def __init__(self):
         self.items = []
         self.created = None
+        self.shutdown_calls = []
 
     def create_instance(self, **options):
         instance_id = "minecraft-instance"
@@ -64,8 +68,8 @@ class FakeInstances:
                 item["Instance"].running = False
         return True
 
-    def shutdown_all(self, **_options):
-        return None
+    def shutdown_all(self, **options):
+        self.shutdown_calls.append(options)
 
 
 class FakeDownloader:
@@ -115,7 +119,48 @@ def test_scan_versions_is_owned_by_game_service(tmp_path) -> None:
     service = _build_service(search_factory=FakeSearchMinecraft)
 
     assert service.scan_versions([str(game_path)]) == []
+    assert service.scan_versions([str(game_path)]) == []
     assert requested_paths == [game_path]
+
+    assert service.scan_versions([str(game_path)], force=True) == []
+    assert requested_paths == [game_path, game_path]
+
+
+def test_version_directory_change_invalidates_cache_and_emits_event(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    versions_path = game_path / "versions"
+    versions_path.mkdir(parents=True)
+    scan_count = 0
+
+    class FakeSearchMinecraft:
+        def __init__(self, _path):
+            pass
+
+        def search_minecraft(self):
+            nonlocal scan_count
+            scan_count += 1
+            return {}
+
+    service = _build_service(
+        search_factory=FakeSearchMinecraft,
+        enable_version_watcher=True,
+        version_watch_interval=60,
+        version_watch_debounce=0,
+    )
+    events = []
+    EventBus().subscribe("game:versions_changed", events.append)
+    try:
+        service.scan_versions([str(game_path)])
+        (versions_path / "1.21.1").mkdir()
+
+        changed_paths = service._poll_version_changes(now=1)
+
+        assert changed_paths == [str(game_path.resolve())]
+        assert events == [{"gamePath": str(game_path.resolve())}]
+        service.scan_versions([str(game_path)])
+        assert scan_count == 2
+    finally:
+        service.close()
 
 
 def test_java_scanner_result_is_exposed_and_used_for_required_version(tmp_path) -> None:
@@ -375,6 +420,8 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     assert captured_configs[0].player_name == "Steve"
     assert captured_configs[0].use_ram == 6144
     assert shlex.split(instances.created["args"])[-2:] == ["--demo", "hello world"]
+    assert instances.created["cwd"] == version_path
+    assert instances.created["new_session"] is True
     assert service.list_instances() == [
         {
             "id": "minecraft-instance",
@@ -386,8 +433,20 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     ]
 
 
+def test_close_keeps_running_game_instances_alive() -> None:
+    instances = FakeInstances()
+    service = _build_service(instances_manager=instances)
+
+    service.close()
+
+    assert instances.shutdown_calls == []
+
+
 def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> None:
     class AuthlibAccounts:
+        def current_account(self):
+            return {"id": "authlib", "type": "authlib"}
+
         def get_launch_credentials(self):
             return {
                 "player_name": "Player",
@@ -416,6 +475,9 @@ def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> N
     injector_path = tmp_path / "authlib-injector.jar"
     injector_path.write_bytes(b"jar")
     captured_configs = []
+    _reset_event_bus()
+    events = []
+    EventBus().subscribe("game:launch_progress", events.append)
     service = GameService(
         AuthlibAccounts(),
         search_factory=EmptySearchMinecraft,
@@ -442,6 +504,62 @@ def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> N
     assert config.user_type == "yggdrasil"
     assert config.authlib_path == injector_path
     assert config.yggdrasil_api == "https://skin.example.com/api/yggdrasil"
+    assert [event["phase"] for event in events[:4]] == [
+        "preparing",
+        "authlib_token",
+        "account_ready",
+        "authlib",
+    ]
+    assert events[1]["message"] == "正在验证外置登录令牌，过期时将自动刷新"
+
+
+def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) -> None:
+    class MicrosoftAccounts:
+        def current_account(self):
+            return {"id": "microsoft", "type": "microsoft"}
+
+        def get_launch_credentials(self):
+            return {
+                "player_name": "Player",
+                "uuid": "0123456789abcdef0123456789abcdef",
+                "user_type": "msa",
+                "access_token": "access-token",
+            }
+
+    _reset_event_bus()
+    events = []
+    EventBus().subscribe("game:launch_progress", events.append)
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    service = GameService(
+        MicrosoftAccounts(),
+        search_factory=EmptySearchMinecraft,
+        instances_manager=FakeInstances(),
+        downloader_factory=FakeDownloader,
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+        )
+    )
+
+    phases = [event["phase"] for event in events]
+    assert phases[:3] == ["preparing", "microsoft_token", "account_ready"]
+    assert events[1]["message"] == "正在检查正版登录令牌，过期时将自动刷新"
+    assert events[2]["message"] == "正版登录令牌已就绪"
 
 
 def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None:

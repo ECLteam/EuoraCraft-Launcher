@@ -103,7 +103,7 @@ class Adapter:
         self.commands.command("accounts_current")(api.accounts_current)
         self.commands.command("accounts_add_offline")(api.accounts_add_offline)
         self.commands.command("accounts_add_authlib")(api.accounts_add_authlib)
-        self.commands.command("accounts_select_authlib_profiles")(api.accounts_select_authlib_profiles)
+        self.commands.command("accounts_select_authlib_profile")(api.accounts_select_authlib_profile)
         self.commands.command("accounts_microsoft_login_config")(api.accounts_microsoft_login_config)
         self.commands.command("accounts_start_microsoft_login")(api.accounts_start_microsoft_login)
         self.commands.command("accounts_poll_microsoft_login")(api.accounts_poll_microsoft_login)
@@ -112,6 +112,7 @@ class Adapter:
         self.commands.command("accounts_switch")(api.accounts_switch)
         self.commands.command("accounts_remove")(api.accounts_remove)
         self.commands.command("accounts_refresh_profile")(api.accounts_refresh_profile)
+        self.commands.command("authlib_resolve_server")(api.authlib_resolve_server)
         self.commands.command("authlib_servers")(api.authlib_servers)
 
         self.commands.command("image_save_url")(api.image_save_url)
@@ -181,6 +182,11 @@ class Adapter:
         bus.subscribe(
             "game:launch_progress",
             lambda payload: api.emit_to_frontend("game:launch_progress", payload),
+            owner=LAUNCHER_OWNER,
+        )
+        bus.subscribe(
+            "game:versions_changed",
+            lambda payload: api.emit_to_frontend("game:versions_changed", payload),
             owner=LAUNCHER_OWNER,
         )
 

@@ -54,14 +54,13 @@ class AccountManager:
         if microsoft_manager is None:
             microsoft_manager = LauncherMicrosoftAccountManager(
                 client_id=effective_client_id,
-                cache_path=Path(data_path),
                 on_device_code=self._on_device_code,
                 on_progress=self._on_microsoft_progress,
             )
         else:
             microsoft_manager.on_device_code = self._on_device_code
         self.microsoft_manager = microsoft_manager
-        self.authlib_manager = authlib_manager or AuthlibAccountManager(Path(data_path))
+        self.authlib_manager = authlib_manager or AuthlibAccountManager()
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
 
@@ -145,23 +144,19 @@ class AccountManager:
     def _authlib_account(self, account_id: str, info: dict[str, Any]) -> dict[str, Any]:
         profiles = info.get("Profiles") or {}
         profile = profiles.get("selectedProfile") or {}
-        available_profiles = [
-            {"id": item.get("id") or "", "name": item.get("name") or ""}
-            for item in profiles.get("availableProfiles") or []
-            if isinstance(item, dict) and item.get("id")
-        ]
         account = {
             "id": account_id,
-            "alias": profile.get("name") or "未选择角色",
+            "alias": profile.get("name") or "请选择角色",
             "type": "authlib",
             "email": info.get("Username") or "",
             "uuid": profile.get("id") or "",
             "auth_server": info.get("YggdrasilAPI") or "",
             "isCurrent": account_id == self._current_account_id,
         }
-        if not profile and available_profiles:
-            account["available_profiles"] = available_profiles
+        available_profiles = profiles.get("availableProfiles") or []
+        if not profile and isinstance(available_profiles, list):
             account["profile_selection_required"] = True
+            account["available_profiles"] = deepcopy(available_profiles)
         return account
 
     def _deduplicate_microsoft_accounts(self, preferred_id: str | None = None) -> str | None:
@@ -348,76 +343,52 @@ class AccountManager:
             if not isinstance(message, str) or not message.strip():
                 message = f"认证服务器返回 {exc.response.status_code} {exc.response.reason_phrase}"
             raise AccountError(f"外置登录失败: {message.strip()}", "AUTHLIB_LOGIN_FAILED") from exc
-        except (httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
+        except (AuthlibError, httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
             raise AccountError(f"外置登录失败: {exc}", "AUTHLIB_LOGIN_FAILED") from exc
         with self._lock:
-            self._current_account_id = account_id
-            self._save_state()
+            selection_required = not bool((info.get("Profiles") or {}).get("selectedProfile"))
+            if not selection_required:
+                self._current_account_id = account_id
+                self._save_state()
             account = self._authlib_account(account_id, info)
+        if not account.get("profile_selection_required"):
+            self._emit_changed()
+        return account
+
+    def select_authlib_profile(self, account_id: Any, profile_id: Any) -> dict[str, Any]:
+        """完成多角色外置登录，只保存用户选中的一个角色。"""
+        if not isinstance(account_id, str) or not account_id:
+            raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
+        if not isinstance(profile_id, str) or not profile_id:
+            raise AccountError("请选择要登录的角色", "INVALID_AUTHLIB_PROFILE")
+        try:
+            selected_account_id, info = self.authlib_manager.select_profile(account_id, profile_id)
+        except httpx.HTTPStatusError as exc:
+            try:
+                error = exc.response.json()
+            except json.JSONDecodeError:
+                error = {}
+            message = error.get("errorMessage") if isinstance(error, dict) else None
+            if not isinstance(message, str) or not message.strip():
+                message = f"认证服务器返回 {exc.response.status_code} {exc.response.reason_phrase}"
+            raise AccountError(f"选择外置登录角色失败: {message.strip()}", "AUTHLIB_PROFILE_SELECT_FAILED") from exc
+        except (AuthlibError, httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
+            raise AccountError(f"选择外置登录角色失败: {exc}", "AUTHLIB_PROFILE_SELECT_FAILED") from exc
+        with self._lock:
+            self._current_account_id = selected_account_id
+            self._save_state()
+            account = self._authlib_account(selected_account_id, info)
         self._emit_changed()
         return account
 
-    def select_authlib_profiles(
-        self,
-        account_id: Any,
-        profile_ids: Any,
-        password: Any = None,
-    ) -> list[dict[str, Any]]:
-        """为外置登录账户选择一个或多个角色。"""
-        if not isinstance(account_id, str) or not account_id:
-            raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
-        if not isinstance(profile_ids, list):
-            raise AccountError("请选择角色", "INVALID_AUTHLIB_PROFILE")
-        selected_ids = list(dict.fromkeys(item for item in profile_ids if isinstance(item, str) and item))
-        if not selected_ids:
-            raise AccountError("请选择角色", "INVALID_AUTHLIB_PROFILE")
-
-        account_info = self.authlib_manager.list_accounts().get(account_id)
-        if account_info is None:
-            raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
-        available_ids = {
-            profile.get("id")
-            for profile in (account_info.get("Profiles") or {}).get("availableProfiles") or []
-            if isinstance(profile, dict)
-        }
-        if any(profile_id not in available_ids for profile_id in selected_ids):
-            raise AccountError("选择的角色不存在", "INVALID_AUTHLIB_PROFILE")
-        if len(selected_ids) > 1 and (not isinstance(password, str) or not password):
-            raise AccountError("登录多个角色需要重新输入密码", "AUTHLIB_PASSWORD_REQUIRED")
-
-        username = account_info.get("Username")
-        server_url = account_info.get("YggdrasilAPI")
-        if len(selected_ids) > 1 and (
-            not isinstance(username, str) or not username or not isinstance(server_url, str) or not server_url
-        ):
-            raise AccountError("账户缺少邮箱或皮肤站地址，请重新登录", "AUTHLIB_LOGIN_INFO_MISSING")
-        created_account_ids: list[str] = []
-        selected_accounts: list[tuple[str, dict[str, Any]]] = []
+    def resolve_authlib_server(self, server_url: Any) -> str:
+        """返回外置登录地址对应的 Yggdrasil API 地址。"""
+        if not isinstance(server_url, str) or not server_url.strip():
+            raise AccountError("外置登录服务器不能为空", "INVALID_AUTHLIB_SERVER")
         try:
-            for profile_id in selected_ids[1:]:
-                new_account_id, _ = self.authlib_manager.add_account(server_url, username, password)
-                created_account_ids.append(new_account_id)
-                info = self.authlib_manager.select_profile(new_account_id, profile_id)
-                selected_accounts.append((new_account_id, info))
-            info = self.authlib_manager.select_profile(account_id, selected_ids[0])
-            selected_accounts.insert(0, (account_id, info))
-        except httpx.HTTPStatusError as exc:
-            for created_account_id in created_account_ids:
-                self.authlib_manager.delete_account(created_account_id)
-            raise AccountError(
-                f"选择外置登录角色失败: 认证服务器返回 {exc.response.status_code} {exc.response.reason_phrase}",
-                "AUTHLIB_PROFILE_FAILED",
-            ) from exc
-        except (httpx.RequestError, OSError, KeyError, TypeError, ValueError) as exc:
-            for created_account_id in created_account_ids:
-                self.authlib_manager.delete_account(created_account_id)
-            raise AccountError(f"选择外置登录角色失败: {exc}", "AUTHLIB_PROFILE_FAILED") from exc
-        with self._lock:
-            self._current_account_id = account_id
-            self._save_state()
-            accounts = [self._authlib_account(selected_id, info) for selected_id, info in selected_accounts]
-        self._emit_changed()
-        return accounts
+            return self.authlib_manager.resolve_server(server_url.strip())
+        except httpx.HTTPError as exc:
+            raise AccountError(f"无法识别外置登录服务器: {exc}", "AUTHLIB_SERVER_RESOLVE_FAILED") from exc
 
     def switch_account(self, account_id: Any) -> None:
         """切换当前账户；账户不存在时抛出 ``AccountError``。"""

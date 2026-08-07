@@ -22,6 +22,7 @@ default_config: dict[str, Any] = {
         "jvm_args": [],
         "fullscreen": False,
         "last_install_path": "",
+        "last_manage_path": "",
     },
     "download": {"mirror_source": "official"},
     "ui": {
@@ -97,6 +98,8 @@ class ConfigManager:
         game_config["minecraft_paths"] = [{"name": "默认路径", "path": str(minecraft_path)}]
         if not game_config.get("last_install_path"):
             game_config["last_install_path"] = str(minecraft_path)
+        if not game_config.get("last_manage_path"):
+            game_config["last_manage_path"] = str(minecraft_path)
         return True
 
     def _initialize_file(self) -> None:

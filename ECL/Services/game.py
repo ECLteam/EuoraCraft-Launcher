@@ -7,9 +7,11 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event, RLock
+from threading import Event, RLock, Thread
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -90,6 +92,9 @@ class GameService:
         java_scanner_factory: JavaScannerFactory = JavaScanner,
         data_path: Path | str | None = None,
         authlib_injector: AuthlibInjector | None = None,
+        enable_version_watcher: bool | None = None,
+        version_watch_interval: float = 0.75,
+        version_watch_debounce: float = 0.75,
     ):
         self.logger = get_logger("GameService")
         self.accounts = accounts
@@ -107,6 +112,15 @@ class GameService:
         self._install_tasks: dict[str, asyncio.Task[None]] = {}
         self._instance_versions: dict[str, str] = {}
         self._launch_cancel_event: Event | None = None
+        self._version_scan_cache: dict[str, list[dict[str, Any]]] = {}
+        self._version_watch_paths: dict[str, Path] = {}
+        self._version_watch_snapshots: dict[str, tuple[tuple[str, int, int], ...]] = {}
+        self._version_watch_pending: dict[str, float] = {}
+        self._version_watcher_enabled = data_path is not None if enable_version_watcher is None else enable_version_watcher
+        self._version_watch_interval = max(0.1, float(version_watch_interval))
+        self._version_watch_debounce = max(0.0, float(version_watch_debounce))
+        self._version_watch_stop = Event()
+        self._version_watch_thread: Thread | None = None
         self._lock = RLock()
 
     @staticmethod
@@ -346,25 +360,129 @@ class GameService:
             "sourceName": game_path.name or str(game_path),
         }
 
-    def scan_versions(self, paths: Any) -> list[dict[str, Any]]:
-        """扫描 Minecraft 目录并返回规范化的已安装版本列表。"""
+    @staticmethod
+    def _version_path_key(game_path: Path) -> str:
+        return str(game_path.resolve(strict=False)).casefold()
+
+    @staticmethod
+    def _version_directory_snapshot(game_path: Path) -> tuple[tuple[str, int, int], ...]:
+        """生成轻量版本目录快照，只跟踪目录项和直接 JSON 文件。"""
+        versions_path = game_path / "versions"
+        records: list[tuple[str, int, int]] = []
+
+        def append_stat(relative_path: str, path: Path) -> None:
+            try:
+                stat = path.stat()
+            except OSError:
+                return
+            records.append((relative_path, stat.st_mtime_ns, stat.st_size))
+
+        if not versions_path.is_dir():
+            return ()
+        append_stat(".", versions_path)
+        try:
+            version_directories = [entry for entry in versions_path.iterdir() if entry.is_dir()]
+        except OSError:
+            return tuple(records)
+        for version_directory in version_directories:
+            append_stat(f"{version_directory.name}/", version_directory)
+            try:
+                json_files = version_directory.glob("*.json")
+                for json_file in json_files:
+                    if json_file.is_file():
+                        append_stat(f"{version_directory.name}/{json_file.name}", json_file)
+            except OSError:
+                continue
+        return tuple(sorted(records))
+
+    def _watch_version_path(self, game_path: Path) -> str:
+        key = self._version_path_key(game_path)
+        snapshot = self._version_directory_snapshot(game_path)
+        thread: Thread | None = None
+        with self._lock:
+            previous_snapshot = self._version_watch_snapshots.get(key)
+            self._version_watch_paths[key] = game_path
+            self._version_watch_snapshots[key] = snapshot
+            if previous_snapshot is not None and previous_snapshot != snapshot:
+                self._version_scan_cache.pop(key, None)
+                self._version_watch_pending[key] = monotonic()
+            if self._version_watcher_enabled and (
+                self._version_watch_thread is None or not self._version_watch_thread.is_alive()
+            ):
+                self._version_watch_stop.clear()
+                thread = Thread(target=self._version_watch_loop, name="ECL-VersionWatcher", daemon=True)
+                self._version_watch_thread = thread
+        if thread is not None:
+            thread.start()
+        return key
+
+    def _poll_version_changes(self, now: float | None = None) -> list[str]:
+        current_time = monotonic() if now is None else now
+        with self._lock:
+            watched_paths = list(self._version_watch_paths.items())
+
+        changed_paths: list[str] = []
+        for key, game_path in watched_paths:
+            snapshot = self._version_directory_snapshot(game_path)
+            with self._lock:
+                if key not in self._version_watch_paths:
+                    continue
+                previous_snapshot = self._version_watch_snapshots.get(key)
+                if previous_snapshot != snapshot:
+                    self._version_watch_snapshots[key] = snapshot
+                    self._version_scan_cache.pop(key, None)
+                    self._version_watch_pending[key] = current_time
+                pending_since = self._version_watch_pending.get(key)
+                if pending_since is None or current_time - pending_since < self._version_watch_debounce:
+                    continue
+                self._version_watch_pending.pop(key, None)
+                changed_paths.append(str(game_path.resolve(strict=False)))
+
+        for game_path in changed_paths:
+            EventBus().emit("game:versions_changed", {"gamePath": game_path})
+        return changed_paths
+
+    def _version_watch_loop(self) -> None:
+        while not self._version_watch_stop.wait(self._version_watch_interval):
+            try:
+                self._poll_version_changes()
+            except Exception:
+                self.logger.exception("监视 Minecraft 版本目录失败")
+
+    def _scan_game_path(self, game_path: Path) -> list[dict[str, Any]]:
+        versions_path = game_path / "versions"
+        if not versions_path.is_dir():
+            self.logger.debug("跳过不存在的版本目录: %s", versions_path)
+            return []
+        try:
+            versions = self._search_factory(game_path).search_minecraft()
+        except (OSError, TypeError, ValueError) as exc:
+            self.logger.exception("扫描 Minecraft 版本失败: %s", game_path)
+            raise VersionScanError(f"扫描游戏目录失败: {game_path}: {exc}") from exc
+        if not isinstance(versions, dict):
+            raise VersionScanError(f"版本扫描器返回了无效数据: {game_path}")
+        return [
+            self._normalize_scanned_version(game_path, version_name.strip(), info)
+            for version_name, info in versions.items()
+            if isinstance(version_name, str) and version_name.strip()
+        ]
+
+    def scan_versions(self, paths: Any, *, force: bool = False) -> list[dict[str, Any]]:
+        """扫描 Minecraft 目录；目录未变化时复用缓存结果。"""
         scanned_versions: list[dict[str, Any]] = []
         for game_path in self._normalize_scan_paths(paths):
-            versions_path = game_path / "versions"
-            if not versions_path.is_dir():
-                self.logger.debug("跳过不存在的版本目录: %s", versions_path)
-                continue
-            try:
-                versions = self._search_factory(game_path).search_minecraft()
-            except (OSError, TypeError, ValueError) as exc:
-                self.logger.exception("扫描 Minecraft 版本失败: %s", game_path)
-                raise VersionScanError(f"扫描游戏目录失败: {game_path}: {exc}") from exc
-            if not isinstance(versions, dict):
-                raise VersionScanError(f"版本扫描器返回了无效数据: {game_path}")
-            for version_name, info in versions.items():
-                if not isinstance(version_name, str) or not version_name.strip():
-                    continue
-                scanned_versions.append(self._normalize_scanned_version(game_path, version_name.strip(), info))
+            key = self._watch_version_path(game_path)
+            with self._lock:
+                cached_versions = None if force else self._version_scan_cache.get(key)
+            if cached_versions is None:
+                versions = self._scan_game_path(game_path)
+                with self._lock:
+                    self._version_scan_cache[key] = deepcopy(versions)
+                    self._version_watch_snapshots[key] = self._version_directory_snapshot(game_path)
+                    self._version_watch_pending.pop(key, None)
+            else:
+                versions = deepcopy(cached_versions)
+            scanned_versions.extend(versions)
         return sorted(
             scanned_versions,
             key=lambda item: (str(item["sourceName"]).casefold(), str(item["displayName"]).casefold()),
@@ -706,8 +824,33 @@ class GameService:
             self._launch_cancel_event = cancel_event
 
         try:
-            self._emit_launch_progress("preparing", f"正在准备启动 {version_name}", 5)
+            self._emit_launch_progress("preparing", f"正在准备启动 {version_name}", 3)
+            current_account_getter = getattr(self.accounts, "current_account", None)
+            current_account = current_account_getter() if callable(current_account_getter) else None
+            account_type = current_account.get("type") if isinstance(current_account, dict) else None
+            if account_type == "microsoft":
+                self._emit_launch_progress(
+                    "microsoft_token",
+                    "正在检查正版登录令牌，过期时将自动刷新",
+                    7,
+                )
+            elif account_type == "authlib":
+                self._emit_launch_progress(
+                    "authlib_token",
+                    "正在验证外置登录令牌，过期时将自动刷新",
+                    7,
+                )
+            elif account_type == "offline":
+                self._emit_launch_progress("offline_account", "正在读取离线账户信息", 7)
+            else:
+                self._emit_launch_progress("account", "正在验证游戏账户", 7)
             credentials = await to_thread.run_sync(self.accounts.get_launch_credentials)
+            if credentials["user_type"] == "msa":
+                self._emit_launch_progress("account_ready", "正版登录令牌已就绪", 17)
+            elif credentials["user_type"] == "yggdrasil":
+                self._emit_launch_progress("account_ready", "外置登录令牌已就绪", 17)
+            else:
+                self._emit_launch_progress("account_ready", "离线账户已就绪", 17)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
 
@@ -719,20 +862,20 @@ class GameService:
                 auth_server = credentials.get("auth_server")
                 if not auth_server:
                     raise GameServiceError("外置登录认证服务器地址缺失", "AUTHLIB_SERVER_MISSING")
-                self._emit_launch_progress("authlib", "正在准备外置登录组件", 8)
+                self._emit_launch_progress("authlib", "正在准备外置登录组件", 20)
                 try:
                     authlib_path = await to_thread.run_sync(self.authlib_injector.ensure)
                 except (AuthlibError, OSError, KeyError, TypeError, ValueError, httpx.HTTPError) as exc:
                     raise GameServiceError(f"准备外置登录组件失败: {exc}", "AUTHLIB_INJECTOR_FAILED") from exc
 
-            self._emit_launch_progress("checking", "正在检查游戏文件", 10)
+            self._emit_launch_progress("checking", "正在检查游戏文件", 25)
             download_list = await to_thread.run_sync(context.files_checker.check_files, path, version_name)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
             self._emit_launch_progress(
                 "files_checked",
                 f"文件检查完成，共需补全 {len(download_list)} 个文件",
-                20,
+                55,
             )
             if download_list:
                 downloader = self._downloader_factory(
@@ -740,7 +883,7 @@ class GameService:
                     progress_callback=lambda done, total: self._emit_launch_progress(
                         "downloading",
                         "正在补全游戏文件",
-                        int(done * 100 / total) if total else 0,
+                        55 + int(done * 15 / total) if total else 55,
                     ),
                 )
                 with self._lock:
@@ -763,7 +906,7 @@ class GameService:
                         "GAME_DOWNLOAD_FAILED",
                     )
 
-            self._emit_launch_progress("building_args", "正在生成启动参数", 60)
+            self._emit_launch_progress("building_args", "正在生成启动参数", 72)
             launch_config = LaunchConfig(
                 java_path=java,
                 game_path=path,
@@ -787,16 +930,18 @@ class GameService:
                 else:
                     formatted_args = shlex.join(custom_game_args)
                 command = f"{command} {formatted_args}"
-            self._emit_launch_progress("args_built", "启动参数生成完成", 75)
+            self._emit_launch_progress("args_built", "启动参数生成完成", 84)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
 
-            self._emit_launch_progress("about_to_launch", "即将启动游戏", 90)
+            self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
+            self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             instance_id = self.instances.create_instance(
                 instance_name=version_name,
                 instance_type="Minecraft",
                 args=command,
-                cwd=path / "versions" / version_name if isolated else path,
+                cwd=path / "versions" / version_name,
+                new_session=True,
                 log_callback=lambda line, current_id: self.logger.debug("[%s] %s", current_id, line),
                 exit_callback=lambda code, name: self.logger.info("Minecraft %s 已退出，退出码: %s", name, code),
             )
@@ -874,14 +1019,23 @@ class GameService:
             self._instance_versions.pop(instance_id, None)
 
     def close(self) -> None:
-        """取消下载并停止全部由本服务管理的游戏实例。"""
+        """取消后台任务并释放服务资源，保留已启动的游戏实例。"""
+        self._version_watch_stop.set()
         with self._lock:
             downloads = list(self._active_downloads.values())
             install_tasks = list(self._install_tasks.values())
             contexts = list(self._contexts.values())
+            version_watch_thread = self._version_watch_thread
+            self._version_watch_thread = None
+            self._version_scan_cache.clear()
+            self._version_watch_paths.clear()
+            self._version_watch_snapshots.clear()
+            self._version_watch_pending.clear()
             self._active_downloads.clear()
             self._install_tasks.clear()
             self._contexts.clear()
+        if version_watch_thread is not None and version_watch_thread.is_alive():
+            version_watch_thread.join(timeout=self._version_watch_interval + 0.5)
         for downloader in downloads:
             try:
                 downloader.stop()
@@ -895,7 +1049,6 @@ class GameService:
                 loop.call_soon_threadsafe(task.cancel)
             else:
                 task.cancel()
-        self.instances.shutdown_all(wait_timeout=3.0)
         for context in contexts:
             try:
                 context.api_client.close()

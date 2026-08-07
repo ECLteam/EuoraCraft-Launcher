@@ -1,8 +1,12 @@
 import json
+from base64 import urlsafe_b64encode
 from hashlib import sha256
+from pathlib import Path
 
 import httpx
+import pytest
 
+from ECL.Game.Core.YggdrasilAuth import YggdrasilClient
 from ECL.Services.authlib import AuthlibAccountManager, AuthlibInjector
 
 
@@ -18,31 +22,80 @@ class LoginClient:
     def __init__(self):
         self.request = None
 
+    def follow_ali(self, url):
+        assert url == "skin.example.com"
+        return "https://skin.example.com/api/yggdrasil"
+
     def auth(self, url, username, password, follow_ali, client_token):
         self.request = (url, username, password, follow_ali, client_token)
         return {
             "accessToken": "access-token",
             "clientToken": client_token,
+            "availableProfiles": [
+                {"id": "other-profile", "name": "OtherPlayer"},
+                {"id": "profile-id", "name": "Player"},
+            ],
             "selectedProfile": {"id": "profile-id", "name": "Player"},
+            "user": {"id": "user-id", "properties": []},
+        }
+
+    def refresh(self, url, access_token, client_token, follow_ali, selected_profile):
+        return {
+            "accessToken": "refreshed-access-token",
+            "clientToken": client_token,
+            "selectedProfile": selected_profile,
+            "user": {"id": "user-id", "properties": []},
         }
 
     def close(self):
         pass
 
 
-def test_authlib_login_resolves_and_saves_full_server_url_and_email(tmp_path) -> None:
-    def resolve_server(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            request=request,
-            headers={"X-Authlib-Injector-API-Location": "/api/yggdrasil"},
-        )
+def test_authlib_manager_uses_game_core_default_account_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    manager = AuthlibAccountManager(
+        client=OfflineClient(),
+        http_client=httpx.Client(transport=httpx.MockTransport(lambda request: None)),
+    )
 
+    assert manager.account_path == tmp_path / ".ECL" / "accounts"
+    manager.close()
+
+
+def test_yggdrasil_refresh_can_bind_a_selected_profile() -> None:
+    captured = {}
+
+    def handle_refresh(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, request=request, json={"accessToken": "new", "clientToken": "client"})
+
+    client = YggdrasilClient()
+    client.client.close()
+    client.client = httpx.Client(transport=httpx.MockTransport(handle_refresh))
+
+    client.refresh(
+        "https://skin.example.com/api/yggdrasil",
+        "access",
+        "client",
+        follow_ali=False,
+        selected_profile={"id": "profile-two", "name": "PlayerTwo"},
+    )
+
+    assert captured == {
+        "accessToken": "access",
+        "clientToken": "client",
+        "requestUser": True,
+        "selectedProfile": {"id": "profile-two", "name": "PlayerTwo"},
+    }
+    client.close()
+
+
+def test_authlib_login_resolves_and_saves_full_server_url_and_email(tmp_path) -> None:
     client = LoginClient()
     manager = AuthlibAccountManager(
         tmp_path,
         client,
-        httpx.Client(transport=httpx.MockTransport(resolve_server)),
+        httpx.Client(transport=httpx.MockTransport(lambda request: None)),
     )
 
     account_id, account = manager.add_account("skin.example.com", "player@example.com", "secret")
@@ -58,6 +111,167 @@ def test_authlib_login_resolves_and_saves_full_server_url_and_email(tmp_path) ->
     saved = json.loads((tmp_path / "accounts" / "yggdrasil_accounts_list.json").read_text(encoding="utf-8"))
     assert saved[account_id]["YggdrasilAPI"] == "https://skin.example.com/api/yggdrasil"
     assert saved[account_id]["Username"] == "player@example.com"
+    assert saved[account_id]["Profiles"] == {
+        "selectedProfile": {"id": "profile-id", "name": "Player"},
+        "user": {"id": "user-id", "properties": []},
+    }
+    manager.close()
+
+
+def test_authlib_login_uses_default_profile_from_access_token_when_top_level_field_is_missing(tmp_path) -> None:
+    class TokenProfileClient(LoginClient):
+        def auth(self, url, username, password, follow_ali, client_token):
+            response = super().auth(url, username, password, follow_ali, client_token)
+            response.pop("selectedProfile")
+            payload = urlsafe_b64encode(json.dumps({"selectedProfile": "profile-id"}).encode()).decode().rstrip("=")
+            response["accessToken"] = f"header.{payload}.signature"
+            return response
+
+    manager = AuthlibAccountManager(
+        tmp_path,
+        TokenProfileClient(),
+        httpx.Client(transport=httpx.MockTransport(lambda request: None)),
+    )
+
+    _, account = manager.add_account("skin.example.com", "player@example.com", "secret")
+
+    assert account["Profiles"]["selectedProfile"] == {"id": "profile-id", "name": "Player"}
+    assert "availableProfiles" not in account["Profiles"]
+    manager.close()
+
+
+def test_authlib_login_matches_profile_name_when_server_does_not_select_one(tmp_path) -> None:
+    class ProfileNameClient(LoginClient):
+        def auth(self, url, username, password, follow_ali, client_token):
+            response = super().auth(url, username, password, follow_ali, client_token)
+            response.pop("selectedProfile")
+            response["accessToken"] = "opaque-access-token"
+            return response
+
+    manager = AuthlibAccountManager(
+        tmp_path,
+        ProfileNameClient(),
+        httpx.Client(transport=httpx.MockTransport(lambda request: None)),
+    )
+
+    _, account = manager.add_account("skin.example.com", "player", "secret")
+
+    assert account["Profiles"]["selectedProfile"] == {"id": "profile-id", "name": "Player"}
+    assert manager.tokens[next(iter(manager.tokens))]["AccessToken"] == "refreshed-access-token"
+    manager.close()
+
+
+def test_authlib_login_selects_one_profile_when_email_has_multiple_unselected_profiles(tmp_path) -> None:
+    class MultiProfileClient(LoginClient):
+        def __init__(self):
+            super().__init__()
+            self.refresh_request = None
+
+        def auth(self, url, username, password, follow_ali, client_token):
+            response = super().auth(url, username, password, follow_ali, client_token)
+            response.pop("selectedProfile")
+            response["accessToken"] = "opaque-access-token"
+            return response
+
+        def refresh(self, url, access_token, client_token, follow_ali, selected_profile):
+            self.refresh_request = (url, access_token, client_token, follow_ali, selected_profile)
+            return {
+                "accessToken": "selected-access-token",
+                "clientToken": client_token,
+                "selectedProfile": selected_profile,
+                "user": {"id": "user-id"},
+            }
+
+    client = MultiProfileClient()
+    manager = AuthlibAccountManager(
+        tmp_path,
+        client,
+        httpx.Client(transport=httpx.MockTransport(lambda request: None)),
+    )
+
+    account_id, pending = manager.add_account("skin.example.com", "player@example.com", "secret")
+
+    assert pending["Profiles"] == {
+        "availableProfiles": [
+            {"id": "other-profile", "name": "OtherPlayer", "logged_in": False},
+            {"id": "profile-id", "name": "Player", "logged_in": False},
+        ]
+    }
+    assert manager.list_accounts() == {}
+
+    selected_account_id, account = manager.select_profile(account_id, "other-profile")
+
+    assert selected_account_id == account_id
+    assert account["Profiles"] == {
+        "selectedProfile": {"id": "other-profile", "name": "OtherPlayer"},
+        "user": {"id": "user-id"},
+    }
+    assert client.refresh_request == (
+        "https://skin.example.com/api/yggdrasil",
+        "opaque-access-token",
+        account_id,
+        False,
+        {"id": "other-profile", "name": "OtherPlayer"},
+    )
+    assert "availableProfiles" not in account["Profiles"]
+
+    manager.close()
+
+
+def test_authlib_relogin_allows_profile_choice_and_marks_logged_in_profiles(tmp_path) -> None:
+    class RememberingClient(LoginClient):
+        def __init__(self):
+            super().__init__()
+            self.login_count = 0
+            self.selected_profile = None
+
+        def auth(self, url, username, password, follow_ali, client_token):
+            self.login_count += 1
+            response = super().auth(url, username, password, follow_ali, client_token)
+            response["selectedProfile"] = {"id": "other-profile", "name": "OtherPlayer"}
+            if self.login_count > 1:
+                response.pop("selectedProfile")
+                response["accessToken"] = "opaque-access-token"
+            return response
+
+        def refresh(self, url, access_token, client_token, follow_ali, selected_profile):
+            self.selected_profile = selected_profile
+            return {
+                "accessToken": "refreshed-access-token",
+                "clientToken": client_token,
+                "selectedProfile": selected_profile,
+                "user": {"id": "user-id"},
+            }
+
+    client = RememberingClient()
+    manager = AuthlibAccountManager(
+        tmp_path,
+        client,
+        httpx.Client(transport=httpx.MockTransport(lambda request: None)),
+    )
+    first_id, _ = manager.add_account("skin.example.com", "player@example.com", "secret")
+
+    pending_id, pending = manager.add_account("skin.example.com", "player@example.com", "secret")
+
+    assert pending_id != first_id
+    assert pending["Profiles"]["availableProfiles"] == [
+        {"id": "other-profile", "name": "OtherPlayer", "logged_in": True},
+        {"id": "profile-id", "name": "Player", "logged_in": False},
+    ]
+
+    second_id, second_account = manager.select_profile(pending_id, "profile-id")
+
+    assert second_id != first_id
+    assert second_account["Profiles"]["selectedProfile"] == {"id": "profile-id", "name": "Player"}
+    assert len(manager.list_accounts()) == 2
+
+    third_pending_id, third_pending = manager.add_account("skin.example.com", "player@example.com", "secret")
+    assert all(profile["logged_in"] for profile in third_pending["Profiles"]["availableProfiles"])
+
+    selected_existing_id, _ = manager.select_profile(third_pending_id, "other-profile")
+
+    assert selected_existing_id == first_id
+    assert len(manager.list_accounts()) == 2
     manager.close()
 
 
@@ -126,28 +340,33 @@ def test_saved_authlib_account_loads_without_network_request(tmp_path) -> None:
     manager.close()
 
 
-def test_selecting_authlib_profile_refreshes_and_saves_account(tmp_path) -> None:
-    selected_profiles = []
-
-    def select_profile(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        selected_profiles.append(body["selectedProfile"])
-        return httpx.Response(
-            200,
-            request=request,
-            json={
-                "accessToken": "selected-access-token",
+def test_refresh_saves_selected_profile_and_user_without_available_profiles(tmp_path) -> None:
+    class RefreshClient:
+        def refresh(self, url, access_token, client_token, follow_ali):
+            assert (url, access_token, client_token, follow_ali) == (
+                "https://skin.example.com/api/yggdrasil",
+                "access-token",
+                "saved-account",
+                False,
+            )
+            return {
+                "accessToken": "refreshed-access-token",
                 "clientToken": "saved-account",
-                "selectedProfile": body["selectedProfile"],
-            },
-        )
+                "selectedProfile": {"id": "profile-two", "name": "PlayerTwo"},
+                "user": {"id": "user-id", "properties": []},
+            }
 
-    http_client = httpx.Client(transport=httpx.MockTransport(select_profile))
-    manager = AuthlibAccountManager(tmp_path, OfflineClient(), http_client)
+        def close(self):
+            pass
+
+    http_client = httpx.Client(transport=httpx.MockTransport(lambda request: None))
+    manager = AuthlibAccountManager(tmp_path, RefreshClient(), http_client)
     manager.accounts["saved-account"] = {
         "AccountId": "saved-account",
         "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
+        "Username": "player@example.com",
         "Profiles": {
+            "selectedProfile": {"id": "profile-two", "name": "PlayerTwo"},
             "availableProfiles": [
                 {"id": "profile-one", "name": "PlayerOne"},
                 {"id": "profile-two", "name": "PlayerTwo"},
@@ -159,10 +378,13 @@ def test_selecting_authlib_profile_refreshes_and_saves_account(tmp_path) -> None
         "ClientToken": "saved-account",
     }
 
-    account = manager.select_profile("saved-account", "profile-two")
+    account = manager.refresh_account("saved-account")
 
-    assert selected_profiles == [{"id": "profile-two", "name": "PlayerTwo"}]
-    assert account["Profiles"]["selectedProfile"]["name"] == "PlayerTwo"
+    assert account["Profiles"] == {
+        "selectedProfile": {"id": "profile-two", "name": "PlayerTwo"},
+        "user": {"id": "user-id", "properties": []},
+    }
+    assert account["Username"] == "player@example.com"
     saved_accounts = json.loads((tmp_path / "accounts" / "yggdrasil_accounts_list.json").read_text(encoding="utf-8"))
-    assert saved_accounts["saved-account"]["Profiles"]["selectedProfile"]["id"] == "profile-two"
+    assert "availableProfiles" not in saved_accounts["saved-account"]["Profiles"]
     manager.close()
