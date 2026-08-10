@@ -1,10 +1,12 @@
 import base64
 import functools
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import webbrowser
+from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -47,6 +49,34 @@ _mime_to_ext["image/jpeg"] = ".jpg"
 
 _MAX_REMOTE_IMAGE_SIZE = 50 * 1024 * 1024
 _REMOTE_IMAGE_TIMEOUT = 30.0
+
+# 图片读取结果内存缓存（LRU）：避免重复读盘与 PIL 处理
+_image_cache_max = 32
+_image_cache: "OrderedDict[str, str]" = OrderedDict()
+
+
+def _image_cache_key(file_path: Path) -> str:
+    try:
+        stat = file_path.stat()
+        return f"{file_path}|{stat.st_mtime_ns}|{stat.st_size}"
+    except OSError:
+        return f"{file_path}|missing"
+
+
+def _image_cache_get(key: str) -> str | None:
+    value = _image_cache.get(key)
+    if value is not None:
+        _image_cache.move_to_end(key)
+    return value
+
+
+def _image_cache_put(key: str, value: str) -> None:
+    _image_cache[key] = value
+    _image_cache.move_to_end(key)
+    while len(_image_cache) > _image_cache_max:
+        _image_cache.popitem(last=False)
+
+
 _IPC_ERRORS = (
     AccountError,
     AvatarError,
@@ -129,7 +159,10 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
 
 
 def _encode_image_bytes(
-    image_bytes: bytes, ext: str, max_size: tuple[int, int] | None = (1920, 1080)
+    image_bytes: bytes,
+    ext: str,
+    max_size: tuple[int, int] | None = (1920, 1080),
+    quality: int = 82,
 ) -> tuple[str, str]:
     with Image.open(BytesIO(image_bytes)) as img:
         if max_size:
@@ -141,9 +174,9 @@ def _encode_image_bytes(
         if ext == ".png":
             img.save(buffer, format="PNG", optimize=True)
         elif ext == ".webp":
-            img.save(buffer, format="WEBP", quality=85)
+            img.save(buffer, format="WEBP", quality=quality)
         else:
-            img.save(buffer, format="JPEG", quality=85)
+            img.save(buffer, format="JPEG", quality=quality)
         b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:{mime};base64,{b64}", b64
 
@@ -635,7 +668,7 @@ class FrontendApi:
 
     @_ipc_handler("IMAGE_SAVE_URL_ERROR")
     async def image_save_url(self, body: dict[str, Any]) -> dict[str, Any]:
-        """下载背景图片。"""
+        """下载背景图片并缓存到本地数据目录。"""
         url = _normalize_image_url(body.get("url"))
         if url is None:
             return {"success": False, "message": "无效的图片 URL", "errorCode": "INVALID_IMAGE_URL"}
@@ -643,8 +676,35 @@ class FrontendApi:
         image_bytes, response = await _download_remote_image(url)
         ext = _guess_image_extension(response, url)
         data_url, b64 = await to_thread.run_sync(_encode_image_bytes, image_bytes, ext)
-        self.logger.info("远程背景图已加载到内存: %s, ext=%s, base64_len=%d", url, ext, len(b64))
-        return {"success": True, "data": {"dataUrl": data_url, "base64": b64, "url": url}}
+
+        local_path: str | None = None
+        try:
+            local_path = await to_thread.run_sync(self._persist_background_image, data_url)
+        except (OSError, ValueError):
+            self.logger.exception("背景图落盘失败，仅返回内存数据: %s", url)
+
+        self.logger.info("远程背景图已处理: %s, ext=%s, base64_len=%d", url, ext, len(b64))
+        return {
+            "success": True,
+            "data": {"dataUrl": data_url, "base64": b64, "url": url, "path": local_path},
+        }
+
+    def _persist_background_image(self, data_url: str) -> str:
+        """将编码后的图片写入数据目录下的背景图缓存目录，返回本地路径。"""
+        try:
+            header, b64 = data_url.split(",", 1)
+            mime = header.split(";")[0].split(":", 1)[1] if ":" in header else "image/png"
+            payload = base64.b64decode(b64)
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ValueError(f"无法解析图片数据: {exc}") from exc
+        ext = _mime_to_ext.get(mime, ".jpg")
+        digest = hashlib.sha1(payload).hexdigest()[:16]
+        target_dir = self.data_path / "backgrounds"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{digest}{ext}"
+        if not target.is_file():
+            target.write_bytes(payload)
+        return str(target)
 
     @_ipc_handler("IMAGE_SAVE_AS_ERROR")
     async def image_save_as(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -713,41 +773,37 @@ class FrontendApi:
 
     @_ipc_handler("IMAGE_READ_ERROR")
     async def image_read_file(self, body: dict[str, Any]) -> dict[str, Any]:
-        """读取图片。"""
+        """读取图片（带 LRU 缓存）。"""
         raw_path = body.get("path", "")
         if not raw_path:
             return {"success": False, "message": "路径不能为空", "errorCode": "INVALID_PATH"}
 
         path = self._normalize_file_path(raw_path)
-        self.logger.info("读取本地图片: %s", path)
+        file_path = Path(path)
+        cache_key = _image_cache_key(file_path)
 
-        def _read():
-            file_path = Path(path)
+        cached = _image_cache_get(cache_key)
+        if cached is not None:
+            return {"success": True, "data": {"dataUrl": cached}}
+
+        def _read() -> dict[str, str] | None:
             if not file_path.is_file():
                 self.logger.warning("图片文件不存在: %s", file_path)
                 return None
-            ext = file_path.suffix.lower()
-            mime = _image_mime_map.get(ext, "image/png")
-            with Image.open(file_path) as img:
-                img = img.convert("RGB") if img.mode in ("RGBA", "P") and mime == "image/jpeg" else img
-                max_size = (1920, 1080)
-                img.thumbnail(max_size, Image.Resampling.LANCZOS)
-                buffer = BytesIO()
-                if mime == "image/png":
-                    img.save(buffer, format="PNG", optimize=True)
-                elif mime == "image/webp":
-                    img.save(buffer, format="WEBP", quality=85)
-                else:
-                    img.save(buffer, format="JPEG", quality=85)
-                b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
-            self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, len(b64))
-            return {"b64": b64, "mime": mime}
+            ext = file_path.suffix.lower() or ".png"
+            data_url, b64 = _encode_image_bytes(file_path.read_bytes(), ext)
+            mime = _ext_to_mime.get(ext, "image/jpeg")
+            return {"dataUrl": data_url, "b64": b64, "mime": mime}
 
         result = await to_thread.run_sync(_read)
         if result is None:
             return {"success": False, "message": "图片文件不存在", "errorCode": "FILE_NOT_FOUND"}
-        data_url = f"data:{result['mime']};base64,{result['b64']}"
-        return {"success": True, "data": {"dataUrl": data_url, "base64": result["b64"]}}
+        _image_cache_put(cache_key, result["dataUrl"])
+        self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, result["mime"], len(result["b64"]))
+        return {
+            "success": True,
+            "data": {"dataUrl": result["dataUrl"], "base64": result["b64"]},
+        }
 
     @_ipc_handler("IMAGE_LIST_FILES_ERROR")
     async def image_list_files(self, body: dict[str, Any]) -> dict[str, Any]:
