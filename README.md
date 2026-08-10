@@ -1,9 +1,11 @@
 <img src="./resources/img/logo.ico" width = "300" height = "300" alt="NapCat" align=right />
 <div align="center">
-EuoraCraft Launcher
-</div>
 
 # EuoraCraft Launcher
+
+</div>
+
+ EuoraCraft Launcher
 
 欢迎来到 EuoraCraft Launcher 启动器官方仓库，EuoraCraft Launcher 是一款支持插件拓展的现代化启动器，只需要编写少量代码即可实现对启动器的更改
 
