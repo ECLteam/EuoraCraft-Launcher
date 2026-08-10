@@ -79,3 +79,4 @@ plugin_config/
 
 .agents/
 
+ECL/Game/Core/__pycache__/
