@@ -140,7 +140,7 @@ class GameService:
         return path.resolve(strict=False)
 
     @staticmethod
-    def _normalize_version_name(value: Any, field_name: str = "版本名称") -> str:
+    def _normalize_version_name(value: Any, field_name: str = "实例名称") -> str:
         if not isinstance(value, str) or not value.strip():
             raise GameServiceError(f"{field_name}不能为空", "INVALID_VERSION_NAME")
         name = value.strip()
@@ -625,7 +625,7 @@ class GameService:
         source: str,
         java_path: str | None,
     ) -> None:
-        self._emit_install_progress(task_id, "install", "正在读取版本信息", done=0, total=1)
+        self._emit_install_progress(task_id, "install", "正在读取实例信息", done=0, total=1)
         try:
             games = self._context(game_path, source).games
             if loader == "vanilla":
@@ -734,13 +734,13 @@ class GameService:
         root = self._normalize_game_path(game_path) / "versions"
         target = (root / name).resolve(strict=False)
         if target.parent != root.resolve(strict=False):
-            raise GameServiceError("版本目录超出允许范围", "INVALID_VERSION_PATH")
+            raise GameServiceError("实例目录超出允许范围", "INVALID_VERSION_PATH")
         if not target.exists():
-            raise GameServiceError("要卸载的版本不存在", "VERSION_NOT_FOUND")
+            raise GameServiceError("要卸载的实例不存在", "VERSION_NOT_FOUND")
         try:
             shutil.rmtree(target)
         except OSError as exc:
-            raise GameServiceError(f"卸载版本失败: {exc}", "VERSION_UNINSTALL_FAILED") from exc
+            raise GameServiceError(f"卸载实例失败: {exc}", "VERSION_UNINSTALL_FAILED") from exc
 
     def _emit_launch_progress(
         self,
@@ -803,7 +803,7 @@ class GameService:
         path = self._normalize_game_path(game_path)
         version_json = path / "versions" / version_name / f"{version_name}.json"
         if not version_json.is_file():
-            raise GameServiceError("游戏版本不存在或版本 JSON 缺失", "VERSION_NOT_FOUND")
+            raise GameServiceError("游戏实例不存在或版本 JSON 缺失", "VERSION_NOT_FOUND")
         scanned_versions = self._search_factory(path).search_minecraft()
         version_info = scanned_versions.get(version_name, {}) if isinstance(scanned_versions, dict) else {}
         required_java_value = str(version_info.get("RequestJava") or "")
