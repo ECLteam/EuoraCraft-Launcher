@@ -98,6 +98,10 @@ class Adapter:
         self.commands.command("install_version")(api.install_version)
         self.commands.command("uninstall_version")(api.uninstall_version)
 
+        self.commands.command("ecl_config_get")(api.ecl_config_get)
+        self.commands.command("ecl_config_set")(api.ecl_config_set)
+        self.commands.command("ecl_config_patch")(api.ecl_config_patch)
+
         self.commands.command("accounts_list")(api.accounts_list)
         self.commands.command("accounts_current")(api.accounts_current)
         self.commands.command("accounts_add_offline")(api.accounts_add_offline)

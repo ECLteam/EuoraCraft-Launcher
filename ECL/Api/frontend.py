@@ -557,6 +557,50 @@ class FrontendApi:
         await to_thread.run_sync(self.game.uninstall_version, body.get("version_id"), options["game_path"])
         return {"success": True, "data": None}
 
+    # 实例路径 ecl.json
+
+    @_ipc_handler("ECL_CONFIG_FAILED")
+    async def ecl_config_get(self, body: dict[str, Any]) -> dict[str, Any]:
+        """读取指定游戏路径下的 ecl.json。"""
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        game_path = body.get("game_path")
+        if not isinstance(game_path, str) or not game_path.strip():
+            return {"success": False, "message": "游戏路径不能为空", "errorCode": "INVALID_GAME_PATH"}
+        self.logger.debug("ecl_config_get: %s", game_path)
+        data = await to_thread.run_sync(self.game.read_ecl_config, game_path)
+        return {"success": True, "data": data}
+
+    @_ipc_handler("ECL_CONFIG_FAILED")
+    async def ecl_config_set(self, body: dict[str, Any]) -> dict[str, Any]:
+        """全量写入 ecl.json。"""
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        game_path = body.get("game_path")
+        if not isinstance(game_path, str) or not game_path.strip():
+            return {"success": False, "message": "游戏路径不能为空", "errorCode": "INVALID_GAME_PATH"}
+        data = body.get("data")
+        if not isinstance(data, dict):
+            return {"success": False, "message": "ecl.json 数据必须是对象", "errorCode": "INVALID_ECL_CONFIG"}
+        self.logger.debug("ecl_config_set: %s", game_path)
+        await to_thread.run_sync(self.game.write_ecl_config, game_path, data)
+        return {"success": True, "data": None}
+
+    @_ipc_handler("ECL_CONFIG_FAILED")
+    async def ecl_config_patch(self, body: dict[str, Any]) -> dict[str, Any]:
+        """增量更新 ecl.json 中的字段，返回完整配置。"""
+        if self.game is None:
+            return {"success": False, "message": "游戏服务未初始化", "errorCode": "GAME_SERVICE_UNAVAILABLE"}
+        game_path = body.get("game_path")
+        if not isinstance(game_path, str) or not game_path.strip():
+            return {"success": False, "message": "游戏路径不能为空", "errorCode": "INVALID_GAME_PATH"}
+        patch = body.get("data")
+        if not isinstance(patch, dict):
+            return {"success": False, "message": "ecl.json 增量数据必须是对象", "errorCode": "INVALID_ECL_CONFIG"}
+        self.logger.debug("ecl_config_patch: %s, keys=%s", game_path, list(patch.keys()))
+        data = await to_thread.run_sync(self.game.patch_ecl_config, game_path, patch)
+        return {"success": True, "data": data}
+
     # 账户
 
     async def accounts_list(self, body: dict[str, Any]) -> dict[str, Any]:

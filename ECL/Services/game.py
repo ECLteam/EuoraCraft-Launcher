@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shlex
 import shutil
@@ -470,23 +471,112 @@ class GameService:
     def scan_versions(self, paths: Any, *, force: bool = False) -> list[dict[str, Any]]:
         """扫描 Minecraft 目录；目录未变化时复用缓存结果。"""
         scanned_versions: list[dict[str, Any]] = []
-        for game_path in self._normalize_scan_paths(paths):
+        normalized_paths = list(self._normalize_scan_paths(paths))
+        self.logger.debug("开始扫描版本目录，共 %d 个路径，force=%s", len(normalized_paths), force)
+        for game_path in normalized_paths:
             key = self._watch_version_path(game_path)
+            # 确保每个游戏路径下都有 ecl.json
+            self._ensure_ecl_config(game_path)
             with self._lock:
                 cached_versions = None if force else self._version_scan_cache.get(key)
             if cached_versions is None:
+                self.logger.debug("扫描版本目录: %s", game_path)
                 versions = self._scan_game_path(game_path)
                 with self._lock:
                     self._version_scan_cache[key] = deepcopy(versions)
                     self._version_watch_snapshots[key] = self._version_directory_snapshot(game_path)
                     self._version_watch_pending.pop(key, None)
             else:
+                self.logger.debug("扫描版本目录: %s，共 %d 个版本", game_path, len(cached_versions))
                 versions = deepcopy(cached_versions)
             scanned_versions.extend(versions)
+        self.logger.debug("版本扫描完成，共 %d 个实例", len(scanned_versions))
         return sorted(
             scanned_versions,
             key=lambda item: (str(item["sourceName"]).casefold(), str(item["displayName"]).casefold()),
         )
+
+    # ── 实例路径 ecl.json ──────────────────────────────────────────
+
+    _ECL_JSON_NAME = "ecl.json"
+
+    def _ecl_json_path(self, game_path: Any) -> Path:
+        path = self._normalize_game_path(game_path)
+        return path / self._ECL_JSON_NAME
+
+    def _ensure_ecl_config(self, game_path: Any) -> None:
+        """如果游戏路径下不存在 ecl.json，则创建默认配置文件。"""
+        ecl_path = self._ecl_json_path(game_path)
+        if ecl_path.is_file():
+            return
+        try:
+            ecl_path.parent.mkdir(parents=True, exist_ok=True)
+            default_config = {
+                "activeVersion": "",
+                "lastLaunched": "",
+            }
+            ecl_path.write_text(
+                json.dumps(default_config, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self.logger.debug("初始化默认 ecl.json: %s", ecl_path)
+        except OSError as exc:
+            self.logger.warning("初始化 ecl.json 失败 %s: %s", ecl_path, exc)
+
+    def read_ecl_config(self, game_path: Any) -> dict[str, Any]:
+        """读取指定游戏路径下的 ecl.json，文件不存在或损坏时返回空字典。"""
+        ecl_path = self._ecl_json_path(game_path)
+        if not ecl_path.is_file():
+            self.logger.debug("ecl.json 不存在，返回空配置: %s", ecl_path)
+            return {}
+        try:
+            raw = ecl_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            result = data if isinstance(data, dict) else {}
+            self.logger.debug("读取 ecl.json 成功: %s，activeVersion=%s", ecl_path, result.get("activeVersion", ""))
+            return result
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            self.logger.warning("读取 ecl.json 失败 %s: %s", ecl_path, exc)
+            return {}
+
+    def write_ecl_config(self, game_path: Any, data: dict[str, Any]) -> None:
+        """写入 ecl.json 到指定游戏路径。"""
+        if not isinstance(data, dict):
+            raise GameServiceError("ecl.json 数据必须是字典", "INVALID_ECL_CONFIG")
+        ecl_path = self._ecl_json_path(game_path)
+        self.logger.debug("写入 ecl.json: %s，activeVersion=%s", ecl_path, data.get("activeVersion", ""))
+        try:
+            ecl_path.parent.mkdir(parents=True, exist_ok=True)
+            ecl_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise GameServiceError(f"写入 ecl.json 失败: {exc}", "ECL_CONFIG_WRITE_FAILED") from exc
+
+    def patch_ecl_config(self, game_path: Any, patch: dict[str, Any]) -> dict[str, Any]:
+        """合并更新 ecl.json 中的部分字段，返回更新后的完整配置。"""
+        if not isinstance(patch, dict):
+            raise GameServiceError("ecl.json 增量数据必须是字典", "INVALID_ECL_CONFIG")
+        self.logger.debug("增量更新 ecl.json: %s，字段=%s", self._ecl_json_path(game_path), list(patch.keys()))
+        current = self.read_ecl_config(game_path)
+        current.update(patch)
+        self.write_ecl_config(game_path, current)
+        return current
+
+    def get_active_version(self, game_path: Any) -> str | None:
+        """从 ecl.json 读取当前路径下的启动版本；没有则返回 None。"""
+        config = self.read_ecl_config(game_path)
+        version_id = config.get("activeVersion") or config.get("active_version")
+        result = str(version_id).strip() if isinstance(version_id, str) and version_id.strip() else None
+        self.logger.debug("获取当前路径启动版本: %s -> %s", game_path, result)
+        return result
+
+    def set_active_version(self, game_path: Any, version_id: Any) -> None:
+        """把当前路径的启动版本写入 ecl.json。"""
+        name = self._normalize_version_name(version_id, "实例名称")
+        self.logger.debug("设置当前路径启动版本: %s -> %s", game_path, name)
+        self.patch_ecl_config(game_path, {"activeVersion": name})
 
     @staticmethod
     def _java_major_version(version: Any) -> int:
@@ -499,11 +589,13 @@ class GameService:
     def scan_java(self, user_java_paths: list[str] | None = None) -> list[dict[str, Any]]:
         """扫描 Java 运行时。"""
         user_paths = [path for path in user_java_paths or [] if isinstance(path, str) and path.strip()]
+        self.logger.debug("开始扫描 Java 运行时，用户自定义路径: %s", user_paths)
         scanner = self._java_scanner_factory(
             cache_file=self._java_cache_file,
             user_java_paths=user_paths,
         )
         self._java_runtimes = scanner.scan()
+        self.logger.debug("Java 扫描完成，共发现 %d 个运行时", len(self._java_runtimes))
         installations = []
         for runtime in self._java_runtimes:
             architecture = str(runtime.architecture or "unknown").lower()
@@ -574,6 +666,15 @@ class GameService:
             loader = "vanilla"
         if loader not in {"vanilla", "fabric", "forge", "neoforge", "quilt"}:
             raise GameServiceError(f"暂不支持安装加载器: {body.get('loader_type')}", "UNSUPPORTED_LOADER")
+
+        self.logger.debug(
+            "开始安装版本: version=%s, loader=%s, path=%s, source=%s, save_name=%s",
+            version_id,
+            loader,
+            path,
+            normalized_source,
+            save_name,
+        )
 
         loader_version = None
         if loader != "vanilla":
@@ -733,6 +834,7 @@ class GameService:
         name = self._normalize_version_name(version_id)
         root = self._normalize_game_path(game_path) / "versions"
         target = (root / name).resolve(strict=False)
+        self.logger.debug("卸载实例: version=%s, path=%s", name, target)
         if target.parent != root.resolve(strict=False):
             raise GameServiceError("实例目录超出允许范围", "INVALID_VERSION_PATH")
         if not target.exists():
@@ -801,6 +903,13 @@ class GameService:
         """检查游戏文件并启动实例。"""
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
+        self.logger.debug(
+            "准备启动实例: version=%s, path=%s, memory=%s, java=%s",
+            version_name,
+            path,
+            memory,
+            java_path,
+        )
         version_json = path / "versions" / version_name / f"{version_name}.json"
         if not version_json.is_file():
             raise GameServiceError("游戏实例不存在或版本 JSON 缺失", "VERSION_NOT_FOUND")

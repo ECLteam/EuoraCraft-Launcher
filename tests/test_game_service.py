@@ -667,3 +667,61 @@ def test_uninstall_version_only_removes_selected_version(tmp_path) -> None:
     with pytest.raises(GameServiceError) as error:
         service.uninstall_version("../outside", tmp_path)
     assert error.value.error_code == "INVALID_VERSION_NAME"
+
+
+def test_ecl_config_read_write_and_patch(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+
+    # 文件不存在时返回空字典
+    assert service.read_ecl_config(game_path) == {}
+
+    # 写入完整配置
+    service.write_ecl_config(game_path, {"activeVersion": "1.21.1", "customField": 42})
+    ecl_file = game_path / "ecl.json"
+    assert ecl_file.is_file()
+    assert service.read_ecl_config(game_path) == {"activeVersion": "1.21.1", "customField": 42}
+
+    # 增量更新
+    updated = service.patch_ecl_config(game_path, {"activeVersion": "1.20.1", "newKey": "hello"})
+    assert updated == {"activeVersion": "1.20.1", "customField": 42, "newKey": "hello"}
+    assert service.read_ecl_config(game_path) == updated
+
+
+def test_ecl_active_version_get_and_set(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+
+    # 没有 activeVersion 时返回 None
+    assert service.get_active_version(game_path) is None
+
+    # 设置后能读回
+    service.set_active_version(game_path, "1.21.1")
+    assert service.get_active_version(game_path) == "1.21.1"
+
+    # 兼容 snake_case 别名
+    service.write_ecl_config(game_path, {"active_version": "1.19.4"})
+    assert service.get_active_version(game_path) == "1.19.4"
+
+
+def test_ecl_config_rejects_invalid_data(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+
+    with pytest.raises(GameServiceError) as error:
+        service.write_ecl_config(game_path, ["not", "a", "dict"])  # type: ignore[arg-type]
+    assert error.value.error_code == "INVALID_ECL_CONFIG"
+
+    with pytest.raises(GameServiceError) as error:
+        service.patch_ecl_config(game_path, "not-a-dict")  # type: ignore[arg-type]
+    assert error.value.error_code == "INVALID_ECL_CONFIG"
+
+
+def test_ecl_config_handles_corrupted_file(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    game_path.mkdir(parents=True)
+    (game_path / "ecl.json").write_text("{invalid json", encoding="utf-8")
+    service = _build_service()
+
+    # 损坏的文件返回空字典，不抛异常
+    assert service.read_ecl_config(game_path) == {}
