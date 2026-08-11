@@ -282,13 +282,13 @@ class GameService:
         elif isinstance(value, list):
             raw_paths = value
         else:
-            raise VersionScanError("游戏路径必须是字符串或字符串数组", "INVALID_GAME_PATH")
+            raise VersionScanError("实例路径必须是字符串或字符串数组", "INVALID_GAME_PATH")
 
         paths: list[Path] = []
         seen: set[str] = set()
         for raw_path in raw_paths:
             if not isinstance(raw_path, (str, Path)):
-                raise VersionScanError("游戏路径数组只能包含字符串", "INVALID_GAME_PATH")
+                raise VersionScanError("实例路径数组只能包含字符串", "INVALID_GAME_PATH")
             path_value = str(raw_path).strip()
             if not path_value:
                 continue
@@ -301,7 +301,7 @@ class GameService:
             seen.add(path_key)
             paths.append(path)
         if not paths:
-            raise VersionScanError("至少需要一个有效的游戏路径", "INVALID_GAME_PATH")
+            raise VersionScanError("至少需要一个有效的实例路径", "INVALID_GAME_PATH")
         return paths
 
     @staticmethod

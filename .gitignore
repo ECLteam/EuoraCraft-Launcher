@@ -25,9 +25,6 @@ dist/
 # Frontend build output
 frontend/dist/
 
-# Tauri build output
-src-tauri/target/
-
 # IDE & editors
 .idea/
 .vscode/
