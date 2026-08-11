@@ -4,18 +4,15 @@ from typing import Any
 
 EventHandler = Callable[..., None]
 
-LAUNCHER_OWNER = "__launcher__"
-
 
 class EventBus:
     """
     全局事件总线管理
 
-    安全规则：
-    - 启动器代码订阅事件时应传入 owner=LAUNCHER_OWNER，这些事件受保护，
-      普通插件无法再次订阅。
-    - 普通插件可订阅其他插件的事件，但不能订阅启动器保护的事件。
-    - 系统插件不受上述限制。
+    订阅规则：
+    - 启动器代码直接调用 subscribe(event, handler)，无需传入所有者标识。
+    - 插件的事件订阅统一由插件管理器（PluginFramework.subscribe_event）注册，
+      管理器会自动以插件名作为 owner 传入，插件自身无需指定。
     """
 
     _instance = None
@@ -36,35 +33,16 @@ class EventBus:
         self._handlers: dict[str, list[tuple[EventHandler, str | None]]] = defaultdict(list)
         # 共享实例注册表
         self._services: dict[str, Any] = {}
-        # 系统插件名集合
-        self._system_owners: set[str] = set()
         self._initialized = True
-
-    def register_system_plugin(self, name: str) -> None:
-        """
-        注册系统插件名，使其拥有与启动器代码同等的事件订阅权限。
-        :param name: 插件名
-        """
-        self._system_owners.add(name)
-
-    def _is_protected(self, event: str) -> bool:
-        """判断事件是否已被启动器代码订阅并受保护。"""
-        return any(owner == LAUNCHER_OWNER for _, owner in self._handlers.get(event, []))
 
     def subscribe(self, event: str, handler: EventHandler, owner: str | None = None) -> None:
         """
         订阅事件
         :param event: 事件名称
         :param handler: 回调函数，参数由 emit 时传入
-        :param owner: 订阅者标识；启动器代码使用 LAUNCHER_OWNER，插件使用插件名
+        :param owner: 订阅者标识，仅供插件管理器统一注册插件时传入插件名；
+            启动器代码无需传此参数。
         """
-        if (
-            owner
-            and owner != LAUNCHER_OWNER
-            and owner not in self._system_owners
-            and self._is_protected(event)
-        ):
-            raise PermissionError(f"事件 {event} 已被启动器保护，插件 {owner} 无法订阅")
         self._handlers[event].append((handler, owner))
 
     def emit(self, event: str, *args: Any, **kwargs: Any) -> None:
@@ -84,24 +62,23 @@ class EventBus:
             except Exception:
                 self.logger.exception("事件 %s 的处理函数执行失败", event)
 
-    def unsubscribe(self, event: str, handler: EventHandler, owner: str | None = None) -> None:
+    def unsubscribe(self, event: str, handler: EventHandler) -> None:
         """
         取消订阅
         :param event: 事件名称
         :param handler: 之前注册的处理函数
-        :param owner: 订阅者标识；插件只能取消自己注册的 handler
         """
         handlers = self._handlers.get(event)
         if not handlers:
             return
-        for idx, (h, o) in enumerate(list(handlers)):
-            if h is handler and (owner is None or o == owner):
+        for idx, (h, _) in enumerate(list(handlers)):
+            if h is handler:
                 handlers.pop(idx)
                 return
 
     def remove_handlers_by_owner(self, owner: str) -> None:
         """
-        移除指定所有者订阅的所有事件处理器。
+        移除指定所有者订阅的所有事件处理器，由插件管理器在禁用/卸载插件时调用。
         :param owner: 所有者标识
         """
         for event in list(self._handlers.keys()):

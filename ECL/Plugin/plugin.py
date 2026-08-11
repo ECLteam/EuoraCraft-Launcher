@@ -447,12 +447,12 @@ class Plugin:
 
     def subscribe(self, event: str, handler: Callable) -> None:
         """
-        订阅全局事件；自动以当前插件名作为所有者。
+        订阅全局事件；由插件管理器统一注册，自动以插件名作为所有者。
         :param event: 事件名称
         :param handler: 回调函数
         """
         self._check_permission(PermissionScope.EVENTS, PermissionAction.SUBSCRIBE, event)
-        EventBus().subscribe(event, handler, owner=self.name)
+        self.framework.subscribe_event(self, event, handler)
 
     def load_file(self, relative_path: str, encoding: str = "utf-8") -> str | None:
         """
