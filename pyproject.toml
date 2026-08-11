@@ -45,10 +45,10 @@ Repository = "https://github.com/ECLTeam/EuoraCraft-Launcher.git"
 Issues = "https://github.com/ECLTeam/EuoraCraft-Launcher/issues"
 
 [project.scripts]
-euoracraft-launcher = "main:main"
+euoracraft-launcher = "main:run_launcher"
 
 [project.gui-scripts]
-EuoraCraft-Launcher = "main:main"
+EuoraCraft-Launcher = "main:run_launcher"
 
 [project.optional-dependencies]
 dev = [
@@ -93,9 +93,9 @@ build_number = 0
 
 [tool.pyinstaller]
 spec_file = "EuoraCraft-Launcher.spec"
-onefile = false
+onefile = true
 console = true
-icon = "assets/img/logo.ico"
+icon = "resources/img/logo.ico"
 name = "EuoraCraft Launcher"
 
 [tool.release]
