@@ -1,25 +1,15 @@
 import logging
 import sys
-from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
 from ECL.Adapters import Adapter
 from ECL.Common import __version__, __version_type__, get_runtime_info
 from ECL.Events import EventBus
-from ECL.Events.event_bus import LAUNCHER_OWNER
 from ECL.Infrastructure import ConfigManager, EnvManager, LoggerManager
 from ECL.Plugin import PluginFramework
 from ECL.Services import register_services
 from ECL.Services.maintenance import apply_pending_debug_maintenance
-
-
-class LauncherExitCode(IntEnum):
-    """启动器退出状态。"""
-
-    SUCCESS = 0
-    STARTUP_FAILED = 2
-    FRONTEND_FAILED = 3
 
 
 class EuoraCraftLauncher:
@@ -43,7 +33,7 @@ class EuoraCraftLauncher:
         self.config_instance = ConfigManager(self.data_path)
         self.env_instance = EnvManager(self.app_path)
 
-    def run(self) -> LauncherExitCode:
+    def run(self) -> int:
         """
         启动器主入口
         :return: 启动器退出状态
@@ -60,19 +50,19 @@ class EuoraCraftLauncher:
         except Exception:
             self.logger.exception("启动器初始化失败")
             self._shutdown()
-            return LauncherExitCode.STARTUP_FAILED
+            return 2
 
         try:
             self.logger.info("启动前端")
             Adapter().run()
         except Exception:
             self.logger.exception("前端适配器运行失败")
-            return LauncherExitCode.FRONTEND_FAILED
+            return 3
         finally:
             self._shutdown()
 
         self.logger.info("启动器已退出")
-        return LauncherExitCode.SUCCESS
+        return 0
 
     def _initialize(self) -> None:
         self.logger.info("正在初始化启动器...")
@@ -123,7 +113,7 @@ class EuoraCraftLauncher:
         bus.register("plugins", self.plugin_framework_instance)
         self.plugin_framework_instance.initialize(self.data_path, self.resource_path)
 
-        bus.subscribe("config:updated", self._on_config_updated, owner=LAUNCHER_OWNER)  # 订阅配置变更
+        bus.subscribe("config:updated", self._on_config_updated)  # 订阅配置变更
         self.logger.info("初始化完成")
 
     def _shutdown(self) -> None:

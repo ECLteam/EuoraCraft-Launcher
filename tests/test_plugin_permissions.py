@@ -116,6 +116,10 @@ def test_plugin_can_subscribe_to_another_plugin_event(tmp_path) -> None:
     )
     framework = Mock()
     framework._permission_manager = manager
+    # 模拟插件管理器统一注册事件订阅（自动携带插件名作为所有者）
+    framework.subscribe_event = lambda plugin, event, handler: EventBus().subscribe(
+        event, handler, owner=plugin.name
+    )
     plugin = Plugin(framework, tmp_path, {"name": "listener"})
     received = []
 

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from ECL.Events import EventBus
-from ECL.Events.event_bus import LAUNCHER_OWNER
 from ECL.Infrastructure import get_logger
 from ECL.Plugin.dependencies import (
     DependencyResolution,
@@ -112,9 +111,9 @@ class PluginFramework:
         self._load_plugin_state()
         # 订阅 HTML 注入事件，收集插槽内容
         if not self._event_handlers_registered:
-            EventBus().subscribe("plugin:html_injected", self._on_html_injected, owner=LAUNCHER_OWNER)
+            EventBus().subscribe("plugin:html_injected", self._on_html_injected)
             # 订阅 Vue 组件注册事件，收集 Vue 插槽和路由
-            EventBus().subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered, owner=LAUNCHER_OWNER)
+            EventBus().subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = True
 
         candidates = self._collect_candidates(self._plugin_dir, is_system=False)
@@ -240,8 +239,6 @@ class PluginFramework:
             self._plugin_errors[name] = str(exc)
             return
         self._plugins[name] = plugin
-        if is_system:
-            EventBus().register_system_plugin(name)
         self._status[name] = "loaded"
         self._call_plugin_hook(plugin, "on_load")
         self.logger.info("插件已加载: %s v%s", name, plugin.version)
@@ -580,6 +577,16 @@ class PluginFramework:
     def get_plugin(self, name: str) -> Plugin | None:
         """获取插件。"""
         return self._plugins.get(name)
+
+    def subscribe_event(self, plugin: Plugin, event: str, handler: Any) -> None:
+        """
+        统一注册插件的事件订阅，自动以插件名作为所有者标识。
+        插件自身无需也不能指定所有者，由插件管理器统一注入。
+        :param plugin: 插件实例
+        :param event: 事件名称
+        :param handler: 回调函数
+        """
+        EventBus().subscribe(event, handler, owner=plugin.name)
 
     def list_plugins(self) -> list[dict[str, Any]]:
         """获取插件列表。"""

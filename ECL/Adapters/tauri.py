@@ -8,7 +8,6 @@ from pytauri_wheel.lib import builder_factory, context_factory
 
 from ECL.Api import FrontendApi
 from ECL.Events import EventBus
-from ECL.Events.event_bus import LAUNCHER_OWNER
 from ECL.Infrastructure import get_logger
 
 
@@ -160,34 +159,28 @@ class Adapter:
         bus.subscribe(
             "config:updated",
             lambda section, data: api.emit_to_frontend("config:updated", {"section": section, "data": data}),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "accounts:changed",
             lambda data: api.emit_to_frontend("accounts_changed", data),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "accounts:microsoft_login_status",
             self._forward_microsoft_login_status,
-            owner=LAUNCHER_OWNER,
         )
-        bus.subscribe("launcher:error", api.emit_error_to_frontend, owner=LAUNCHER_OWNER)
-        bus.subscribe("launcher:popup", api.emit_popup_to_frontend, owner=LAUNCHER_OWNER)
+        bus.subscribe("launcher:error", api.emit_error_to_frontend)
+        bus.subscribe("launcher:popup", api.emit_popup_to_frontend)
         bus.subscribe(
             "game:install_progress",
             lambda payload: api.emit_to_frontend("game:install_progress", payload),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "game:launch_progress",
             lambda payload: api.emit_to_frontend("game:launch_progress", payload),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "game:versions_changed",
             lambda payload: api.emit_to_frontend("game:versions_changed", payload),
-            owner=LAUNCHER_OWNER,
         )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
@@ -196,52 +189,44 @@ class Adapter:
             lambda plugin: api.emit_to_frontend(
                 "plugin:status_changed", {"name": plugin.name, "action": "enabled", "result": True}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:disabled",
             lambda plugin: api.emit_to_frontend(
                 "plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:unloaded",
             lambda name: api.emit_to_frontend(
                 "plugin:status_changed", {"name": name, "action": "unloaded", "result": True}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:installed",
             lambda name: api.emit_to_frontend("plugin:installed", {"name": name}),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:css_injected",
             lambda plugin, css, key: api.emit_to_frontend(
                 "plugin:css_injected", {"plugin": plugin, "css": css, "key": key}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:html_injected",
             lambda plugin, slot, html, key: api.emit_to_frontend(
                 "plugin:html_injected", {"plugin": plugin, "slot": slot, "html": html, "key": key}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:script_injected",
             lambda plugin, script: api.emit_to_frontend("plugin:script_injected", {"plugin": plugin, "script": script}),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:typescript_injected",
             lambda plugin, script: api.emit_to_frontend(
                 "plugin:typescript_injected", {"plugin": plugin, "script": script}
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:route_registered",
@@ -249,7 +234,6 @@ class Adapter:
                 "plugin:route_registered",
                 {"plugin": plugin, "path": path, "title": title, "icon": icon},
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:settings_changed",
@@ -257,7 +241,6 @@ class Adapter:
                 "plugin:settings_changed",
                 {"plugin": plugin, "key": key, "old_value": old_value, "new_value": new_value},
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:vue_slot_registered",
@@ -272,7 +255,6 @@ class Adapter:
                     "style": style,
                 },
             ),
-            owner=LAUNCHER_OWNER,
         )
         bus.subscribe(
             "plugin:vue_route_registered",
@@ -289,7 +271,6 @@ class Adapter:
                     "icon": icon,
                 },
             ),
-            owner=LAUNCHER_OWNER,
         )
 
     def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:
