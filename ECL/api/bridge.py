@@ -5,14 +5,12 @@ import os
 import subprocess
 import sys
 from collections import OrderedDict
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import httpx
-from PIL import Image
 from pydantic import ValidationError
 from pytauri import EventTarget
 from pytauri.ffi import Emitter as _Emitter
@@ -21,9 +19,9 @@ from pytauri.ipc import WebviewWindow
 from ECL.api.contracts import ApiResponse, failure
 from ECL.application import ApplicationContext
 from ECL.services.accounts import AccountError
-from ECL.services.avatars import AvatarError
 from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
+from ECL.services.wardrobe import WardrobeError
 from ECL.utils import get_logger
 
 _queued_frontend_events = frozenset({"launcher:error", "launcher:popup"})
@@ -45,7 +43,7 @@ _mime_to_ext["image/jpeg"] = ".jpg"
 _MAX_REMOTE_IMAGE_SIZE = 50 * 1024 * 1024
 _REMOTE_IMAGE_TIMEOUT = 30.0
 
-# 图片读取结果内存缓存（LRU）：避免重复读盘与 PIL 处理
+# 图片读取结果内存缓存（LRU）：避免重复读盘与 Base64 编码
 _image_cache_max = 32
 _image_cache: "OrderedDict[str, str]" = OrderedDict()
 
@@ -74,7 +72,7 @@ def _image_cache_put(key: str, value: str) -> None:
 
 _IPC_ERRORS = (
     AccountError,
-    AvatarError,
+    WardrobeError,
     GameServiceError,
     DebugMaintenanceError,
     httpx.HTTPError,
@@ -156,23 +154,9 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
 def _encode_image_bytes(
     image_bytes: bytes,
     ext: str,
-    max_size: tuple[int, int] | None = (1920, 1080),
-    quality: int = 82,
 ) -> tuple[str, str]:
-    with Image.open(BytesIO(image_bytes)) as img:
-        if max_size:
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-        if ext in (".jpg", ".jpeg") and img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        mime = _ext_to_mime.get(ext, "image/jpeg")
-        buffer = BytesIO()
-        if ext == ".png":
-            img.save(buffer, format="PNG", optimize=True)
-        elif ext == ".webp":
-            img.save(buffer, format="WEBP", quality=quality)
-        else:
-            img.save(buffer, format="JPEG", quality=quality)
-        b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+    mime = _ext_to_mime.get(ext, "image/jpeg")
+    b64 = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}", b64
 
 
@@ -216,7 +200,9 @@ class _FrontendState:
         self.launcher = context.state
         self.config = context.config
         self.accounts = context.accounts
-        self.avatars = context.avatars
+        self.wardrobe = context.wardrobe
+        # HTTP 客户端由 ApplicationContext 统一关闭，API 处理器只能借用。
+        self.http = context.http
         self.info_card = context.info_card
         self.game = context.game
         self.plugins = context.plugins

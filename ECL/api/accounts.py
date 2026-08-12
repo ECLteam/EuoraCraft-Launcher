@@ -1,12 +1,25 @@
 import base64
-from io import BytesIO
+import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from anyio import to_thread
-from PIL import Image
+from pydantic import ValidationError
+from pytauri_plugins.dialog import DialogExt
 
-from .bridge import _FrontendState, _ipc_handler
+from ECL.api.models import (
+    AccountTextureRequest,
+    MicrosoftCapeRequest,
+    WardrobeApplySkinRequest,
+    WardrobeImportRequest,
+    WardrobeItemRequest,
+    WardrobeUpdateRequest,
+)
+from ECL.services.wardrobe import MAX_TEXTURE_BYTES, WardrobeError
+from ECL.utils import atomic_write_bytes
+
+from .bridge import _FrontendState, _ipc_handler, _normalize_image_url
 
 
 class AccountHandlers(_FrontendState):
@@ -160,48 +173,213 @@ class AccountHandlers(_FrontendState):
         refresh_result = await to_thread.run_sync(self.accounts.refresh_account, body.get("account_id"))
         return {"success": True, "data": refresh_result}
 
-    @staticmethod
-    def _decode_skin_image(image: Any) -> bytes | None:
+    @_ipc_handler("ACCOUNT_TEXTURE_FAILED")
+    async def accounts_texture_urls(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        将前端皮肤图片数据(base64 data URL 或纯 base64)解码并校验为可读图片。
+        返回账户完整皮肤与当前披风地址，图片裁切和渲染由前端完成。
 
-        :param image: 需要上传或保存的图像数据
+        :param body: 包含账户稳定标识的 IPC 请求数据
+        :return: 可用的皮肤和披风 URL
         """
-        if not isinstance(image, str) or not image:
-            return None
-        encoded = image
-        if image.startswith("data:"):
-            try:
-                _, encoded = image.split(",", 1)
-            except ValueError:
-                return None
         try:
-            payload = base64.b64decode(encoded)
-        except (ValueError, base64.binascii.Error):
-            return None
+            request = AccountTextureRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        textures = await to_thread.run_sync(self.accounts.texture_urls, request.account_id)
+        return {"success": True, "data": textures}
+
+    async def wardrobe_list(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        返回本地衣柜元数据，不包含纹理字节或本地绝对路径。
+
+        :param body: 空 IPC 请求数据
+        :return: 按最近更新时间排序的衣柜条目
+        """
+        return {"success": True, "data": self.wardrobe.list_items()}
+
+    @_ipc_handler("WARDROBE_SYNC_FAILED")
+    async def wardrobe_sync_account_skin(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        将账户当前穿戴的远程皮肤下载到本地衣柜，重复纹理沿用已有条目。
+
+        :param body: 包含账户稳定标识的 IPC 请求数据
+        :return: 本地衣柜条目与哈希去重标记
+        """
         try:
-            with Image.open(BytesIO(payload)) as image_reader:
-                image_reader.load()
-        except Exception:
-            return None
-        return payload
+            request = AccountTextureRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        account_data = await to_thread.run_sync(self.accounts.list_accounts)
+        account = next(
+            (candidate for candidate in account_data["accounts"] if candidate["id"] == request.account_id),
+            None,
+        )
+        if account is None or account.get("type") == "offline":
+            raise WardrobeError("该账户没有可同步的在线皮肤", "WARDROBE_SKIN_UNAVAILABLE")
+        textures = await to_thread.run_sync(self.accounts.texture_urls, request.account_id)
+        skin_url = _normalize_image_url(textures.get("skinUrl"))
+        if skin_url is None:
+            raise WardrobeError("该账户没有可同步的在线皮肤", "WARDROBE_SKIN_UNAVAILABLE")
+        texture = await to_thread.run_sync(self._download_account_skin, skin_url)
+        item, deduplicated = await to_thread.run_sync(
+            self.wardrobe.import_bytes,
+            texture,
+            "skin",
+            f"{account.get('alias') or 'Minecraft'} 当前皮肤",
+            textures.get("skinModel") or "classic",
+        )
+        self.logger.info(
+            "账户当前皮肤已同步到衣柜: account=%s, item=%s, deduplicated=%s",
+            request.account_id,
+            item["id"],
+            deduplicated,
+        )
+        return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
+
+    def _download_account_skin(self, url: str) -> bytes:
+        """
+        使用应用共享客户端流式下载账户皮肤，在写入衣柜前限制响应大小。
+
+        :param url: 由账户服务返回并完成 HTTP(S) 格式校验的皮肤地址
+        :return: 不超过衣柜上限的 PNG 原始字节
+        """
+        data = bytearray()
+        with self.http.stream("GET", url) as response:
+            response.raise_for_status()
+            for chunk in response.iter_bytes(64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_TEXTURE_BYTES:
+                    raise WardrobeError("账户皮肤超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
+        return bytes(data)
+
+    @_ipc_handler("WARDROBE_IMPORT_FAILED")
+    async def wardrobe_import(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        将用户选择的 PNG 复制到启动器衣柜，并返回去重结果。
+
+        :param body: 包含源路径、素材类型和可选模型的 IPC 请求数据
+        :return: 导入后的条目与去重标记
+        """
+        try:
+            request = WardrobeImportRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        item, deduplicated = await to_thread.run_sync(
+            self.wardrobe.import_file,
+            request.path,
+            request.kind.value,
+            request.name,
+            request.model.value if request.model else None,
+        )
+        return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
+
+    @_ipc_handler("WARDROBE_UPDATE_FAILED")
+    async def wardrobe_update(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        修改衣柜条目的名称或皮肤模型，不转换原始图片。
+
+        :param body: 包含条目标识及待修改字段的 IPC 请求数据
+        :return: 更新后的衣柜条目
+        """
+        try:
+            request = WardrobeUpdateRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        item = await to_thread.run_sync(
+            self.wardrobe.update_item,
+            request.item_id,
+            request.name,
+            request.model.value if request.model else None,
+            request.favorite,
+        )
+        return {"success": True, "data": item}
+
+    @_ipc_handler("WARDROBE_DELETE_FAILED")
+    async def wardrobe_delete(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        删除本地收藏；已经上传到外部账户的皮肤不受影响。
+
+        :param body: 包含衣柜条目标识的 IPC 请求数据
+        """
+        try:
+            request = WardrobeItemRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        await to_thread.run_sync(self.wardrobe.delete_item, request.item_id)
+        return {"success": True}
+
+    @_ipc_handler("WARDROBE_TEXTURE_FAILED")
+    async def wardrobe_texture(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        将衣柜中的小型 PNG 原样编码为 Data URL 供 WebView 渲染。
+
+        :param body: 包含衣柜条目标识的 IPC 请求数据
+        :return: PNG Data URL 和 MIME 类型
+        """
+        try:
+            request = WardrobeItemRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        _, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
+        encoded = base64.b64encode(texture).decode("ascii")
+        return {"success": True, "data": {"dataUrl": f"data:image/png;base64,{encoded}", "mime": "image/png"}}
+
+    @_ipc_handler("WARDROBE_EXPORT_FAILED")
+    async def wardrobe_export(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        通过原生保存对话框导出衣柜中的原始 PNG，不经过前端 Base64 往返传输。
+
+        :param body: 包含衣柜条目标识的 IPC 请求数据
+        :return: 用户选择的保存路径；取消时路径为空
+        """
+        try:
+            request = WardrobeItemRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        if self._webview is None:
+            raise WardrobeError("窗口尚未就绪", "WEBVIEW_NOT_READY")
+        item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:80] or "skin"
+        picked = await to_thread.run_sync(
+            lambda: DialogExt.file(self._webview).blocking_save_file(
+                add_filter=("PNG 图片", ["png"]),
+                set_file_name=f"{safe_name}.png",
+                set_title="另存为皮肤",
+            )
+        )
+        if not picked:
+            return {"success": True, "data": {"path": None}}
+        target = Path(str(picked))
+        await to_thread.run_sync(atomic_write_bytes, target, texture)
+        self.logger.info("衣柜纹理已导出: item=%s, kind=%s", item["id"], item["kind"])
+        return {"success": True, "data": {"path": str(target)}}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
-    async def microsoft_upload_skin(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def wardrobe_apply_skin(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        上传皮肤到正版(Microsoft)账户。
+        将衣柜中的标准 64×64 皮肤上传到指定 Microsoft 账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 包含衣柜条目和目标账户标识的 IPC 请求数据
+        :return: 上传后刷新得到的账户资料
         """
-        png_bytes = self._decode_skin_image(body.get("image"))
-        if png_bytes is None:
-            return {"success": False, "message": "无效的皮肤图片数据", "errorCode": "INVALID_SKIN_IMAGE"}
+        try:
+            request = WardrobeApplySkinRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
+        if item["kind"] != "skin" or (item["width"], item["height"]) != (64, 64):
+            return {
+                "success": False,
+                "message": "只有标准 64×64 皮肤可以上传到 Microsoft",
+                "errorCode": "WARDROBE_UNSUPPORTED_UPLOAD",
+            }
         account = await to_thread.run_sync(
             self.accounts.upload_skin,
-            body.get("account_id"),
-            body.get("variant"),
-            png_bytes,
+            request.account_id,
+            item["model"] or "classic",
+            texture,
         )
+        self.logger.info("衣柜皮肤已上传: item=%s, model=%s", item["id"], item["model"])
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
@@ -211,7 +389,11 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        account = await to_thread.run_sync(self.accounts.reset_skin, body.get("account_id"))
+        try:
+            request = AccountTextureRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        account = await to_thread.run_sync(self.accounts.reset_skin, request.account_id)
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
@@ -221,11 +403,11 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        account = await to_thread.run_sync(
-            self.accounts.set_cape,
-            body.get("account_id"),
-            body.get("cape_id"),
-        )
+        try:
+            request = MicrosoftCapeRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        account = await to_thread.run_sync(self.accounts.set_cape, request.account_id, request.cape_id)
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
@@ -235,7 +417,11 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        account = await to_thread.run_sync(self.accounts.reset_cape, body.get("account_id"))
+        try:
+            request = AccountTextureRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        account = await to_thread.run_sync(self.accounts.reset_cape, request.account_id)
         return {"success": True, "data": account}
 
     async def authlib_servers(self, body: dict[str, Any]) -> dict[str, Any]:

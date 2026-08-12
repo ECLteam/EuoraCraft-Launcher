@@ -127,6 +127,13 @@ class FakeAuthlibManager:
             "YggdrasilAPI": self.accounts[account_id]["YggdrasilAPI"],
         }
 
+    def get_texture_urls(self, account_id: str) -> dict[str, str]:
+        assert account_id in self.accounts
+        return {
+            "skinUrl": "https://textures.example.com/authlib-skin.png",
+            "capeUrl": "https://textures.example.com/authlib-cape.png",
+        }
+
     def close(self) -> None:
         self.closed = True
 
@@ -562,8 +569,13 @@ def test_microsoft_account_includes_capes(tmp_path) -> None:
             "name": "Player",
             "skins": [{"url": "https://textures.example.com/skin.png"}],
             "capes": [
-                {"id": "migrator", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
-                {"id": "minecon-2016", "state": "INACTIVE"},
+                {
+                    "id": "migrator",
+                    "alias": "Migrator Cape",
+                    "state": "ACTIVE",
+                    "url": "https://textures.example.com/cape.png",
+                },
+                {"id": "minecon-2016", "alias": "MINECON 2016 Cape", "state": "INACTIVE"},
             ],
         },
         "Skin": {},
@@ -572,8 +584,8 @@ def test_microsoft_account_includes_capes(tmp_path) -> None:
 
     account = manager.list_accounts()["accounts"][0]
     assert account["capes"] == [
-        {"id": "migrator", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
-        {"id": "minecon-2016", "state": "INACTIVE", "url": ""},
+        {"id": "migrator", "name": "Migrator Cape", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
+        {"id": "minecon-2016", "name": "MINECON 2016 Cape", "state": "INACTIVE", "url": ""},
     ]
 
 
@@ -641,3 +653,41 @@ def test_set_cape_rejects_empty_cape_id(tmp_path) -> None:
 
     with pytest.raises(accounts_service.AccountError):
         manager.set_cape("microsoft-account", "   ")
+
+
+def test_texture_urls_returns_microsoft_skin_and_active_cape(tmp_path) -> None:
+    microsoft_manager = FakeMicrosoftManager()
+    microsoft_manager.accounts["microsoft-account"] = {
+        "Email": "player@example.com",
+        "Profile": {
+            "id": "player-id",
+            "name": "Player",
+            "skins": [{"url": "https://textures.example.com/skin.png"}],
+            "capes": [
+                {"id": "inactive", "state": "INACTIVE", "url": "https://textures.example.com/old.png"},
+                {"id": "active", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
+            ],
+        },
+    }
+    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
+
+    assert manager.texture_urls("microsoft-account") == {
+        "skinUrl": "https://textures.example.com/skin.png",
+        "skinModel": "classic",
+        "capeUrl": "https://textures.example.com/cape.png",
+    }
+
+
+def test_texture_urls_delegates_authlib_metadata_without_downloading_image(tmp_path) -> None:
+    authlib_manager = FakeAuthlibManager()
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        authlib_manager=authlib_manager,
+    )
+    account = manager.add_authlib("https://example.com", "player@example.com", "secret-password")
+
+    assert manager.texture_urls(account["id"]) == {
+        "skinUrl": "https://textures.example.com/authlib-skin.png",
+        "capeUrl": "https://textures.example.com/authlib-cape.png",
+    }

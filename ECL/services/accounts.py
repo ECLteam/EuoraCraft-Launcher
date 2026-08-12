@@ -279,6 +279,7 @@ class AccountManager:
                     valid_capes.append(
                         {
                             "id": str(cape.get("id")),
+                            "name": str(cape.get("alias") or cape.get("name") or cape.get("id")),
                             "state": str(cape.get("state") or ""),
                             "url": str(cape.get("url") or ""),
                         }
@@ -640,6 +641,46 @@ class AccountManager:
                 raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
         self._emit_changed()
         return account
+
+    def texture_urls(self, account_id: str) -> dict[str, str]:
+        """
+        返回账户完整皮肤与当前披风的远程纹理地址，供前端统一渲染。
+
+        离线账户没有远程材质；Microsoft 直接使用缓存档案，Authlib 只解析会话服务器
+        返回的材质元数据，不在后端下载图片。
+
+        :param account_id: 账户的稳定标识
+        :return: 可用的 ``skinUrl``、``skinModel`` 与 ``capeUrl``；离线或无材质时返回空字典
+        """
+        if not isinstance(account_id, str) or not account_id:
+            raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
+        with self._lock:
+            microsoft = self.microsoft_manager.get_microsoft_accounts().get(account_id)
+            if microsoft is not None:
+                profile = microsoft.get("Profile") or {}
+                result: dict[str, str] = {}
+                skins = profile.get("skins") or []
+                if skins and isinstance(skins[0], dict) and isinstance(skins[0].get("url"), str):
+                    result["skinUrl"] = skins[0]["url"]
+                    variant = str(skins[0].get("variant") or "classic").lower()
+                    result["skinModel"] = "slim" if variant == "slim" else "classic"
+                active_cape = next(
+                    (
+                        cape
+                        for cape in profile.get("capes") or []
+                        if isinstance(cape, dict) and str(cape.get("state") or "").upper() == "ACTIVE"
+                    ),
+                    None,
+                )
+                if active_cape and isinstance(active_cape.get("url"), str):
+                    result["capeUrl"] = active_cape["url"]
+                return result
+            if account_id in self._offline_accounts:
+                return {}
+            is_authlib = account_id in self.authlib_manager.list_accounts()
+        if is_authlib:
+            return self.authlib_manager.get_texture_urls(account_id)
+        raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
 
     def _require_microsoft_account(self, account_id: Any) -> None:
         """

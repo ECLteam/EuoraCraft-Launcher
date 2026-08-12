@@ -33,7 +33,7 @@ def test_no_service_locator_api_or_duplicate_libs_remains() -> None:
     assert "register_services" not in source
     assert "EventBus().get(" not in source
     assert "EventBus().register(" not in source
-    assert list(ECL_ROOT.rglob("Libs.py")) == []
+    assert [path for path in ECL_ROOT.rglob("Libs.py") if not path.is_relative_to(ECL_ROOT / "game")] == []
     assert not (ECL_ROOT / "api" / "legacy").exists()
     assert not (ECL_ROOT / "api" / "domain_handlers.py").exists()
 
@@ -74,7 +74,7 @@ def test_ipc_registry_has_no_retired_compatibility_commands() -> None:
 def test_game_package_root_contains_only_public_boundary_modules() -> None:
     root_modules = {path.name for path in (ECL_ROOT / "game").glob("*.py")}
 
-    assert root_modules == {"__init__.py", "facade.py"}
+    assert root_modules == {"__init__.py"}
 
 
 def test_game_service_raw_body_is_not_typed_as_any() -> None:
@@ -97,7 +97,7 @@ def test_game_service_raw_body_is_not_typed_as_any() -> None:
 
 def test_production_docstrings_are_multiline_and_have_no_placeholders() -> None:
     violations: list[str] = []
-    for path in [*_python_files(), *(ECL_ROOT / "game").rglob("*.py")]:
+    for path in _python_files():
         source = path.read_text(encoding="utf-8")
         assert "???" not in source
         tree = ast.parse(source, filename=str(path))

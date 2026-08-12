@@ -28,7 +28,7 @@ def test_application_context_closes_resources_in_reverse_dependency_order() -> N
         environment=SimpleNamespace(),
         http=Closable("http", order),
         accounts=Closable("accounts", order),
-        avatars=Closable("avatars", order),
+        wardrobe=SimpleNamespace(),
         info_card=SimpleNamespace(),
         game=Closable("game", order),
         plugins=Closable("plugins", order),
@@ -37,7 +37,7 @@ def test_application_context_closes_resources_in_reverse_dependency_order() -> N
     context.close()
     context.close()
 
-    assert order == ["plugins", "game", "avatars", "accounts", "http"]
+    assert order == ["plugins", "game", "accounts", "http"]
     assert not events._handlers
 
 

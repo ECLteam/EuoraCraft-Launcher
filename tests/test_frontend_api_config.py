@@ -37,6 +37,20 @@ EventBus = import_module("ECL.events").EventBus
 
 
 class FakeAccounts:
+    def list_accounts(self):
+        account = {
+            "id": "microsoft-account",
+            "alias": "Player",
+            "type": "microsoft",
+            "uuid": "profile-id",
+            "isCurrent": True,
+        }
+        return {"accounts": [account], "current": account}
+
+    def texture_urls(self, account_id):
+        assert account_id == "microsoft-account"
+        return {"skinUrl": "https://textures.example.com/skin.png", "skinModel": "slim"}
+
     def add_offline(self, username, custom_uuid=None):
         self.last_offline_input = (username, custom_uuid)
         return {"id": "offline-id", "alias": username, "type": "offline", "uuid": "offline-uuid"}
@@ -64,6 +78,10 @@ class FakeAccounts:
             "isCurrent": True,
         }
 
+    def upload_skin(self, account_id, model, texture):
+        self.uploaded_skin = (account_id, model, texture)
+        return {"id": account_id, "alias": "Player", "type": "microsoft"}
+
 
 class FakePlugins:
     def __init__(self):
@@ -80,19 +98,56 @@ class FakePlugins:
         self.sidebar_states.append(collapsed)
 
 
-class FakeAvatars:
-    def render_avatar(
-        self,
-        account_uuid,
-        size,
-        use_default_skin,
-        account_type=None,
-        account_id=None,
-    ):
-        return {
-            "dataUrl": (f"data:image/png;base64,{account_uuid}:{size}:{use_default_skin}:{account_type}:{account_id}"),
-            "base64": "avatar",
-        }
+class FakeWardrobe:
+    def list_items(self):
+        return []
+
+    def read_texture(self, item_id):
+        return (
+            {
+                "id": item_id,
+                "kind": "skin",
+                "model": "slim",
+                "width": 64,
+                "height": 64,
+            },
+            b"png",
+        )
+
+    def import_bytes(self, texture, kind, name, model):
+        self.imported = (texture, kind, name, model)
+        return (
+            {
+                "id": "synced-skin",
+                "kind": kind,
+                "name": name,
+                "model": model,
+                "width": 64,
+                "height": 64,
+            },
+            False,
+        )
+
+
+class FakeHttpResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def raise_for_status(self):
+        return None
+
+    def iter_bytes(self, _chunk_size):
+        yield b"downloaded-png"
+
+
+class FakeHttp:
+    def stream(self, method, url):
+        assert method == "GET"
+        assert url == "https://textures.example.com/skin.png"
+        return FakeHttpResponse()
 
 
 class FakeInfoCard:
@@ -180,8 +235,9 @@ def _build_api(tmp_path) -> FrontendApi:
         state=launcher,
         events=bus,
         config=ConfigManager(tmp_path / "ECL_data", bus),
+        http=FakeHttp(),
         accounts=FakeAccounts(),
-        avatars=FakeAvatars(),
+        wardrobe=FakeWardrobe(),
         info_card=FakeInfoCard(),
         game=FakeGame(),
         plugins=FakePlugins(),
@@ -517,23 +573,39 @@ def test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeyp
     ]
 
 
-def test_avatar_data_url_delegates_to_registered_avatar_service(tmp_path) -> None:
+def test_wardrobe_list_delegates_to_registered_store(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.wardrobe_list({}))
+
+    assert result["success"] is True
+    assert result["data"] == []
+
+
+def test_wardrobe_sync_downloads_current_account_skin_into_store(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.wardrobe_sync_account_skin({"account_id": "microsoft-account"}))
+
+    assert result["success"] is True
+    assert result["data"]["item"]["id"] == "synced-skin"
+    assert api.wardrobe.imported == (
+        b"downloaded-png",
+        "skin",
+        "Player 当前皮肤",
+        "slim",
+    )
+
+
+def test_wardrobe_apply_skin_uploads_internal_texture_without_base64_body(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(
-        api.avatar_data_url(
-            {
-                "uuid": "avatar-id",
-                "size": 48,
-                "use_default_skin": True,
-                "type_name": "authlib",
-                "account_id": "authlib-account",
-            }
-        )
+        api.wardrobe_apply_skin({"item_id": "skin-id", "account_id": "microsoft-account"})
     )
 
     assert result["success"] is True
-    assert result["data"]["dataUrl"].endswith("avatar-id:48:True:authlib:authlib-account")
+    assert api.accounts.uploaded_skin == ("microsoft-account", "slim", b"png")
 
 
 def test_debug_maintenance_requires_debug_mode(tmp_path) -> None:

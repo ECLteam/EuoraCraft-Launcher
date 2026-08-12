@@ -1,12 +1,11 @@
 import asyncio
+import struct
 import sys
 from importlib import import_module
-from io import BytesIO
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
-from PIL import Image
 
 
 class _MockEmitter:
@@ -115,16 +114,9 @@ class FakePlugins:
         return []
 
 
-class FakeAvatars:
-    def render_avatar(
-        self,
-        account_uuid,
-        size,
-        use_default_skin,
-        account_type=None,
-        account_id=None,
-    ):
-        return {"dataUrl": "", "base64": ""}
+class FakeWardrobe:
+    def list_items(self):
+        return []
 
 
 class FakeInfoCard:
@@ -146,8 +138,9 @@ def _build_api(tmp_path):
         state=launcher,
         events=bus,
         config=ConfigManager(tmp_path / "ECL_data", bus),
+        http=SimpleNamespace(),
         accounts=FakeAccounts(),
-        avatars=FakeAvatars(),
+        wardrobe=FakeWardrobe(),
         info_card=FakeInfoCard(),
         game=SimpleNamespace(),
         plugins=FakePlugins(),
@@ -156,9 +149,7 @@ def _build_api(tmp_path):
 
 
 def _make_png_bytes() -> bytes:
-    buffer = BytesIO()
-    Image.new("RGB", (100, 100), color="red").save(buffer, format="PNG")
-    return buffer.getvalue()
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", 100, 100) + b"fixture"
 
 
 class _AsyncMockClient:

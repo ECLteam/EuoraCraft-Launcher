@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 
 class RequestModel(BaseModel):
@@ -20,6 +20,22 @@ class LoaderType(StrEnum):
     FORGE = "forge"
     NEOFORGE = "neoforge"
     QUILT = "quilt"
+
+
+class WardrobeKind(StrEnum):
+    SKIN = "skin"
+    CAPE = "cape"
+
+
+class SkinModel(StrEnum):
+    CLASSIC = "classic"
+    SLIM = "slim"
+
+
+class ImagePurpose(StrEnum):
+    BACKGROUND = "background"
+    SKIN = "skin"
+    CAPE = "cape"
 
 
 class SettingsQuery(RequestModel):
@@ -139,6 +155,52 @@ class LaunchRequest(RequestModel):
         return value
 
 
+class WardrobeImportRequest(RequestModel):
+    path: Path
+    kind: WardrobeKind
+    name: str | None = Field(default=None, max_length=80)
+    model: SkinModel | None = None
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def validate_path(cls, value):
+        if isinstance(value, str) and (not value.strip() or "\0" in value):
+            raise ValueError("纹理路径无效")
+        return value
+
+    @model_validator(mode="after")
+    def validate_model(self):
+        if self.kind == WardrobeKind.CAPE and self.model is not None:
+            raise ValueError("披风不能指定手臂模型")
+        return self
+
+
+class WardrobeItemRequest(RequestModel):
+    item_id: str = Field(min_length=1)
+
+
+class WardrobeUpdateRequest(WardrobeItemRequest):
+    name: str | None = Field(default=None, max_length=80)
+    model: SkinModel | None = None
+    favorite: bool | None = None
+
+
+class WardrobeApplySkinRequest(WardrobeItemRequest):
+    account_id: str = Field(min_length=1)
+
+
+class AccountTextureRequest(RequestModel):
+    account_id: str = Field(min_length=1)
+
+
+class MicrosoftCapeRequest(AccountTextureRequest):
+    cape_id: str = Field(min_length=1)
+
+
+class ImageSelectionRequest(RequestModel):
+    purpose: ImagePurpose = ImagePurpose.BACKGROUND
+
+
 REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "settings_get": SettingsQuery,
     "settings_set": SettingsUpdate,
@@ -153,6 +215,18 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_config_set": GameConfigUpdate,
     "game_config_patch": GameConfigPatch,
     "game_instance_stop": GameInstanceRequest,
+    "wardrobe_import": WardrobeImportRequest,
+    "wardrobe_sync_account_skin": AccountTextureRequest,
+    "wardrobe_update": WardrobeUpdateRequest,
+    "wardrobe_delete": WardrobeItemRequest,
+    "wardrobe_texture": WardrobeItemRequest,
+    "wardrobe_export": WardrobeItemRequest,
+    "wardrobe_apply_skin": WardrobeApplySkinRequest,
+    "accounts_texture_urls": AccountTextureRequest,
+    "microsoft_reset_skin": AccountTextureRequest,
+    "microsoft_set_cape": MicrosoftCapeRequest,
+    "microsoft_reset_cape": AccountTextureRequest,
+    "select_image": ImageSelectionRequest,
 }
 
 
@@ -166,6 +240,7 @@ def request_schemas() -> dict[str, dict]:
 
 __all__ = [
     "REQUEST_MODELS",
+    "AccountTextureRequest",
     "GameCatalogRequest",
     "GameConfigPatch",
     "GameConfigUpdate",
@@ -173,11 +248,20 @@ __all__ = [
     "GamePathRequest",
     "GameScanRequest",
     "GameUninstallRequest",
+    "ImagePurpose",
+    "ImageSelectionRequest",
     "InstallRequest",
     "JavaScanRequest",
     "LaunchRequest",
     "LoaderCatalogRequest",
+    "MicrosoftCapeRequest",
     "SettingsQuery",
     "SettingsUpdate",
+    "SkinModel",
+    "WardrobeApplySkinRequest",
+    "WardrobeImportRequest",
+    "WardrobeItemRequest",
+    "WardrobeKind",
+    "WardrobeUpdateRequest",
     "request_schemas",
 ]

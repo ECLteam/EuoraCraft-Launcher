@@ -6,7 +6,10 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from anyio import to_thread
+from pydantic import ValidationError
 from pytauri_plugins.dialog import DialogExt
+
+from ECL.api.models import ImagePurpose, ImageSelectionRequest
 
 from .bridge import (
     _download_remote_image,
@@ -148,7 +151,7 @@ class FileHandlers(_FrontendState):
         except (OSError, ValueError):
             self.logger.exception("背景图落盘失败，仅返回内存数据: %s", url)
 
-        self.logger.info("远程背景图已处理: %s, ext=%s, base64_len=%d", url, ext, len(b64))
+        self.logger.info("远程背景图已原样保存: %s, ext=%s, base64_len=%d", url, ext, len(b64))
         return {
             "success": True,
             "data": {"dataUrl": data_url, "base64": b64, "url": url, "path": local_path},
@@ -279,7 +282,7 @@ class FileHandlers(_FrontendState):
         self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, result["mime"], len(result["b64"]))
         return {
             "success": True,
-            "data": {"dataUrl": result["dataUrl"], "base64": result["b64"]},
+            "data": {"dataUrl": result["dataUrl"]},
         }
 
     @_ipc_handler("IMAGE_LIST_FILES_ERROR")
@@ -306,23 +309,6 @@ class FileHandlers(_FrontendState):
         files = await to_thread.run_sync(_list)
         self.logger.info("目录图片文件数量: %d", len(files))
         return {"success": True, "data": {"files": files}}
-
-    @_ipc_handler("AVATAR_RENDER_FAILED")
-    async def avatar_data_url(self, body: dict[str, Any]) -> dict[str, Any]:
-        """
-        获取账户头像。
-
-        :param body: 经过边界校验的 IPC 请求数据
-        """
-        avatar_data = await to_thread.run_sync(
-            self.avatars.render_avatar,
-            body.get("uuid"),
-            body.get("size", 64),
-            bool(body.get("use_default_skin", False)),
-            body.get("type_name"),
-            body.get("account_id"),
-        )
-        return {"success": True, "data": avatar_data}
 
     async def _pick_path(self, pick_folder: bool, title: str, extensions: list[str] | None = None) -> str:
         if self._webview is None:
@@ -364,11 +350,25 @@ class FileHandlers(_FrontendState):
     @_ipc_handler("SELECT_IMAGE_ERROR")
     async def select_image(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        选择图片。
+        按使用场景选择图片；皮肤和披风只允许 PNG。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 包含可选图片用途的 IPC 请求数据
+        :return: 用户选择的本地绝对路径，取消时路径为空
         """
-        path = await self._pick_path(False, "选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"])
+        try:
+            request = ImageSelectionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        if request.purpose == ImagePurpose.SKIN:
+            title = "选择 Minecraft 皮肤"
+            extensions = ["png"]
+        elif request.purpose == ImagePurpose.CAPE:
+            title = "选择 Minecraft 披风"
+            extensions = ["png"]
+        else:
+            title = "选择背景图片"
+            extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+        path = await self._pick_path(False, title, extensions)
         self.logger.info("图片选择结果: %s", path)
         return {"success": True, "data": {"path": path, "base64": ""}}
 

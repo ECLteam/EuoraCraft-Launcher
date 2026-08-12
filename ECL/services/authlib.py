@@ -6,8 +6,6 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
-from typing import NamedTuple
-from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -24,11 +22,6 @@ class AuthlibProfileSelectionRequired(AuthlibError):
     def __init__(self, profiles: list[dict]) -> None:
         super().__init__("该登录名下有多个角色，请选择本次登录使用的角色")
         self.profiles = deepcopy(profiles)
-
-
-class AuthlibAvatar(NamedTuple):
-    data: bytes
-    is_skin: bool
 
 
 class AuthlibInjector:
@@ -494,12 +487,14 @@ class AuthlibAccountManager:
                 "YggdrasilAPI": account["YggdrasilAPI"],
             }
 
-    def get_avatar(self, account_id: str, size: int) -> AuthlibAvatar | None:
+    def get_texture_urls(self, account_id: str) -> dict[str, str]:
         """
-        返回所选角色的头像或皮肤数据。
+        从外置登录会话档案中解析完整皮肤与披风 URL。
+
+        后端只读取签名后的材质元数据，不下载或裁切图片，前端可据此完成统一渲染。
 
         :param account_id: 账户的稳定标识
-        :param size: 目标图像尺寸
+        :return: 可用的 ``skinUrl`` 和 ``capeUrl``；没有材质时返回空字典
         """
         with self._lock:
             account = self.accounts.get(account_id)
@@ -507,26 +502,16 @@ class AuthlibAccountManager:
                 raise KeyError(f"账户 '{account_id}' 不存在")
             profile = (account.get("Profiles") or {}).get("selectedProfile") or {}
             if not profile:
-                return None
+                return {}
             server_url = account["YggdrasilAPI"].rstrip("/")
-            username = profile.get("name") or ""
             profile_id = profile.get("id") or ""
-
-        if username and server_url.endswith("/api/yggdrasil"):
-            response = self.http.get(
-                f"{server_url.removesuffix('/api/yggdrasil')}/avatar/player/{quote(username, safe='')}",
-                params={"size": size, "png": "true"},
-            )
-            if response.status_code != 404:
-                response.raise_for_status()
-                return AuthlibAvatar(response.content, False)
 
         response = self.http.get(
             f"{server_url}/sessionserver/session/minecraft/profile/{profile_id}",
             params={"unsigned": "true"},
         )
         if response.status_code == 204:
-            return None
+            return {}
         response.raise_for_status()
         texture = next(
             (
@@ -537,14 +522,17 @@ class AuthlibAccountManager:
             None,
         )
         if texture is None:
-            return None
+            return {}
         texture_data = json.loads(base64.b64decode(texture))
-        skin_url = (texture_data.get("textures", {}).get("SKIN") or {}).get("url")
-        if not skin_url:
-            return None
-        response = self.http.get(skin_url)
-        response.raise_for_status()
-        return AuthlibAvatar(response.content, True)
+        textures = texture_data.get("textures") or {}
+        result: dict[str, str] = {}
+        skin_url = (textures.get("SKIN") or {}).get("url")
+        cape_url = (textures.get("CAPE") or {}).get("url")
+        if isinstance(skin_url, str) and skin_url:
+            result["skinUrl"] = skin_url
+        if isinstance(cape_url, str) and cape_url:
+            result["capeUrl"] = cape_url
+        return result
 
     def close(self) -> None:
         """

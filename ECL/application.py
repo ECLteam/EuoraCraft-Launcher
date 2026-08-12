@@ -14,9 +14,9 @@ from ECL.common.runtime import RuntimeInfo
 from ECL.events import EventBus
 from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
-from ECL.services.avatars import AvatarManager
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
+from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
 
 logger = logging.getLogger("EuoraCraft-Launcher.Application")
@@ -58,7 +58,7 @@ class ApplicationContext:
     environment: Environment
     http: httpx.Client
     accounts: AccountManager
-    avatars: AvatarManager
+    wardrobe: WardrobeStore
     info_card: InfoCardManager
     game: GameService
     plugins: PluginManager
@@ -75,7 +75,7 @@ class ApplicationContext:
                 return
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭应用上下文中的共享资源")
-            for resource in (self.plugins, self.game, self.avatars, self.accounts, self.http):
+            for resource in (self.plugins, self.game, self.accounts, self.http):
                 try:
                     resource.close()
                 except Exception:
@@ -128,9 +128,8 @@ def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
         )
         created.append(accounts)
         logger.debug("账户服务已创建，Microsoft 登录可用=%s", accounts.microsoft_login_config()["available"])
-        avatars = AvatarManager(state.resource_path, authlib_manager=accounts.authlib_manager, http_client=http)
-        created.append(avatars)
-        logger.debug("头像服务已创建")
+        wardrobe = WardrobeStore(state.data_path)
+        logger.debug("本地衣柜已创建，条目数=%s", len(wardrobe.list_items()))
         info_card = InfoCardManager(state.data_path, http_client=http)
         game = GameService(accounts, data_path=state.data_path, event_bus=events)
         created.append(game)
@@ -155,7 +154,7 @@ def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
         environment=environment,
         http=http,
         accounts=accounts,
-        avatars=avatars,
+        wardrobe=wardrobe,
         info_card=info_card,
         game=game,
         plugins=plugins,

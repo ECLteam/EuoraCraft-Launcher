@@ -9,6 +9,7 @@ from ECL.api.models import (
     LaunchRequest,
     LoaderCatalogRequest,
     SettingsQuery,
+    WardrobeImportRequest,
     request_schemas,
 )
 
@@ -19,10 +20,12 @@ def test_request_models_accept_valid_payloads() -> None:
         {"version_id": "1.21.1", "game_path": ".minecraft", "loader_type": "fabric"}
     )
     launch = LaunchRequest.model_validate({"version_id": "1.21.1", "game_path": ".minecraft"})
+    wardrobe = WardrobeImportRequest.model_validate({"path": "skin.png", "kind": "skin", "model": "slim"})
 
     assert query.sections == ["launcher", "game"]
     assert install.loader_type.value == "fabric"
     assert launch.memory == 4096
+    assert wardrobe.model.value == "slim"
 
 
 @pytest.mark.parametrize(
@@ -33,6 +36,7 @@ def test_request_models_accept_valid_payloads() -> None:
         (InstallRequest, {"game_path": ".minecraft"}),
         (LaunchRequest, {"version_id": "1.21.1", "game_path": ".minecraft", "memory": 1}),
         (LaunchRequest, {"version_id": "1.21.1", "game_path": "bad\0path"}),
+        (WardrobeImportRequest, {"path": "cape.png", "kind": "cape", "model": "slim"}),
     ],
 )
 def test_request_models_reject_invalid_payloads(model, payload) -> None:
@@ -57,6 +61,18 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "game_config_set",
         "game_config_patch",
         "game_instance_stop",
+        "wardrobe_import",
+        "wardrobe_sync_account_skin",
+        "wardrobe_update",
+        "wardrobe_delete",
+        "wardrobe_texture",
+        "wardrobe_export",
+        "wardrobe_apply_skin",
+        "accounts_texture_urls",
+        "select_image",
+        "microsoft_reset_skin",
+        "microsoft_set_cape",
+        "microsoft_reset_cape",
     }
     assert all(schema["type"] == "object" for schema in schemas.values())
 

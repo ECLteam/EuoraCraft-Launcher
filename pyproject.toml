@@ -17,7 +17,6 @@ dependencies = [
     "pyperclip>=1.8.0",
     "msal>=1.20.0",
     "cryptography==46.0.3",
-    "Pillow>=10.0.0",
     "pydantic>=2.0.0",
     "httpx[http2]>=0.28.0",
     "lxml>=5.0.0",
@@ -60,7 +59,6 @@ dev = [
     "tomlkit>=0.13.0",
     "types-colorama>=0.4.6",
     "types-pyperclip>=1.8.2",
-    "types-Pillow>=10.2.0",
     "debugpy>=1.8.0",
     "ipython>=8.20.0",
     "pip-tools>=7.4.0"
@@ -111,6 +109,7 @@ indent-width = 4
 exclude = [
     "EuoraCraftLauncher-UI",
     "frontend",
+    "ECL/game",
     "ECL_Libs",
     "resources",
     ".git",

@@ -4,13 +4,46 @@ import argparse
 import ast
 from pathlib import Path
 
-
 FORBIDDEN_DIRECTORIES = {"Adapters", "Api", "Common", "Events", "Game", "Infrastructure", "Plugin", "Services"}
 FORBIDDEN_TOKENS = ("register_services", "EventBus().get(", "EventBus().register(")
 
 
 def production_files(root: Path) -> list[Path]:
-    return sorted(path for path in (root / "ECL").rglob("*.py") if "tests" not in path.parts)
+    ecl_root = root / "ECL"
+    game_root = ecl_root / "game"
+    return sorted(
+        path for path in ecl_root.rglob("*.py") if "tests" not in path.parts and not path.is_relative_to(game_root)
+    )
+
+
+def audit_file(path: Path, root: Path, game_root: Path) -> list[str]:
+    errors: list[str] = []
+    source = path.read_text(encoding="utf-8")
+    relative = path.relative_to(root)
+    for token in FORBIDDEN_TOKENS:
+        if token in source:
+            errors.append(f"{relative}: 禁止使用 {token}")
+    if "???" in source:
+        errors.append(f"{relative}: 注释或字符串中仍存在未完成的问号占位符")
+
+    tree = ast.parse(source, filename=str(relative))
+    if not path.is_relative_to(game_root):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.game."):
+                errors.append(f"{relative}:{node.lineno}: 只能从 ECL.game 公共入口导入")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
+            continue
+        expression = node.body[0]
+        is_docstring = (
+            isinstance(expression, ast.Expr)
+            and isinstance(expression.value, ast.Constant)
+            and isinstance(expression.value.value, str)
+        )
+        if is_docstring and expression.lineno == expression.end_lineno:
+            errors.append(f"{relative}:{node.lineno}: {node.name} 使用了单行 Docstring")
+    return errors
 
 
 def audit(root: Path) -> list[str]:
@@ -22,35 +55,9 @@ def audit(root: Path) -> list[str]:
 
     game_root = ecl_root / "game"
     for path in production_files(root):
-        source = path.read_text(encoding="utf-8")
-        relative = path.relative_to(root)
-        for token in FORBIDDEN_TOKENS:
-            if token in source:
-                errors.append(f"{relative}: 禁止使用 {token}")
-        if "???" in source:
-            errors.append(f"{relative}: 注释或字符串中仍存在未完成的问号占位符")
+        errors.extend(audit_file(path, root, game_root))
 
-        tree = ast.parse(source, filename=str(relative))
-        if not path.is_relative_to(game_root):
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.game."):
-                    errors.append(f"{relative}:{node.lineno}: 只能从 ECL.game 公共入口导入")
-
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not node.body:
-                continue
-            expression = node.body[0]
-            is_docstring = (
-                isinstance(expression, ast.Expr)
-                and isinstance(expression.value, ast.Constant)
-                and isinstance(expression.value.value, str)
-            )
-            if is_docstring and expression.lineno == expression.end_lineno:
-                errors.append(f"{relative}:{node.lineno}: {node.name} 使用了单行 Docstring")
-
-    if list(ecl_root.rglob("Libs.py")):
+    if [path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(game_root)]:
         errors.append("ECL 中仍存在重复或含义不明确的 Libs.py")
     return errors
 
