@@ -4,10 +4,9 @@ from hashlib import sha256
 from pathlib import Path
 
 import httpx
-import pytest
 
-from ECL.Game.Core.YggdrasilAuth import YggdrasilClient
-from ECL.Services.authlib import AuthlibAccountManager, AuthlibInjector
+from ECL.game import YggdrasilClient
+from ECL.services.authlib import AuthlibAccountManager, AuthlibInjector
 
 
 class OfflineClient:
@@ -51,7 +50,7 @@ class LoginClient:
         pass
 
 
-def test_authlib_manager_uses_game_core_default_account_path(monkeypatch, tmp_path) -> None:
+def test_authlib_manager_uses_game_default_account_path(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     manager = AuthlibAccountManager(
         client=OfflineClient(),
@@ -370,7 +369,7 @@ def test_refresh_saves_selected_profile_and_user_without_available_profiles(tmp_
             "availableProfiles": [
                 {"id": "profile-one", "name": "PlayerOne"},
                 {"id": "profile-two", "name": "PlayerTwo"},
-            ]
+            ],
         },
     }
     manager.tokens["saved-account"] = {

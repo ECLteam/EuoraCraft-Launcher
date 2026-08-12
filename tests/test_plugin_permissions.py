@@ -6,9 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.Events import EventBus
-from ECL.Plugin import Plugin, PluginFramework
-from ECL.Plugin.permissions import Permission, PermissionAction, PermissionManager, PermissionScope
+from ECL.events import EventBus
+from ECL.plugins import Plugin, PluginFramework
+from ECL.plugins.permissions import Permission, PermissionAction, PermissionManager, PermissionScope
 
 
 def _reset_runtime() -> None:
@@ -57,6 +57,8 @@ def test_system_plugin_skips_permission_check(tmp_path) -> None:
     manager.register_plugin_permissions("sys", [])
     framework = Mock()
     framework._permission_manager = manager
+    event_bus = EventBus()
+    framework.events = event_bus
     plugin_dir = tmp_path / "sys"
     plugin_dir.mkdir()
     plugin = Plugin(framework, plugin_dir, {"name": "sys"}, is_system=True)
@@ -96,6 +98,8 @@ def test_normal_plugin_with_permission_can_operate(tmp_path) -> None:
     )
     framework = Mock()
     framework._permission_manager = manager
+    event_bus = EventBus()
+    framework.events = event_bus
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / "style.css").write_text("body {}", encoding="utf-8")
@@ -109,6 +113,7 @@ def test_normal_plugin_with_permission_can_operate(tmp_path) -> None:
 
 def test_plugin_can_subscribe_to_another_plugin_event(tmp_path) -> None:
     _reset_runtime()
+    event_bus = EventBus()
     manager = PermissionManager()
     manager.register_plugin_permissions(
         "listener",
@@ -117,14 +122,12 @@ def test_plugin_can_subscribe_to_another_plugin_event(tmp_path) -> None:
     framework = Mock()
     framework._permission_manager = manager
     # 模拟插件管理器统一注册事件订阅（自动携带插件名作为所有者）
-    framework.subscribe_event = lambda plugin, event, handler: EventBus().subscribe(
-        event, handler, owner=plugin.name
-    )
+    framework.subscribe_event = lambda plugin, event, handler: event_bus.subscribe(event, handler, owner=plugin.name)
     plugin = Plugin(framework, tmp_path, {"name": "listener"})
     received = []
 
     plugin.subscribe("publisher:updated", received.append)
-    EventBus().emit("publisher:updated", {"value": 1})
+    event_bus.emit("publisher:updated", {"value": 1})
 
     assert received == [{"value": 1}]
 
@@ -147,7 +150,7 @@ def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
             "entry_point": "main:DemoPlugin",
             "permissions": [{"scope": "events", "action": "emit", "resource": "demo:hello"}],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    def on_load(self):\n"
         "        self.emit('demo:hello')\n",
@@ -173,7 +176,7 @@ def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
             "entry_point": "main:BadPlugin",
             "permissions": [],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class BadPlugin(Plugin):\n"
         "    @Plugin.on_event('bad:hello')\n"
         "    def on_hello(self, name): ...\n",
@@ -202,7 +205,7 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
     _write_plugin(
         data_path / "plugins" / "broken",
         {"name": "broken", "version": "1.0.0", "entry_point": "main:BrokenPlugin"},
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class BrokenPlugin(Plugin):\n"
         "    def __init__(self, *args, **kwargs):\n"
         "        raise RuntimeError('插件配置内容无效')\n",
@@ -223,9 +226,10 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
 
 def test_sidebar_state_is_emitted_after_frontend_is_ready() -> None:
     _reset_runtime()
-    framework = PluginFramework()
+    event_bus = EventBus()
+    framework = PluginFramework(event_bus)
     states = []
-    EventBus().subscribe("frontend:sidebar_changed", states.append)
+    event_bus.subscribe("frontend:sidebar_changed", states.append)
 
     framework.set_sidebar_state(True)
     assert states == []
@@ -250,7 +254,7 @@ def test_system_plugin_ignores_permission_declaration(tmp_path) -> None:
             "entry_point": "main:SysDemoPlugin",
             "permissions": [],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class SysDemoPlugin(Plugin):\n"
         "    @Plugin.on_event('sysdemo:hello')\n"
         "    def on_hello(self, name): ...\n"

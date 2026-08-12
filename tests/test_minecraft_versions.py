@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ECL.Services import GameService, VersionScanError
+from ECL.services import GameService, VersionScanError
 
 
 class FakeAccounts:
@@ -48,7 +48,7 @@ def test_version_service_normalizes_scanner_output(tmp_path) -> None:
         {
             "id": "fabric-profile",
             "versionId": "fabric-profile",
-            "versionType": "release",
+            "versionType": "Release",
             "path": str(game_path),
             "displayName": "fabric-profile",
             "primaryLoader": "Fabric",
@@ -85,7 +85,7 @@ def test_version_service_scans_with_original_search_minecraft(tmp_path) -> None:
 
     assert len(versions) == 1
     assert versions[0]["versionId"] == "1.20.1"
-    assert versions[0]["versionType"] == "release"
+    assert versions[0]["versionType"] == "Release"
     assert versions[0]["primaryLoader"] == "Vanilla"
     assert versions[0]["isBroken"] is False
 

@@ -1,4 +1,4 @@
-from ECL.Infrastructure import EnvManager
+from ECL.utils import EnvManager
 
 
 def _reset_env_manager() -> None:

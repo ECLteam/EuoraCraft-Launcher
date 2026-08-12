@@ -1,79 +1,78 @@
-# Environment variables
+# Secrets and local environment overrides
 .env
-.env.dev
+.env.*
+!.env.example
 
-# Python virtual environments
+# Python environments
 .venv/
 venv/
 env/
 ENV/
+.conda/
 
-# Python cache
-**/__pycache__/
+# Python bytecode and tool caches
+__pycache__/
 *.py[cod]
 *$py.class
-*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.tox/
+.nox/
 
-# Build & distribution
+# Coverage reports
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Python packaging and PyInstaller output
 build/
 dist/
-*.egg-info/
 .eggs/
+*.egg-info/
+*.egg
 *.spec
 !EuoraCraft-Launcher.spec
 
-# Frontend build output
+# Frontend dependencies and generated output
+frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 
-# IDE & editors
+# Launcher runtime data
+/ECL_data/
+/.minecraft/
+/ECL_Libs/
+/ECL_Core/
+/plugins/
+/plugin_config/
+/setting.json
+/dep_cache/
+/.uploads/
+/.plugin_config/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+/logs/
+
+# Editors and local assistants
 .idea/
 .vscode/
+.trae/
+.trae-html-share-packages/
+.agents/
 *.swp
 *.swo
 *~
 
-# OS files
+# Operating system metadata
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# Logs & temp
-*.log
-*.tmp
-logs/
-
-# Runtime generated data
-ECL_data/
-setting.json
-.minecraft/
-ECL_Libs/
-ECL_Core/
-
-# Testing & coverage
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Package managers
-.conda/
-
-# Independent UI repository (managed separately)
-EuoraCraftLauncher-UI/
-
-.trae/
-.trae-html-share-packages/
-
-dep_cache/
-
-.uploads/
-
-.plugin_config/
-
-plugins/
-plugin_config/
-
-
-.agents/
-
-ECL/Game/Core/__pycache__/
+# Legacy standalone UI checkout
+/EuoraCraftLauncher-UI/

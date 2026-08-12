@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from ECL.Events import EventBus
-from ECL.Plugin import PluginFramework
+from ECL.events import EventBus
+from ECL.plugins import PluginFramework
 
 
 def _reset_runtime() -> None:
@@ -36,7 +36,7 @@ def test_disabled_plugin_is_skipped_on_initialize(tmp_path) -> None:
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DisabledPlugin(Plugin):\n"
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): return {'ok': True}\n",
@@ -80,7 +80,7 @@ def test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None:
                 {"scope": "events", "action": "emit", "resource": "meta_plugin:*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class MetaPlugin(Plugin):\n"
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): return {'ok': True}\n",
@@ -120,7 +120,7 @@ def test_disable_persists_to_state_file(tmp_path) -> None:
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): return {'ok': True}\n",
@@ -152,7 +152,7 @@ def test_enable_removes_from_state_file(tmp_path) -> None:
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): return {'ok': True}\n",
@@ -187,7 +187,7 @@ def test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    def __init__(self, *args, **kwargs):\n"
         "        super().__init__(*args, **kwargs)\n"
@@ -234,7 +234,7 @@ def test_register_route_is_idempotent(tmp_path) -> None:
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"
@@ -266,7 +266,7 @@ def test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None:
                 {"scope": "commands", "action": "execute", "resource": "*"},
             ],
         },
-        "from ECL.Plugin import Plugin\n"
+        "from ECL.plugins import Plugin\n"
         "class DemoPlugin(Plugin):\n"
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): return {'ok': True}\n",

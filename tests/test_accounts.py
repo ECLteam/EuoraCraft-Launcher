@@ -7,10 +7,10 @@ from typing import Any
 import httpx
 import pytest
 
-import ECL.Services.accounts as accounts_service
-from ECL.Events import EventBus
-from ECL.Services import AccountManager
-from ECL.Services.microsoft import LauncherMicrosoftAccountManager
+import ECL.services.accounts as accounts_service
+from ECL.events import EventBus
+from ECL.services import AccountManager
+from ECL.services.accounts import LauncherMicrosoftAccountManager
 
 
 class FakeMicrosoftManager:
@@ -53,6 +53,24 @@ class FakeMicrosoftManager:
     def get_minecraft_token(self, account_id: str) -> str:
         assert account_id in self.accounts
         return "minecraft-access-token"
+
+    def upload_skin(self, account_id: str, variant: str, image: bytes) -> dict[str, Any]:
+        assert account_id in self.accounts
+        self.skin_variant = variant
+        return {"uploaded": True}
+
+    def reset_skin(self, account_id: str) -> dict[str, Any]:
+        assert account_id in self.accounts
+        return {"reset": True}
+
+    def set_cape(self, account_id: str, cape_id: str) -> dict[str, Any]:
+        assert account_id in self.accounts
+        self.selected_cape_id = cape_id
+        return {"cape": cape_id}
+
+    def reset_cape(self, account_id: str) -> dict[str, Any]:
+        assert account_id in self.accounts
+        return {"cape": None}
 
     def close(self) -> None:
         self.closed = True
@@ -174,8 +192,9 @@ def _reset_event_bus() -> None:
 def test_offline_accounts_persist_and_emit_changes(tmp_path) -> None:
     _reset_event_bus()
     events = []
-    EventBus().subscribe("accounts:changed", events.append)
-    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+    event_bus = EventBus()
+    event_bus.subscribe("accounts:changed", events.append)
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager(), event_bus=event_bus)
 
     account = manager.add_offline("Steve")
 
@@ -371,9 +390,10 @@ def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) ->
 def test_microsoft_device_login_flow(tmp_path) -> None:
     _reset_event_bus()
     login_events = []
-    EventBus().subscribe("accounts:microsoft_login_status", login_events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
     microsoft_manager = FakeMicrosoftManager()
-    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
+    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager, event_bus=event_bus)
 
     started = manager.start_microsoft_login()
     if manager._login_thread is not None:
@@ -395,7 +415,7 @@ def test_microsoft_device_login_flow(tmp_path) -> None:
 
 
 def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None:
-    microsoft_auth_core = import_module("ECL.Game.Core.MicrosoftAuth")
+    microsoft_auth_core = import_module("ECL.game.auth.microsoft")
     stages = []
 
     class FakeMicrosoftAuth:
@@ -500,9 +520,10 @@ def test_complete_microsoft_login_keeps_pending_state(tmp_path) -> None:
 def test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None:
     _reset_event_bus()
     login_events = []
-    EventBus().subscribe("accounts:microsoft_login_status", login_events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
     microsoft_manager = BlockingMicrosoftManager()
-    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
+    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager, event_bus=event_bus)
 
     started = manager.start_microsoft_login()
     assert started["status"] == "pending"
@@ -528,3 +549,95 @@ def test_close_cancels_login_and_releases_manager(tmp_path) -> None:
 
     assert not manager._login_thread.is_alive()
     assert microsoft_manager.closed is True
+
+
+def test_microsoft_account_includes_capes(tmp_path) -> None:
+    _reset_event_bus()
+    microsoft_manager = FakeMicrosoftManager()
+    microsoft_manager.accounts["microsoft-account"] = {
+        "AccountId": "microsoft-account",
+        "Email": "player@example.com",
+        "Profile": {
+            "id": "0123456789abcdef0123456789abcdef",
+            "name": "Player",
+            "skins": [{"url": "https://textures.example.com/skin.png"}],
+            "capes": [
+                {"id": "migrator", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
+                {"id": "minecon-2016", "state": "INACTIVE"},
+            ],
+        },
+        "Skin": {},
+    }
+    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
+
+    account = manager.list_accounts()["accounts"][0]
+    assert account["capes"] == [
+        {"id": "migrator", "state": "ACTIVE", "url": "https://textures.example.com/cape.png"},
+        {"id": "minecon-2016", "state": "INACTIVE", "url": ""},
+    ]
+
+
+def _manager_with_microsoft_account(tmp_path) -> tuple[AccountManager, FakeMicrosoftManager]:
+    _reset_event_bus()
+    microsoft_manager = FakeMicrosoftManager()
+    manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
+    microsoft_manager.add_microsoft_account()
+    return manager, microsoft_manager
+
+
+def test_upload_skin_refreshes_account(tmp_path) -> None:
+    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+
+    account = manager.upload_skin("microsoft-account", "slim", b"\x89PNG")
+
+    assert microsoft_manager.skin_variant == "slim"
+    assert account["type"] == "microsoft"
+    assert account["id"] == "microsoft-account"
+
+
+def test_upload_skin_normalizes_variant(tmp_path) -> None:
+    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+
+    manager.upload_skin("microsoft-account", "SLIM", b"bytes")
+    assert microsoft_manager.skin_variant == "slim"
+
+    manager.upload_skin("microsoft-account", "classic", b"bytes")
+    assert microsoft_manager.skin_variant == "classic"
+
+
+def test_reset_skin(tmp_path) -> None:
+    manager, _microsoft_manager = _manager_with_microsoft_account(tmp_path)
+
+    account = manager.reset_skin("microsoft-account")
+    assert account["id"] == "microsoft-account"
+
+
+def test_set_and_reset_cape(tmp_path) -> None:
+    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+
+    account = manager.set_cape("microsoft-account", "migrator")
+    assert account["id"] == "microsoft-account"
+    assert microsoft_manager.selected_cape_id == "migrator"
+
+    account = manager.reset_cape("microsoft-account")
+    assert account["id"] == "microsoft-account"
+
+
+def test_skin_operations_require_microsoft_account(tmp_path) -> None:
+    _reset_event_bus()
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+    manager.add_offline("Steve")
+
+    with pytest.raises(accounts_service.AccountError):
+        manager.upload_skin("offline:not-a-real-uuid", "classic", b"bytes")
+    with pytest.raises(accounts_service.AccountError):
+        manager.set_cape("offline:not-a-real-uuid", "migrator")
+    with pytest.raises(accounts_service.AccountError):
+        manager.reset_cape("offline:not-a-real-uuid")
+
+
+def test_set_cape_rejects_empty_cape_id(tmp_path) -> None:
+    manager, _microsoft_manager = _manager_with_microsoft_account(tmp_path)
+
+    with pytest.raises(accounts_service.AccountError):
+        manager.set_cape("microsoft-account", "   ")

@@ -1,0 +1,189 @@
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from ECL.plugins.dependencies import (
+    DependencyResolution,
+    PluginDependencyInfo,
+    parse_dependency,
+    resolve_dependencies,
+)
+from ECL.plugins.plugin import Plugin
+
+from .base import _PluginState
+
+
+class PluginDiscovery(_PluginState):
+    def _collect_candidates(self, base_dir: Path, is_system: bool) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        if not base_dir.is_dir():
+            return candidates
+        for plugin_dir in sorted(base_dir.iterdir()):
+            if not plugin_dir.is_dir():
+                continue
+            metadata_path = plugin_dir / "plugin.json"
+            if not metadata_path.is_file():
+                continue
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                self.logger.warning("插件元数据解析失败: %s", metadata_path)
+                continue
+            name = metadata.get("name")
+            if not name:
+                continue
+            candidates.append(
+                {
+                    "name": name,
+                    "plugin_dir": plugin_dir,
+                    "metadata_path": metadata_path,
+                    "metadata": metadata,
+                    "is_system": is_system,
+                }
+            )
+        return candidates
+
+    def _resolve_candidate_dependencies(self, candidates: list[dict[str, Any]]) -> DependencyResolution:
+        """
+        根据候选插件元数据解析依赖关系与加载顺序。
+
+        :param candidates: 等待解析的插件候选项
+        """
+        seen: set[str] = set()
+        infos: list[PluginDependencyInfo] = []
+        for candidate in candidates:
+            name = candidate["name"]
+            if name in seen:
+                self.logger.warning("插件 %s 重复，跳过", name)
+                continue
+            seen.add(name)
+            metadata = candidate["metadata"]
+            deps_meta = metadata.get("dependencies", {})
+            deps: list[Any] = []
+            for dep_name, dep_value in deps_meta.items():
+                req = parse_dependency(dep_name, dep_value)
+                if req is None:
+                    self.logger.warning("插件 %s 的依赖 %s 格式无效", name, dep_name)
+                    continue
+                deps.append(req)
+            infos.append(
+                PluginDependencyInfo(
+                    name=name,
+                    version=metadata.get("version", "0.0.0"),
+                    dependencies=deps,
+                    is_system=candidate["is_system"],
+                )
+            )
+        return resolve_dependencies(infos)
+
+    def _load_plugins_in_order(self, candidates: list[dict[str, Any]], load_order: list[str]) -> None:
+        """
+        按依赖拓扑顺序实例化并加载插件；被禁用的插件直接跳过。
+
+        :param candidates: 等待解析的插件候选项
+        :param load_order: 依赖解析后的插件加载顺序
+        """
+        candidate_map = {c["name"]: c for c in candidates}
+        for name in self._disabled_plugins:
+            candidate = candidate_map.get(name)
+            if candidate is None:
+                continue
+            self._permission_manager.register_plugin_permissions(name, candidate["metadata"].get("permissions", []))
+            self._status[name] = "disabled"
+        for name in load_order:
+            if name in self._disabled_plugins:
+                self.logger.info("插件 %s 已被禁用，跳过加载", name)
+                continue
+            candidate = candidate_map.get(name)
+            if candidate is None:
+                continue
+            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
+
+    def _load_plugin(self, plugin_dir: Path, metadata_path: Path, is_system: bool) -> None:
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            self.logger.warning("插件元数据解析失败: %s", metadata_path)
+            return
+        name = metadata.get("name")
+        if not name:
+            return
+        if name in self._plugins:
+            self.logger.warning("插件 %s 重复，跳过", name)
+            return
+        entry_point = metadata.get("entry_point", "main:Plugin")
+        # 在实例化之前注册权限声明，使 __init__ 中的装饰器注册能立即生效
+        permissions_meta = metadata.get("permissions", [])
+        self._permission_manager.register_plugin_permissions(name, permissions_meta)
+        self._load_plugin_config(name, metadata)
+
+        self._status[name] = "loading"
+        try:
+            plugin = self._create_instance(name, plugin_dir, metadata, entry_point, is_system)
+        except PermissionError as exc:
+            detail = str(exc)
+            self.logger.error("插件 %s 权限声明不足，无法实例化: %s", name, detail)
+            self._status[name] = "permission_denied"
+            self._plugin_errors[name] = detail
+            return
+        except Exception as exc:
+            self.logger.exception("插件 %s 实例化失败", name)
+            self._status[name] = "error"
+            self._plugin_errors[name] = str(exc)
+            return
+        self._plugins[name] = plugin
+        self._status[name] = "loaded"
+        self._call_plugin_hook(plugin, "on_load")
+        self.logger.info("插件已加载: %s v%s", name, plugin.version)
+
+    def _create_instance(
+        self, name: str, plugin_dir: Path, metadata: dict[str, Any], entry_point: str, is_system: bool
+    ) -> Plugin:
+        """
+        从 entry_point 创建插件实例，entry_point 格式为 "文件名:类名" 或纯 "文件名"
+
+        :param name: 目标对象名称
+        :param plugin_dir: 插件根目录
+        :param metadata: 插件清单元数据
+        :param entry_point: 插件入口模块或文件
+        :param is_system: 是否为启动器内置系统插件
+        """
+        parts = entry_point.split(":", 1)
+        module_name = parts[0]
+        class_name = parts[1] if len(parts) > 1 else "Plugin"
+        main_py = plugin_dir / f"{module_name}.py"
+        if not main_py.is_file():
+            raise FileNotFoundError(f"入口文件不存在: {main_py}")
+        # 使用隔离的模块名避免命名冲突
+        spec = importlib.util.spec_from_file_location(f"plugin_{name}", main_py)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        plugin_class = getattr(module, class_name)
+        return plugin_class(self, plugin_dir, metadata, is_system)
+
+    def _call_plugin_hook(self, plugin: Plugin, method_name: str, *, fail_status: str | None = None) -> bool:
+        """
+        安全调用插件生命周期钩子；失败时记录日志并可选择恢复状态。
+
+        :param plugin: 插件实例
+        :param method_name: 需要调用的插件生命周期方法名
+        :param fail_status: 调用失败时记录的插件状态
+        """
+        try:
+            getattr(plugin, method_name)()
+            return True
+        except PermissionError as exc:
+            detail = str(exc)
+            self.logger.error("插件 %s %s 权限不足: %s", plugin.name, method_name, detail)
+            self._status[plugin.name] = "permission_denied"
+            self._plugin_errors[plugin.name] = detail
+            return False
+        except Exception as exc:
+            self.logger.exception("插件 %s %s 失败", plugin.name, method_name)
+            self._plugin_errors[plugin.name] = str(exc)
+            if fail_status is not None:
+                self._status[plugin.name] = fail_status
+            return False

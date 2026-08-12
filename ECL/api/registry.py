@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from ECL.api.frontend import FrontendApi
+
+COMMAND_NAMES = (
+    "frontend_ready",
+    "system_ping",
+    "system_memory",
+    "launcher_info",
+    "info_card_get",
+    "user_agreement_get",
+    "user_agreement_save",
+    "user_agreement_clear",
+    "export_logs",
+    "debug_reset_launcher_data",
+    "debug_clear_plugins",
+    "settings_get",
+    "settings_set",
+    "game_versions",
+    "game_loader_versions",
+    "game_scan",
+    "game_java_scan",
+    "game_install",
+    "game_uninstall",
+    "game_config_get",
+    "game_config_set",
+    "game_config_patch",
+    "game_instances",
+    "game_launch",
+    "game_launch_cancel",
+    "game_instance_stop",
+    "accounts_list",
+    "accounts_current",
+    "accounts_add_offline",
+    "accounts_add_authlib",
+    "accounts_select_authlib_profile",
+    "accounts_microsoft_login_config",
+    "accounts_start_microsoft_login",
+    "accounts_poll_microsoft_login",
+    "accounts_cancel_microsoft_login",
+    "accounts_complete_microsoft_login",
+    "accounts_switch",
+    "accounts_remove",
+    "accounts_refresh_profile",
+    "microsoft_upload_skin",
+    "microsoft_reset_skin",
+    "microsoft_set_cape",
+    "microsoft_reset_cape",
+    "authlib_resolve_server",
+    "authlib_servers",
+    "image_save_url",
+    "image_fetch_data_url",
+    "image_save_as",
+    "image_read_file",
+    "image_list_files",
+    "avatar_data_url",
+    "select_directory",
+    "select_java",
+    "select_image",
+    "select_file",
+    "open_folder",
+    "open_url",
+    "file_resolve",
+    "fs_exists",
+    "fs_read_dir",
+    "fs_read_file",
+    "get_mods",
+    "toggle_mod",
+    "add_mod",
+    "remove_mod",
+    "open_mods_folder",
+    "search_mods",
+    "get_mod_info",
+    "get_mod_versions",
+    "download_mod",
+    "plugin_list",
+    "plugin_info",
+    "plugin_enable",
+    "plugin_disable",
+    "plugin_unload",
+    "plugin_reload",
+    "plugin_install",
+    "plugin_get_routes",
+    "plugin_get_slots",
+    "plugin_get_vue_slots",
+    "plugin_get_vue_components",
+    "plugin_call_command",
+    "plugin_get_settings",
+    "plugin_update_setting",
+    "plugin_notify_sidebar_state",
+)
+
+
+def command_handlers(api: FrontendApi) -> dict[str, Callable[..., Any]]:
+    """
+    返回 PyTauri 需要注册的唯一正式 IPC 命令表。
+
+    :param api: 已连接应用上下文的前端 API 门面
+    :return: 命令名到处理器的稳定映射
+    """
+    return {name: getattr(api, name) for name in COMMAND_NAMES}
+
+
+__all__ = ["COMMAND_NAMES", "command_handlers"]

@@ -3,8 +3,8 @@
 import shutil
 from pathlib import Path
 
-from ECL.Events import EventBus
-from ECL.Plugin import PluginFramework
+from ECL.events import EventBus
+from ECL.plugins import PluginFramework
 
 
 def _reset_runtime() -> None:

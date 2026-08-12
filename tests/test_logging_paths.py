@@ -1,18 +1,10 @@
 import logging
 from pathlib import Path
 
-from ECL.Infrastructure import LoggerManager
-
-
-def _reset_logger_manager() -> None:
-    if LoggerManager._instance is not None:
-        LoggerManager._instance.shutdown()
-    LoggerManager._instance = None
-    LoggerManager._initialized = False
+from ECL.utils import LoggerManager
 
 
 def test_logger_files_are_created_under_data_path(tmp_path) -> None:
-    _reset_logger_manager()
     data_path = tmp_path / "ECL_data"
 
     manager = LoggerManager(colored=False, data_path=data_path)
@@ -27,4 +19,18 @@ def test_logger_files_are_created_under_data_path(tmp_path) -> None:
         (data_path / "logs" / "EuoraCraft-Launcher.log").resolve(),
         (data_path / "logs" / "error.log").resolve(),
     }
-    _reset_logger_manager()
+    manager.shutdown()
+
+
+def test_debug_records_remain_in_complete_log_when_console_is_info(tmp_path) -> None:
+    data_path = tmp_path / "ECL_data"
+    manager = LoggerManager(colored=False, data_path=data_path)
+    manager.set_level(logging.INFO)
+
+    manager.get_logger("Diagnostics").debug("debug-diagnostic-record")
+    for handler in manager.get_logger().handlers:
+        handler.flush()
+
+    complete_log = (data_path / "logs" / "EuoraCraft-Launcher.log").read_text(encoding="utf-8")
+    assert "debug-diagnostic-record" in complete_log
+    manager.shutdown()

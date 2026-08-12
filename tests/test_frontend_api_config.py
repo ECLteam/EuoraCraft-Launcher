@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 from importlib import import_module
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 pytauri_module = ModuleType("pytauri")
@@ -28,11 +29,11 @@ sys.modules["pytauri.ffi"] = pytauri_ffi_module
 sys.modules["pytauri.ipc"] = pytauri_ipc_module
 sys.modules["pytauri_plugins.dialog"] = pytauri_plugins_dialog_module
 
-FrontendApi = import_module("ECL.Api").FrontendApi
-Adapter = import_module("ECL.Adapters.tauri").Adapter
-frontend_module = import_module("ECL.Api.frontend")
-ConfigManager = import_module("ECL.Infrastructure").ConfigManager
-EventBus = import_module("ECL.Events").EventBus
+FrontendApi = import_module("ECL.api").FrontendApi
+Adapter = import_module("ECL.adapters.tauri").Adapter
+frontend_module = import_module("ECL.api.frontend")
+ConfigManager = import_module("ECL.utils").ConfigManager
+EventBus = import_module("ECL.events").EventBus
 
 
 class FakeAccounts:
@@ -142,7 +143,7 @@ class FakeGame:
         return {
             "instanceId": "instance-id",
             "versionId": body["version_id"],
-            "gamePath": options["game_path"],
+            "gamePath": str(options["game_path"]),
         }
 
 
@@ -165,17 +166,7 @@ class FakeWebviewWindow:
         handler()
 
 
-def _reset_singletons() -> None:
-    FrontendApi._instance = None
-    FrontendApi._initialized = False
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-    EventBus._instance = None
-    EventBus._initialized = False
-
-
 def _build_api(tmp_path) -> FrontendApi:
-    _reset_singletons()
     launcher = SimpleNamespace(
         app_path=tmp_path,
         data_path=tmp_path / "ECL_data",
@@ -185,20 +176,23 @@ def _build_api(tmp_path) -> FrontendApi:
         launcher_version_type="dev",
     )
     bus = EventBus()
-    bus.register("launcher", launcher)
-    bus.register("config", ConfigManager(tmp_path / "ECL_data"))
-    bus.register("accounts", FakeAccounts())
-    bus.register("avatars", FakeAvatars())
-    bus.register("info_card", FakeInfoCard())
-    bus.register("game", FakeGame())
-    bus.register("plugins", FakePlugins())
-    return FrontendApi()
+    context = SimpleNamespace(
+        state=launcher,
+        events=bus,
+        config=ConfigManager(tmp_path / "ECL_data", bus),
+        accounts=FakeAccounts(),
+        avatars=FakeAvatars(),
+        info_card=FakeInfoCard(),
+        game=FakeGame(),
+        plugins=FakePlugins(),
+    )
+    return FrontendApi(context)
 
 
 def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(api.config_get_many({"sections": ["launcher"]}))
+    result = asyncio.run(api.settings_get({"sections": ["launcher"]}))
 
     assert result["success"] is True
     assert result["data"]["launcher"] == {
@@ -206,7 +200,6 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
         "version": "0.1.0",
         "version_type": "dev",
     }
-    _reset_singletons()
 
 
 def test_launcher_info_matches_effective_launcher_config(tmp_path) -> None:
@@ -218,7 +211,6 @@ def test_launcher_info_matches_effective_launcher_config(tmp_path) -> None:
     assert result["data"]["debug"] is True
     assert result["data"]["version"] == "0.1.0"
     assert result["data"]["version_type"] == "dev"
-    _reset_singletons()
 
 
 def test_info_card_delegates_to_registered_service(tmp_path) -> None:
@@ -229,35 +221,45 @@ def test_info_card_delegates_to_registered_service(tmp_path) -> None:
     assert result["success"] is True
     assert result["data"]["tips"] == ["测试提示"]
     assert result["data"]["interval"] == 8000
-    _reset_singletons()
+
+
+def test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    saved = asyncio.run(api.user_agreement_save({}))
+    loaded = asyncio.run(api.user_agreement_get({}))
+    cleared = asyncio.run(api.user_agreement_clear({}))
+
+    assert saved["success"] is True
+    assert saved["data"]["accepted"] is True
+    assert loaded == saved
+    assert cleared["success"] is True
 
 
 def test_java_scan_delegates_to_game_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(api.java_scan({}))
+    result = asyncio.run(api.game_java_scan({}))
 
     assert result["success"] is True
     assert result["data"][0]["major_version"] == 21
     assert result["data"][0]["path"] == "C:/Java/bin/java.exe"
-    _reset_singletons()
 
 
 def test_scan_versions_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(api.scan_versions({"path": ["D:/Games/.minecraft"]}))
+    result = asyncio.run(api.game_scan({"paths": ["D:/Games/.minecraft"]}))
 
     assert result == {
         "success": True,
         "data": [{"id": "1.20.1", "versionId": "1.20.1"}],
     }
-    assert api.game.requested_paths == ["D:/Games/.minecraft"]
+    assert [Path(path) for path in api.game.requested_paths] == [Path("D:/Games/.minecraft")]
 
-    forced_result = asyncio.run(api.scan_versions({"path": ["D:/Games/.minecraft"], "force": True}))
+    forced_result = asyncio.run(api.game_scan({"paths": ["D:/Games/.minecraft"], "force": True}))
     assert forced_result["success"] is True
     assert api.game.scan_force is True
-    _reset_singletons()
 
 
 def test_install_version_delegates_to_game_service_with_runtime_options(tmp_path) -> None:
@@ -266,7 +268,7 @@ def test_install_version_delegates_to_game_service_with_runtime_options(tmp_path
     game_path = tmp_path / ".minecraft"
 
     result = asyncio.run(
-        api.install_version(
+        api.game_install(
             {
                 "version_id": "1.21.8",
                 "game_path": str(game_path),
@@ -279,9 +281,8 @@ def test_install_version_delegates_to_game_service_with_runtime_options(tmp_path
         "data": {"taskId": "install-task", "versionId": "1.21.8", "versionName": "1.21.8"},
     }
     assert api.game.install_call[0]["version_id"] == "1.21.8"
-    assert api.game.install_call[1]["game_path"] == str(game_path)
+    assert api.game.install_call[1]["game_path"] == game_path
     assert api.game.install_call[1]["source"] == "official"
-    _reset_singletons()
 
 
 def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> None:
@@ -289,7 +290,7 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
     api.game = FakeGame()
 
     result = asyncio.run(
-        api.launch_instance(
+        api.game_launch(
             {
                 "version_id": "1.21.8",
                 "game_path": str(tmp_path / ".minecraft"),
@@ -310,7 +311,6 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
     }
     assert api.game.launch_call[1]["memory"] == 6144
     assert api.game.launch_call[1]["version_isolation"] is True
-    _reset_singletons()
 
 
 def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
@@ -322,7 +322,6 @@ def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
         "success": True,
         "data": {"id": "offline-id", "alias": "Steve", "type": "offline", "uuid": "offline-uuid"},
     }
-    _reset_singletons()
 
 
 def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
@@ -342,7 +341,6 @@ def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
         "CustomPlayer",
         "01234567-89ab-cdef-0123-456789abcdef",
     )
-    _reset_singletons()
 
 
 def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> None:
@@ -374,22 +372,18 @@ def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> No
     saved_servers = asyncio.run(api.authlib_servers({}))
     assert saved_servers["data"][0]["url"] == "https://skin.example.com/api/yggdrasil/"
     assert saved_servers["data"][0]["email"] == "player@example.com"
-    _reset_singletons()
 
 
 def test_authlib_profile_selection_is_forwarded_to_account_manager(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(
-        api.accounts_select_authlib_profile(
-            {"account_id": "pending-authlib", "profile_id": "profile-two"}
-        )
+        api.accounts_select_authlib_profile({"account_id": "pending-authlib", "profile_id": "profile-two"})
     )
 
     assert result["success"] is True
     assert result["data"]["uuid"] == "profile-two"
     assert api.accounts.last_authlib_profile == ("pending-authlib", "profile-two")
-    _reset_singletons()
 
 
 def test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None:
@@ -401,7 +395,6 @@ def test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None:
         "success": True,
         "data": "https://skin.example.com/api/yggdrasil",
     }
-    _reset_singletons()
 
 
 def test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None:
@@ -415,7 +408,6 @@ def test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> Non
     assert webview_window.visible is True
     assert api.plugins.frontend_ready_count == 1
     assert plugin_result["data"] == [{"name": "example", "status": "enabled"}]
-    _reset_singletons()
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
@@ -427,7 +419,6 @@ def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
     assert webview_window.minimized is False
     assert webview_window.visible is True
     assert webview_window.focused is True
-    _reset_singletons()
 
 
 def test_microsoft_authorization_event_focuses_before_forwarding() -> None:
@@ -459,7 +450,6 @@ def test_sidebar_state_is_forwarded_to_plugins(tmp_path) -> None:
         "message": "侧栏状态必须是布尔值",
         "errorCode": "INVALID_SIDEBAR_STATE",
     }
-    _reset_singletons()
 
 
 def test_frontend_ready_pushes_cacheable_development_warning(tmp_path, monkeypatch) -> None:
@@ -492,7 +482,6 @@ def test_frontend_ready_pushes_cacheable_development_warning(tmp_path, monkeypat
             "cacheable": True,
         }
     ]
-    _reset_singletons()
 
 
 def test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeypatch) -> None:
@@ -526,7 +515,6 @@ def test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeyp
         ("launcher:popup", popup),
         ("launcher:error", error),
     ]
-    _reset_singletons()
 
 
 def test_avatar_data_url_delegates_to_registered_avatar_service(tmp_path) -> None:
@@ -546,7 +534,6 @@ def test_avatar_data_url_delegates_to_registered_avatar_service(tmp_path) -> Non
 
     assert result["success"] is True
     assert result["data"]["dataUrl"].endswith("avatar-id:48:True:authlib:authlib-account")
-    _reset_singletons()
 
 
 def test_debug_maintenance_requires_debug_mode(tmp_path) -> None:
@@ -558,7 +545,6 @@ def test_debug_maintenance_requires_debug_mode(tmp_path) -> None:
     assert result["success"] is False
     assert result["errorCode"] == "DEBUG_MODE_REQUIRED"
     assert not (api.data_path / ".pending_debug_maintenance.json").exists()
-    _reset_singletons()
 
 
 def test_debug_maintenance_schedules_allowed_action(tmp_path) -> None:
@@ -570,4 +556,3 @@ def test_debug_maintenance_schedules_allowed_action(tmp_path) -> None:
     assert result["data"]["action"] == "clear_plugins"
     assert result["data"]["restart_required"] is True
     assert (api.data_path / ".pending_debug_maintenance.json").is_file()
-    _reset_singletons()

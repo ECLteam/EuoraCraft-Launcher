@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from ECL.Infrastructure.config import ConfigManager, ConfigValidationError
 from ECL.launcher import LauncherExitCode
-from ECL.Plugin import PluginAction, PluginActionResult
+from ECL.plugins import PluginAction, PluginActionResult
+from ECL.utils.config import ConfigManager, ConfigValidationError
 
 
 @pytest.fixture(autouse=True)

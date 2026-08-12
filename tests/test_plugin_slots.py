@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ECL.Events import EventBus
-from ECL.Plugin import Plugin, PluginFramework
+from ECL.events import EventBus
+from ECL.plugins import Plugin, PluginFramework
 
 
 def _framework() -> PluginFramework:
@@ -75,7 +75,5 @@ def test_disable_removes_plugin_frontend_content() -> None:
     assert framework._routes == [{"plugin": "other", "path": "/other"}]
     assert framework._vue_routes == [{"plugin": "other", "path": "/other"}]
     assert framework.get_slots()["sidebar-bottom"] == [{"plugin": "other", "html": "other"}]
-    assert framework.get_vue_slots()["sidebar-bottom"] == [
-        {"plugin": "other", "component_name": "other-card"}
-    ]
+    assert framework.get_vue_slots()["sidebar-bottom"] == [{"plugin": "other", "component_name": "other-card"}]
     assert framework.get_vue_components() == {"other-card": {"plugin": "other"}}

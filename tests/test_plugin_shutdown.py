@@ -1,8 +1,8 @@
 from unittest.mock import Mock
 
 import ECL.launcher as launcher_module
-from ECL.Events import EventBus
-from ECL.Plugin import PluginFramework
+from ECL.events import EventBus
+from ECL.plugins import PluginFramework
 
 
 def _reset_runtime() -> None:
@@ -18,7 +18,8 @@ def test_plugin_framework_close_disables_and_unloads_every_plugin() -> None:
 
 def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     _reset_runtime()
-    framework = PluginFramework()
+    event_bus = EventBus()
+    framework = PluginFramework(event_bus)
     framework.logger = Mock()
     plugin = Mock()
     plugin.name = "loaded"
@@ -32,15 +33,14 @@ def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     plugin.on_unload.assert_called_once_with()
     framework.logger.warning.assert_not_called()
     _reset_runtime()
-    framework = PluginFramework()
+    framework = PluginFramework(event_bus)
     first = Mock()
     second = Mock()
     framework._plugins = {"first": first, "second": second}
     framework._status = {"first": "enabled", "second": "enabled"}
 
-    bus = EventBus()
-    bus.subscribe("plugin:html_injected", framework._on_html_injected)
-    bus.subscribe("plugin:vue_slot_registered", framework._on_vue_slot_registered)
+    event_bus.subscribe("plugin:html_injected", framework._on_html_injected)
+    event_bus.subscribe("plugin:vue_slot_registered", framework._on_vue_slot_registered)
     framework._event_handlers_registered = True
 
     framework.close()
@@ -52,8 +52,8 @@ def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     second.on_unload.assert_called_once_with()
     assert framework._plugins == {}
     assert framework._status == {}
-    assert framework._on_html_injected not in bus._handlers["plugin:html_injected"]
-    assert framework._on_vue_slot_registered not in bus._handlers["plugin:vue_slot_registered"]
+    assert "plugin:html_injected" not in event_bus._handlers
+    assert "plugin:vue_slot_registered" not in event_bus._handlers
     _reset_runtime()
 
 
@@ -69,18 +69,23 @@ def test_launcher_shutdown_closes_plugins_before_backend_services() -> None:
 
     launcher = object.__new__(launcher_module.EuoraCraftLauncher)
     launcher.logger = Mock()
-    launcher.plugin_framework_instance = Closable("plugins")
-    launcher.service_instances = (Closable("accounts"), Closable("game"))
+    launcher.logging = Mock()
+    launcher.context = Mock()
+    launcher.context.close.side_effect = lambda: order.extend(["plugins", "game", "accounts"])
     launcher._shutdown_complete = False
 
     launcher._shutdown()
     launcher._shutdown()
 
     assert order == ["plugins", "game", "accounts"]
+    launcher.logging.shutdown.assert_called_once_with()
 
 
 def test_run_shuts_down_when_adapter_fails(monkeypatch) -> None:
     class FailedAdapter:
+        def __init__(self, _context):
+            pass
+
         def run(self):
             raise RuntimeError("adapter failed")
 
@@ -88,6 +93,7 @@ def test_run_shuts_down_when_adapter_fails(monkeypatch) -> None:
     launcher.logger = Mock()
     launcher.launcher_version = "test"
     launcher.launcher_version_type = "dev"
+    launcher.context = Mock()
     launcher._initialize = Mock()
     launcher._shutdown = Mock()
     monkeypatch.setattr(launcher_module, "Adapter", FailedAdapter)

@@ -7,8 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.Events import EventBus
-from ECL.Services.game import GameService, GameServiceError
+from ECL.events import EventBus
+from ECL.services.game import GameService, GameServiceError
 
 
 class FakeAccounts:
@@ -146,9 +146,10 @@ def test_version_directory_change_invalidates_cache_and_emits_event(tmp_path) ->
         enable_version_watcher=True,
         version_watch_interval=60,
         version_watch_debounce=0,
+        event_bus=(event_bus := EventBus()),
     )
     events = []
-    EventBus().subscribe("game:versions_changed", events.append)
+    event_bus.subscribe("game:versions_changed", events.append)
     try:
         service.scan_versions([str(game_path)])
         (versions_path / "1.21.1").mkdir()
@@ -230,7 +231,8 @@ def test_automatic_java_selection_uses_nearest_compatible_higher_version(tmp_pat
 def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatch) -> None:
     _reset_event_bus()
     events = []
-    EventBus().subscribe("game:install_progress", events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("game:install_progress", events.append)
     built = []
 
     class FakeGames:
@@ -238,7 +240,7 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
             built.append((version_id, save_name))
             return [("https://example.com/client.jar", str(tmp_path / "client.jar"))]
 
-    service = _build_service()
+    service = _build_service(event_bus=event_bus)
     service.logger = Mock()
     monkeypatch.setattr(
         service,
@@ -276,13 +278,14 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
 def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> None:
     _reset_event_bus()
     events = []
-    EventBus().subscribe("game:install_progress", events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("game:install_progress", events.append)
 
     class FailedDownloader(FakeDownloader):
         async def run(self):
             self.failed_entries.add(("https://example.com/client.jar", "client.jar"))
 
-    service = _build_service(downloader_factory=FailedDownloader)
+    service = _build_service(downloader_factory=FailedDownloader, event_bus=event_bus)
     monkeypatch.setattr(
         service,
         "_context",
@@ -442,7 +445,7 @@ def test_close_keeps_running_game_instances_alive() -> None:
     assert instances.shutdown_calls == []
 
 
-def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> None:
+def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -> None:
     class AuthlibAccounts:
         def current_account(self):
             return {"id": "authlib", "type": "authlib"}
@@ -477,7 +480,8 @@ def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> N
     captured_configs = []
     _reset_event_bus()
     events = []
-    EventBus().subscribe("game:launch_progress", events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("game:launch_progress", events.append)
     service = GameService(
         AuthlibAccounts(),
         search_factory=EmptySearchMinecraft,
@@ -485,6 +489,7 @@ def test_authlib_launch_passes_injector_to_game_core(tmp_path, monkeypatch) -> N
         downloader_factory=FakeDownloader,
         command_builder=lambda config: captured_configs.append(config) or '"java.exe" game.Main',
         authlib_injector=FakeInjector(injector_path),
+        event_bus=event_bus,
     )
     monkeypatch.setattr(
         service,
@@ -528,7 +533,8 @@ def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) 
 
     _reset_event_bus()
     events = []
-    EventBus().subscribe("game:launch_progress", events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("game:launch_progress", events.append)
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "1.21.8"
     version_path.mkdir(parents=True)
@@ -541,6 +547,7 @@ def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) 
         instances_manager=FakeInstances(),
         downloader_factory=FakeDownloader,
         command_builder=lambda _config: '"java.exe" game.Main',
+        event_bus=event_bus,
     )
     monkeypatch.setattr(
         service,
@@ -619,7 +626,8 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
 def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None:
     _reset_event_bus()
     events = []
-    EventBus().subscribe("game:launch_progress", events.append)
+    event_bus = EventBus()
+    event_bus.subscribe("game:launch_progress", events.append)
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "broken"
     version_path.mkdir(parents=True)
@@ -630,7 +638,7 @@ def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> No
     def fail_to_build(_config):
         raise KeyError("mainClass")
 
-    service = _build_service(command_builder=fail_to_build)
+    service = _build_service(command_builder=fail_to_build, event_bus=event_bus)
     monkeypatch.setattr(
         service,
         "_context",
@@ -725,3 +733,22 @@ def test_ecl_config_handles_corrupted_file(tmp_path) -> None:
 
     # 损坏的文件返回空字典，不抛异常
     assert service.read_ecl_config(game_path) == {}
+
+
+def test_local_mod_lifecycle_stays_inside_mods_directory(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    source = tmp_path / "example.jar"
+    source.write_bytes(b"safe-mod")
+    service = _build_service()
+
+    filename = service.add_mod(game_path, source)
+    mods = service.list_mods(game_path)
+    disabled = service.toggle_mod(game_path, filename)
+    service.remove_mod(game_path, f"{filename}.disabled")
+
+    assert filename == "example.jar"
+    assert mods[0]["enabled"] is True
+    assert disabled is False
+    assert service.list_mods(game_path) == []
+    with pytest.raises(GameServiceError, match="路径超出允许范围"):
+        service.remove_mod(game_path, "../outside.jar")

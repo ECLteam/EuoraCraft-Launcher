@@ -2,9 +2,9 @@ import json
 import sys
 from unittest.mock import Mock, call
 
-from ECL.Common import get_runtime_info
-from ECL.Events import EventBus
-from ECL.Plugin import PluginFramework
+from ECL.common import get_runtime_info
+from ECL.events import EventBus
+from ECL.plugins import PluginFramework
 
 
 def _reset_plugin_runtime() -> None:
@@ -64,7 +64,7 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     source_path.mkdir()
     (source_path / "plugin.json").write_text(json.dumps({"name": "example"}), encoding="utf-8")
     (source_path / "main.py").write_text(
-        "from ECL.Plugin import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
+        "from ECL.plugins import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
     )
 
     assert framework.install(str(source_path)).success is True

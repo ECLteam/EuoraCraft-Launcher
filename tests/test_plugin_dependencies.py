@@ -1,7 +1,8 @@
 """插件依赖解析与拓扑排序测试。"""
+
 from packaging.specifiers import SpecifierSet
 
-from ECL.Plugin.dependencies import (
+from ECL.plugins.dependencies import (
     DependencyRequirement,
     PluginDependencyInfo,
     parse_dependency,

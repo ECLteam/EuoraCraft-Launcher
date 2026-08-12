@@ -1,0 +1,316 @@
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import Any
+
+from ECL.plugins.plugin import Plugin
+
+from .base import _PluginState
+from .contracts import PluginAction, PluginActionResult, PluginCommandError
+
+
+class PluginRegistry(_PluginState):
+    def _register_route(self, plugin: Plugin, path: str, title: str, icon: str) -> None:
+        # 同一插件重复注册相同路径时先移除旧条目，避免路由列表出现重复
+        self._routes = [r for r in self._routes if not (r["plugin"] == plugin.name and r["path"] == path)]
+        self._routes.append({"plugin": plugin.name, "path": path, "title": title, "icon": icon})
+        self.events.emit("plugin:route_registered", plugin.name, path, title, icon)
+
+    def get_plugin(self, name: str) -> Plugin | None:
+        """
+        获取插件。
+
+        :param name: 目标对象名称
+        """
+        return self._plugins.get(name)
+
+    def subscribe_event(self, plugin: Plugin, event: str, handler: Any) -> None:
+        """
+        统一注册插件的事件订阅，自动以插件名作为所有者标识。
+        插件自身无需也不能指定所有者，由插件管理器统一注入。
+        :param plugin: 插件实例
+        :param event: 事件名称
+        :param handler: 回调函数
+        """
+        self.events.subscribe(event, handler, owner=plugin.name)
+
+    def list_plugins(self) -> list[dict[str, Any]]:
+        """
+        获取插件列表。
+
+        """
+        result = []
+        for name, plugin in self._plugins.items():
+            result.append(
+                {
+                    "name": name,
+                    "title": plugin.title,
+                    "version": plugin.version,
+                    "description": plugin.description,
+                    "author": plugin.author,
+                    "icon": "",
+                    "status": self._status.get(name, "unloaded"),
+                    "error": self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name),
+                    "dependencies": plugin.metadata.get("dependencies", {}),
+                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                    "services": list(plugin._commands.keys()),
+                    "settings": list(plugin._settings.keys()),
+                    "is_system": getattr(plugin, "is_system", False),
+                }
+            )
+        # 补充因依赖错误未被加载的插件条目，便于前端展示
+        loaded_names = set(self._plugins.keys())
+        for name in sorted(self._dependency_resolution.skipped - loaded_names - self._disabled_plugins):
+            result.append(
+                {
+                    "name": name,
+                    "title": name,
+                    "version": "",
+                    "description": "",
+                    "author": "",
+                    "icon": "",
+                    "status": "unloaded",
+                    "error": self._dependency_resolution.errors.get(name),
+                    "dependencies": {},
+                    "permissions": [],
+                    "services": [],
+                    "settings": [],
+                    "is_system": False,
+                }
+            )
+        # 补充被禁用且未实例化的插件条目，仍从 plugin.json 读取元数据供前端展示
+        for name in sorted(self._disabled_plugins - loaded_names):
+            candidate = self._candidate_map.get(name, {})
+            metadata = candidate.get("metadata", {})
+            result.append(
+                {
+                    "name": name,
+                    "title": metadata.get("title", name),
+                    "version": metadata.get("version", ""),
+                    "description": metadata.get("description", ""),
+                    "author": metadata.get("author", ""),
+                    "icon": "",
+                    "status": "disabled",
+                    "error": None,
+                    "dependencies": metadata.get("dependencies", {}),
+                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                    "services": [],
+                    "settings": [],
+                    "is_system": candidate.get("is_system", False),
+                }
+            )
+        # 补充实例化失败的插件条目
+        for name in sorted(set(self._plugin_errors.keys()) - loaded_names):
+            candidate = self._candidate_map.get(name, {})
+            metadata = candidate.get("metadata", {})
+            result.append(
+                {
+                    "name": name,
+                    "title": metadata.get("title", name),
+                    "version": metadata.get("version", ""),
+                    "description": metadata.get("description", ""),
+                    "author": metadata.get("author", ""),
+                    "icon": "",
+                    "status": self._status.get(name, "error"),
+                    "error": self._plugin_errors.get(name),
+                    "dependencies": metadata.get("dependencies", {}),
+                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                    "services": [],
+                    "settings": [],
+                    "is_system": candidate.get("is_system", False),
+                }
+            )
+        return result
+
+    def get_routes(self) -> list[dict[str, Any]]:
+        """
+        获取插件路由。
+
+        """
+        return list(self._routes)
+
+    def get_slots(self) -> dict[str, list[dict[str, str]]]:
+        """
+        返回按插槽分组的插件 HTML 注入内容。
+
+        """
+        return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._slots.items()}
+
+    def get_vue_slots(self) -> dict[str, list[dict[str, Any]]]:
+        """
+        返回按插槽分组的插件 Vue 组件定义。
+
+        """
+        return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._vue_slots.items()}
+
+    def get_vue_components(self) -> dict[str, dict[str, Any]]:
+        """
+        返回所有已注册 Vue 组件定义的浅拷贝。
+
+        """
+        return dict(self._vue_components)
+
+    def get_vue_routes(self) -> list[dict[str, Any]]:
+        """
+        获取 Vue 路由。
+
+        """
+        return list(self._vue_routes)
+
+    def _on_html_injected(self, plugin_name: str, slot_id: str, html: str, key: str | None) -> None:
+        entries = self._slots.setdefault(slot_id, [])
+        entry = {"plugin": plugin_name, "html": html}
+        if key is None:
+            entries.append(entry)
+            return
+        entry["key"] = key
+        for index, current in enumerate(entries):
+            if current["plugin"] == plugin_name and current.get("key") == key:
+                entries[index] = entry
+                return
+        entries.append(entry)
+
+    def _on_vue_slot_registered(
+        self, plugin_name: str, slot_id: str, component_name: str, template: str, script: str, style: str
+    ) -> None:
+        entries = self._vue_slots.setdefault(slot_id, [])
+        entry = {
+            "plugin": plugin_name,
+            "component_name": component_name,
+            "template": template,
+            "script": script,
+            "style": style,
+        }
+        for index, current in enumerate(entries):
+            if current["plugin"] == plugin_name and current["component_name"] == component_name:
+                entries[index] = entry
+                break
+        else:
+            entries.append(entry)
+        # 全局组件表用于路由引用 / 去重
+        self._vue_components[component_name] = {
+            "plugin": plugin_name,
+            "template": template,
+            "script": script,
+            "style": style,
+        }
+
+    def _register_vue_route(
+        self,
+        plugin: Plugin,
+        path: str,
+        title: str,
+        icon: str,
+        component_name: str,
+        template: str,
+        script: str,
+        style: str,
+    ) -> None:
+        """
+        注册 Vue 组件路由，同时记录到 _routes 和 _vue_routes
+
+        :param plugin: 插件实例
+        :param path: 需要处理的文件或目录路径
+        :param title: 前端条目的显示标题
+        :param icon: 前端条目的图标标识
+        :param component_name: Vue 组件名称
+        :param template: Vue 组件模板
+        :param script: Vue 组件脚本
+        :param style: Vue 组件样式
+        """
+        # 同一插件重复注册相同路径时先移除旧条目，避免路由列表出现重复
+        self._routes = [r for r in self._routes if not (r["plugin"] == plugin.name and r["path"] == path)]
+        self._vue_routes = [r for r in self._vue_routes if not (r["plugin"] == plugin.name and r["path"] == path)]
+        self._routes.append(
+            {
+                "plugin": plugin.name,
+                "path": path,
+                "title": title,
+                "icon": icon,
+                "component": component_name,
+                "type": "vue",
+            }
+        )
+        self._vue_routes.append(
+            {
+                "plugin": plugin.name,
+                "path": path,
+                "title": title,
+                "icon": icon,
+                "component_name": component_name,
+                "template": template,
+                "script": script,
+                "style": style,
+            }
+        )
+        self._vue_components[component_name] = {
+            "plugin": plugin.name,
+            "template": template,
+            "script": script,
+            "style": style,
+        }
+        self.events.emit("plugin:route_registered", plugin.name, path, title, icon)
+        self.events.emit(
+            "plugin:vue_route_registered", plugin.name, path, title, component_name, template, script, style, icon
+        )
+
+    def get_settings(self, name: str) -> dict[str, Any]:
+        """
+        返回插件设置结构及当前持久化值。
+
+        :param name: 目标对象名称
+        """
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            return {"schema": None, "values": {}}
+        schema = list(plugin._settings.values())
+        values = {}
+        for key in plugin._settings:
+            full_key = f"{name}.{key}"
+            values[key] = self._config_values.get(full_key, plugin._settings[key]["default"])
+        return {"schema": schema, "values": values}
+
+    def update_setting(self, name: str, key: str, value: Any) -> PluginActionResult:
+        """
+        更新一个已声明的插件设置，并返回保存结果。
+
+        :param name: 目标对象名称
+        :param key: 配置项或插槽条目的稳定键
+        :param value: 需要保存的配置值
+        """
+        plugin = self._plugins.get(name)
+        if plugin is None or key not in plugin._settings:
+            return PluginActionResult(name, PluginAction.UPDATE_SETTING, "not_found", "插件或设置项不存在")
+        full_key = f"{name}.{key}"
+        old_value = self._config_values.get(full_key)
+        self._config_values[full_key] = value
+        self._save_plugin_config(name)
+        self.events.emit("plugin:settings_changed", name, key, old_value, value)
+        return PluginActionResult(name, PluginAction.UPDATE_SETTING, "updated")
+
+    def call_command(self, command: str, params: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
+        """
+        在线程池中调用 ``插件名:命令名``，失败或超时时抛出 ``PluginCommandError``。
+
+        :param command: 经过权限检查后执行的命令
+        :param params: 传递给命令的参数
+        :param timeout: 命令最长执行时间，单位为秒
+        """
+        if ":" not in command:
+            raise PluginCommandError(f"命令格式错误: {command}")
+        plugin_name, cmd_name = command.split(":", 1)
+        plugin = self._plugins.get(plugin_name)
+        if plugin is None or self._status.get(plugin_name) != "enabled":
+            raise PluginCommandError(f"插件 {plugin_name} 未启用或不存在")
+        handler = plugin._commands.get(cmd_name)
+        if handler is None:
+            raise PluginCommandError(f"插件 {plugin_name} 不存在命令 {cmd_name}")
+        try:
+            future = self._command_executor.submit(handler, **(params or {}))
+            return future.result(timeout=timeout)
+        except FutureTimeoutError:
+            self.logger.error("插件 %s 命令 %s 执行超时", plugin_name, cmd_name)
+            raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行超时") from None
+        except PluginCommandError:
+            raise
+        except Exception as exc:
+            self.logger.exception("插件 %s 命令 %s 执行失败", plugin_name, cmd_name)
+            raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行失败: {exc}") from exc

@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from ECL.Infrastructure import ConfigManager
-from ECL.Infrastructure.config import default_config
+from ECL.utils import ConfigManager
+from ECL.utils.config import default_config
 
 
 @pytest.fixture(autouse=True)

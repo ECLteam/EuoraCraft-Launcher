@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ECL.Services.maintenance import (
+from ECL.services.maintenance import (
     PENDING_MAINTENANCE_FILE,
     DebugMaintenanceError,
     apply_pending_debug_maintenance,

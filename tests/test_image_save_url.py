@@ -27,14 +27,46 @@ pytauri_ffi_module = ModuleType("pytauri.ffi")
 pytauri_ffi_module.Emitter = _MockEmitter
 pytauri_ffi_module.EXT_MOD = SimpleNamespace(pytauri_plugins=MagicMock())
 for _ffi_name in [
-    "IS_DEV", "RESTART_EXIT_CODE", "VERSION", "App", "AppHandle", "Assets",
-    "Builder", "BuilderArgs", "CloseRequestApi", "Context", "CursorIcon",
-    "DragDropEvent", "DragDropEventType", "Event", "EventId", "EventTargetType",
-    "ExitRequestApi", "ImplEmitter", "ImplListener", "ImplManager", "Listener",
-    "LogicalRect", "Manager", "PhysicalRect", "Position", "PositionType",
-    "Rect", "RunEvent", "RunEventType", "Size", "SizeType", "Theme", "Url",
-    "UserAttentionType", "WebviewEvent", "WebviewEventType", "WebviewUrl",
-    "WebviewUrlType", "WindowEvent", "WindowEventType",
+    "IS_DEV",
+    "RESTART_EXIT_CODE",
+    "VERSION",
+    "App",
+    "AppHandle",
+    "Assets",
+    "Builder",
+    "BuilderArgs",
+    "CloseRequestApi",
+    "Context",
+    "CursorIcon",
+    "DragDropEvent",
+    "DragDropEventType",
+    "Event",
+    "EventId",
+    "EventTargetType",
+    "ExitRequestApi",
+    "ImplEmitter",
+    "ImplListener",
+    "ImplManager",
+    "Listener",
+    "LogicalRect",
+    "Manager",
+    "PhysicalRect",
+    "Position",
+    "PositionType",
+    "Rect",
+    "RunEvent",
+    "RunEventType",
+    "Size",
+    "SizeType",
+    "Theme",
+    "Url",
+    "UserAttentionType",
+    "WebviewEvent",
+    "WebviewEventType",
+    "WebviewUrl",
+    "WebviewUrlType",
+    "WindowEvent",
+    "WindowEventType",
 ]:
     setattr(pytauri_ffi_module, _ffi_name, object)
 pytauri_ffi_module.EventTarget = SimpleNamespace(Any=lambda: object())
@@ -64,10 +96,10 @@ sys.modules["pytauri.ipc"] = pytauri_ipc_module
 sys.modules["pytauri.plugin"] = pytauri_plugin_module
 sys.modules["pytauri.webview"] = pytauri_webview_module
 
-FrontendApi = import_module("ECL.Api").FrontendApi
-frontend_module = import_module("ECL.Api.frontend")
-ConfigManager = import_module("ECL.Infrastructure").ConfigManager
-EventBus = import_module("ECL.Events").EventBus
+FrontendApi = import_module("ECL.api").FrontendApi
+frontend_module = import_module("ECL.api.frontend")
+ConfigManager = import_module("ECL.utils").ConfigManager
+EventBus = import_module("ECL.events").EventBus
 
 
 class FakeAccounts:
@@ -100,17 +132,7 @@ class FakeInfoCard:
         return {}
 
 
-def _reset_singletons() -> None:
-    FrontendApi._instance = None
-    FrontendApi._initialized = False
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-    EventBus._instance = None
-    EventBus._initialized = False
-
-
 def _build_api(tmp_path):
-    _reset_singletons()
     launcher = SimpleNamespace(
         app_path=tmp_path,
         data_path=tmp_path / "ECL_data",
@@ -120,13 +142,17 @@ def _build_api(tmp_path):
         launcher_version_type="dev",
     )
     bus = EventBus()
-    bus.register("launcher", launcher)
-    bus.register("config", ConfigManager(tmp_path / "ECL_data"))
-    bus.register("accounts", FakeAccounts())
-    bus.register("avatars", FakeAvatars())
-    bus.register("info_card", FakeInfoCard())
-    bus.register("plugins", FakePlugins())
-    return FrontendApi()
+    context = SimpleNamespace(
+        state=launcher,
+        events=bus,
+        config=ConfigManager(tmp_path / "ECL_data", bus),
+        accounts=FakeAccounts(),
+        avatars=FakeAvatars(),
+        info_card=FakeInfoCard(),
+        game=SimpleNamespace(),
+        plugins=FakePlugins(),
+    )
+    return FrontendApi(context)
 
 
 def _make_png_bytes() -> bytes:
@@ -234,7 +260,6 @@ def test_image_save_url_rejects_invalid_url(tmp_path) -> None:
 
     assert result["success"] is False
     assert result["errorCode"] == "INVALID_IMAGE_URL"
-    _reset_singletons()
 
 
 def test_image_save_url_follows_redirect_and_returns_data_url(tmp_path, monkeypatch) -> None:
@@ -262,4 +287,3 @@ def test_image_save_url_follows_redirect_and_returns_data_url(tmp_path, monkeypa
     assert data["url"] == "https://example.com/redirect"
     assert data["dataUrl"].startswith("data:image/png;base64,")
     assert data["base64"]
-    _reset_singletons()

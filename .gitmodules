@@ -2,6 +2,7 @@
 	path = frontend
 	url = https://github.com/ECLteam/EuoraCraftLauncher-UI
 	branch = main
-[submodule "ECL/Game"]
-	path = ECL/Game
+[submodule "ECL/game"]
+	path = ECL/game
 	url = https://github.com/ECLteam/ECLauncherCore
+	branch = ecl

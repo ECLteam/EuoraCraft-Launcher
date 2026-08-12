@@ -5,7 +5,7 @@ import httpx
 import pytest
 from PIL import Image
 
-from ECL.Services import AuthlibAccountManager, AuthlibAvatar, AvatarError, AvatarManager
+from ECL.services import AuthlibAccountManager, AuthlibAvatar, AvatarError, AvatarManager
 
 
 class OfflineAuthClient:
