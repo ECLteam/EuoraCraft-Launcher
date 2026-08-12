@@ -5,4 +5,4 @@
 [submodule "ECL/game"]
 	path = ECL/game
 	url = https://github.com/ECLteam/ECLauncherCore
-	branch = ecl
+	branch = main
