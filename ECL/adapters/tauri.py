@@ -92,6 +92,10 @@ class Adapter:
         bus.subscribe("launcher:error", api.emit_error_to_frontend)
         bus.subscribe("launcher:popup", api.emit_popup_to_frontend)
         bus.subscribe(
+            "launcher:notify",
+            lambda payload: api.emit_to_frontend("launcher:notify", payload),
+        )
+        bus.subscribe(
             "game:install_progress",
             lambda payload: api.emit_to_frontend("game:install_progress", payload),
         )

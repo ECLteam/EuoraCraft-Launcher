@@ -1,10 +1,12 @@
+import json
+import re
 import shlex
 import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
-from time import monotonic
+from time import monotonic, time
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +17,23 @@ from ECL.game import LaunchConfig
 from ECL.services.authlib import AuthlibError
 
 from .base import GameServiceError, _GameState, _RunningGame
+
+_CRASH_LOG_MARKERS = (
+    "crash report saved to",
+    "this crash report has been saved to",
+    "could not save crash report",
+    "/error]: unable to launch",
+    "an exception was thrown, the game will display an error screen and halt",
+    "exception_access_violation",
+)
+_STARTUP_COMPLETE_MARKERS = (
+    "sound engine started",
+    "openal initialized",
+    "created: ",
+    "loaded 0 advancements",
+    "connecting to ",
+    "joining world",
+)
 
 
 class LaunchCoordinator(_GameState):
@@ -60,6 +79,118 @@ class LaunchCoordinator(_GameState):
             runtime = max(candidates, key=lambda item: self._java_major_version(item.version))
         return str(runtime.path)
 
+    @staticmethod
+    def _fallback_required_java(game_version: Any) -> int | None:
+        """
+        在版本 JSON 未声明运行时时，按 Minecraft 基础版本推断最低 Java 主版本。
+
+        :param game_version: 扫描器识别出的原版基础版本
+        :return: 可可靠推断的 Java 主版本；未知版本返回 ``None``
+        """
+        match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?", str(game_version or "").strip())
+        if match is None:
+            return None
+        version = tuple(int(part or 0) for part in match.groups())
+        if version[0] >= 26:
+            return 25
+        if version[0] != 1:
+            return None
+        if version >= (1, 20, 5):
+            return 21
+        if version >= (1, 18, 0):
+            return 17
+        if version >= (1, 17, 0):
+            return 16
+        if version >= (1, 7, 10):
+            return 8
+        return None
+
+    def _known_java_runtime(self, java_path: str) -> Any | None:
+        target = str(Path(java_path).resolve(strict=False)).casefold()
+        return next(
+            (
+                runtime
+                for runtime in self._java_runtimes
+                if str(Path(runtime.path).resolve(strict=False)).casefold() == target
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _probe_java_runtime(java_path: str) -> dict[str, str]:
+        """
+        执行一次轻量 Java 属性查询，确认所选运行时可执行且版本可识别。
+
+        :param java_path: 已解析的 Java 可执行文件路径
+        :return: Java 完整版本和运行时架构
+        """
+        try:
+            completed = subprocess.run(
+                [java_path, "-XshowSettings:properties", "-version"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                encoding="utf-8",
+                errors="ignore",
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GameServiceError(f"无法运行所选 Java：{exc}", "JAVA_RUNTIME_INVALID") from exc
+        output = "\n".join((completed.stdout or "", completed.stderr or ""))
+        properties: dict[str, str] = {}
+        for line in output.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.strip().split("=", 1)
+            properties[key.strip()] = value.strip()
+        version = properties.get("java.version", "")
+        if not version:
+            version_match = re.search(r'(?im)^(?:java|openjdk) version\s+"([^"]+)"', output)
+            version = version_match.group(1) if version_match else ""
+        if not version:
+            raise GameServiceError("无法识别所选 Java 的版本信息", "JAVA_RUNTIME_INVALID")
+        return {"version": version, "architecture": properties.get("os.arch", "unknown")}
+
+    def _validate_launch_environment(
+        self,
+        java_path: str,
+        required_java: int | None,
+        memory: int,
+    ) -> None:
+        """
+        在创建 Minecraft 进程前检查可确定的 Java 版本和架构兼容性。
+
+        :param java_path: 本次启动选用的 Java 可执行文件
+        :param required_java: 版本声明或基础版本推断出的 Java 主版本
+        :param memory: 计划分配的游戏内存，单位为 MiB
+        """
+        runtime = self._known_java_runtime(java_path)
+        if runtime is not None:
+            version = str(runtime.version)
+            architecture = str(runtime.architecture or "unknown")
+        elif required_java is not None:
+            probed = self._probe_java_runtime(java_path)
+            version = probed["version"]
+            architecture = probed["architecture"]
+        else:
+            return
+
+        actual_java = self._java_major_version(version)
+        if actual_java <= 0:
+            raise GameServiceError("无法识别所选 Java 的主版本", "JAVA_RUNTIME_INVALID")
+        if required_java is not None and actual_java < required_java:
+            raise GameServiceError(
+                f"该实例至少需要 Java {required_java}，当前选择的是 Java {actual_java}",
+                "JAVA_VERSION_INCOMPATIBLE",
+            )
+
+        arch_key = architecture.casefold().replace("-", "_")
+        if arch_key in {"x86", "i386", "i486", "i586", "i686"} and memory > 1536:
+            raise GameServiceError(
+                f"当前选择的是 32 位 Java，无法可靠分配 {memory} MiB 内存；请改用 64 位 Java 或降低内存",
+                "JAVA_ARCH_MEMORY_LIMIT",
+            )
+
     async def launch_instance(  # noqa: C901 - launch transaction and cleanup boundary
         self,
         body: Mapping[str, object],
@@ -100,11 +231,18 @@ class LaunchCoordinator(_GameState):
         version_json = path / "versions" / version_name / f"{version_name}.json"
         if not version_json.is_file():
             raise GameServiceError("游戏实例不存在或版本 JSON 缺失", "VERSION_NOT_FOUND")
+        try:
+            version_document = json.loads(version_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise GameServiceError("实例版本 JSON 无法读取或已经损坏", "VERSION_JSON_INVALID") from exc
+        inherited_version = str(version_document.get("inheritsFrom") or "").strip()
         scanned_versions = self._search_factory(path).search_minecraft()
         version_info = scanned_versions.get(version_name, {}) if isinstance(scanned_versions, dict) else {}
+        loader = str(version_info.get("LoaderType") or "Vanilla").strip() or "Vanilla"
         required_java_value = str(version_info.get("RequestJava") or "")
         required_java = int(required_java_value) if required_java_value.isdigit() else None
-        java = self._resolve_java_path(java_path, required_java)
+        if required_java is None:
+            required_java = self._fallback_required_java(version_info.get("VanillaVersion"))
         ram = self._normalize_positive_int(memory, 4096, 256, 131072, "游戏内存")
         window_width = self._normalize_positive_int(width, 854, 320, 16384, "窗口宽度")
         window_height = self._normalize_positive_int(height, 480, 240, 16384, "窗口高度")
@@ -164,7 +302,46 @@ class LaunchCoordinator(_GameState):
                 except (AuthlibError, OSError, KeyError, TypeError, ValueError, httpx.HTTPError) as exc:
                     raise GameServiceError(f"准备外置登录组件失败: {exc}", "AUTHLIB_INJECTOR_FAILED") from exc
 
+            self._emit_launch_progress("environment_check", "正在校验 Java 与实例运行环境", 22)
+            java = await to_thread.run_sync(self._resolve_java_path, java_path, required_java)
+            await to_thread.run_sync(
+                self._validate_launch_environment,
+                java,
+                required_java,
+                ram,
+            )
+            self._emit_launch_progress("environment_ready", "Java 与实例运行环境校验完成", 24)
+
             self._emit_launch_progress("checking", "正在检查游戏文件", 25)
+            if inherited_version:
+                inherited_candidates = (
+                    path / "versions" / version_name / f"{inherited_version}.json",
+                    path / "versions" / inherited_version / f"{inherited_version}.json",
+                )
+                if not any(candidate.is_file() for candidate in inherited_candidates):
+                    self._emit_launch_progress(
+                        "inherited_version",
+                        f"正在补全基础版本 {inherited_version}",
+                        28,
+                    )
+                    try:
+                        await to_thread.run_sync(
+                            context.games.build_minecraft_download_list,
+                            inherited_version,
+                            version_name,
+                            False,
+                        )
+                    except Exception as exc:
+                        raise GameServiceError(
+                            f"实例依赖基础版本 {inherited_version}，但其版本元数据补全失败：{exc}",
+                            "INHERITED_VERSION_DOWNLOAD_FAILED",
+                        ) from exc
+                    embedded_json = path / "versions" / version_name / f"{inherited_version}.json"
+                    if not embedded_json.is_file():
+                        raise GameServiceError(
+                            f"实例缺少基础版本 {inherited_version} 的版本元数据",
+                            "INHERITED_VERSION_MISSING",
+                        )
             download_list = await to_thread.run_sync(context.files_checker.check_files, path, version_name)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
@@ -233,11 +410,17 @@ class LaunchCoordinator(_GameState):
             self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
+            game_directory = path / "versions"
+            if not isolated:
+                game_directory /= version_name
             run = _RunningGame(
                 token=run_token,
                 version_id=version_name,
+                loader=loader,
                 game_path=path,
+                game_directory=game_directory,
                 started_at=monotonic(),
+                started_wall_time=time(),
             )
             with self._lock:
                 self._running_games[run_token] = run
@@ -248,7 +431,7 @@ class LaunchCoordinator(_GameState):
                     args=command,
                     cwd=path / "versions" / version_name,
                     new_session=True,
-                    log_callback=lambda line, current_id: self.logger.debug("[%s] %s", current_id, line),
+                    log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
                     exit_callback=lambda code, name: self._handle_instance_exit(run_token, code, name),
                 )
             except Exception:
@@ -319,6 +502,27 @@ class LaunchCoordinator(_GameState):
             },
         )
 
+    def _handle_instance_log(self, run_token: str, line: str, instance_id: str) -> None:
+        """
+        缓冲单个游戏进程的近期输出，并记录不依赖退出码的生命周期信号。
+
+        :param run_token: 启动前创建的会话内令牌
+        :param line: InstancesManager 读取到的一行标准输出或错误输出
+        :param instance_id: 用于启动器日志关联的进程管理器实例 ID
+        """
+        normalized = str(line or "").rstrip("\r\n")
+        self.logger.debug("[%s] %s", instance_id, normalized)
+        folded = normalized.casefold()
+        with self._lock:
+            run = self._running_games.get(run_token)
+            if run is None:
+                return
+            run.output_lines.append(normalized)
+            if any(marker in folded for marker in _CRASH_LOG_MARKERS):
+                run.crash_marked = True
+            if any(marker in folded for marker in _STARTUP_COMPLETE_MARKERS):
+                run.startup_complete = True
+
     def _handle_instance_exit(self, run_token: str, exit_code: int, instance_name: str) -> None:
         """
         接收进程管理器线程的唯一退出通知，并在启动注册完成后结算统计。
@@ -364,6 +568,132 @@ class LaunchCoordinator(_GameState):
         )
         if action != "launcher_closed":
             self._emit_instance_change(run, action)
+        detected_by = self._crash_detection_signals(run, action)
+        if detected_by:
+            self._schedule_crash_analysis(run, detected_by)
+
+    @staticmethod
+    def _crash_detection_signals(run: _RunningGame, action: str) -> list[str]:
+        if action != "exited" or run.stopping or run.exit_code is None:
+            return []
+        signals = []
+        if run.exit_code != 0:
+            signals.append("exit_code")
+        if run.crash_marked:
+            signals.append("crash_log")
+        if not run.startup_complete:
+            signals.append("startup_incomplete")
+        return signals
+
+    def _schedule_crash_analysis(self, run: _RunningGame, detected_by: list[str]) -> None:
+        """
+        将文件收集和规则分析交给 GameService 拥有的后台执行器。
+
+        :param run: 已从运行表移除、可安全作为分析快照使用的运行元数据
+        :param detected_by: 触发本次崩溃判定的稳定信号
+        """
+        with self._lock:
+            if self._closing:
+                return
+        future = self._crash_executor.submit(
+            self._crash_analyzer.analyze_runtime,
+            version_id=run.version_id,
+            game_path=run.game_path,
+            game_directory=run.game_directory,
+            started_wall_time=run.started_wall_time,
+            output_lines=list(run.output_lines),
+            exit_code=int(run.exit_code or 0),
+            detected_by=detected_by,
+        )
+        with self._lock:
+            self._crash_futures.add(future)
+
+        def analysis_done(completed) -> None:
+            with self._lock:
+                self._crash_futures.discard(completed)
+                closing = self._closing
+            if closing or completed.cancelled():
+                return
+            try:
+                result = completed.result()
+            except Exception:
+                error_id = uuid4().hex
+                self.logger.exception(
+                    "Minecraft 崩溃分析失败: version=%s, error_id=%s",
+                    run.version_id,
+                    error_id,
+                )
+                self.events.emit(
+                    "launcher:error",
+                    {
+                        "error_id": error_id,
+                        "title": "Minecraft 实例崩溃",
+                        "message": f"实例“{run.version_id}”异常退出，但崩溃报告生成失败",
+                    },
+                )
+                return
+            report_id = str(result["reportId"])
+            exit_code = result.get("exitCode")
+            self.events.emit(
+                "launcher:error",
+                {
+                    "error_id": report_id,
+                    "title": "Minecraft 实例崩溃",
+                    "message": f"实例“{run.version_id}”异常退出，退出码：{exit_code}",
+                    "kind": "game_crash",
+                    "crash": result,
+                },
+            )
+            self.logger.warning(
+                "Minecraft 崩溃分析完成: version=%s, exit_code=%s, report_id=%s",
+                run.version_id,
+                exit_code,
+                report_id,
+            )
+
+        future.add_done_callback(analysis_done)
+
+    def analyze_crash_file(self, file_path: Any, game_path: Any, version_id: Any) -> dict[str, Any]:
+        """
+        在指定版本上下文中分析用户选择的日志或 ZIP 文件。
+
+        :param file_path: 用户明确选择的本地文件
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 用于报告展示和 Mod 关联的版本名称
+        :return: 结构化崩溃分析结果
+        """
+        path = self._normalize_game_path(game_path)
+        version = self._normalize_version_name(version_id)
+        source = Path(str(file_path)).expanduser().resolve(strict=False)
+        return self._crash_analyzer.analyze_file(source, path, version)
+
+    def get_crash_output(self, report_id: Any) -> dict[str, str]:
+        """
+        返回当前会话崩溃报告中的脱敏游戏输出。
+
+        :param report_id: 当前会话报告编号
+        :return: 输出文件名和文本内容
+        """
+        if not isinstance(report_id, str) or not report_id.strip():
+            raise GameServiceError("崩溃报告编号不能为空", "INVALID_CRASH_REPORT_ID")
+        return self._crash_analyzer.output(report_id.strip())
+
+    def export_crash_report(self, report_id: Any, output_path: Any = None) -> dict[str, str]:
+        """
+        导出当前会话内的一份崩溃报告。
+
+        :param report_id: 当前会话报告编号
+        :param output_path: 可选 ZIP 输出路径
+        :return: 导出文件的绝对路径
+        """
+        if not isinstance(report_id, str) or not report_id.strip():
+            raise GameServiceError("崩溃报告编号不能为空", "INVALID_CRASH_REPORT_ID")
+        target = None
+        if output_path is not None:
+            if not isinstance(output_path, (str, Path)) or not str(output_path).strip() or "\0" in str(output_path):
+                raise GameServiceError("崩溃报告导出路径无效", "INVALID_PATH")
+            target = Path(str(output_path)).expanduser().resolve(strict=False)
+        return self._crash_analyzer.export(report_id.strip(), target)
 
     def get_version_stats(self, game_path: Any, version_id: Any) -> dict[str, int]:
         """
@@ -399,22 +729,28 @@ class LaunchCoordinator(_GameState):
             instance_id = str(item.get("ID") or "")
             process = item.get("Instance")
             mapped = runs_by_instance.get(instance_id)
-            is_running = bool(process is not None and process.poll() is None)
+            exit_code = process.poll() if process is not None else None
+            is_running = bool(process is not None and exit_code is None)
             if not is_running:
                 if mapped is not None:
                     token, run = mapped
+                    if isinstance(exit_code, int):
+                        run.exit_code = exit_code
                     self._finalize_instance_run(token, action="stopped" if run.stopping else "exited")
                 continue
             run = mapped[1] if mapped is not None else None
             version_id = run.version_id if run is not None else str(item.get("Name") or "")
+            process_id = getattr(process, "pid", None)
             result.append(
                 {
                     "id": instance_id,
                     "name": str(item.get("Name") or version_id or "Minecraft"),
                     "type": "Minecraft",
                     "isRunning": True,
+                    "pid": int(process_id) if isinstance(process_id, int) else None,
                     "version": version_id,
                     "versionId": version_id,
+                    "loader": run.loader if run is not None else "Vanilla",
                     "gamePath": str(run.game_path) if run is not None else "",
                 }
             )

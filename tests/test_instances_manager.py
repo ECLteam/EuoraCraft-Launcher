@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import io
 import subprocess
 
 from ECL.game import InstancesManager
@@ -57,3 +59,37 @@ def test_request_instance_exit_forces_process_only_after_timeout(monkeypatch) ->
     assert exited_normally is False
     assert process.wait_timeouts == [3.0, None]
     assert process.kill_calls == 1
+
+
+def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> None:
+    module = importlib.import_module("ECL.game.Core.InstancesManager")
+
+    class ImmediateProcess:
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def wait(self) -> int:
+            return 1
+
+    class SynchronousThread:
+        def __init__(self, *, target, args, daemon):
+            self.target = target
+            self.args = args
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: ImmediateProcess())
+    monkeypatch.setattr(module.threading, "Thread", SynchronousThread)
+    manager = InstancesManager()
+    exits = []
+
+    instance_id = manager.create_instance(
+        "instant-failure",
+        "Minecraft",
+        ["java", "broken"],
+        exit_callback=lambda code, name: exits.append((code, name)),
+    )
+
+    assert exits == [(1, "instant-failure")]
+    assert instance_id not in manager.instances

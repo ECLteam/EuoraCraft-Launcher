@@ -2,14 +2,24 @@ import base64
 import hashlib
 import webbrowser
 from pathlib import Path
+from time import time
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+import httpx
 from anyio import to_thread
 from pydantic import ValidationError
 from pytauri_plugins.dialog import DialogExt
 
-from ECL.api.models import ImagePurpose, ImageSelectionRequest
+from ECL.api.models import (
+    FileSavePurpose,
+    FileSaveRequest,
+    FileSelectionPurpose,
+    FileSelectionRequest,
+    ImagePurpose,
+    ImageSelectionRequest,
+)
+from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (
     _download_remote_image,
@@ -26,9 +36,68 @@ from .bridge import (
     _normalize_image_url,
     _open_folder,
 )
+from .contracts import success
+
+_REMOTE_IMAGE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+_REMOTE_IMAGE_CACHE_MAX_FILES = 128
+_REMOTE_IMAGE_CACHE_MAX_BYTES = 96 * 1024 * 1024
 
 
 class FileHandlers(_FrontendState):
+    def _read_remote_image_cache(self, url: str) -> tuple[bytes, str, bool] | None:
+        """
+        按远程 URL 读取持久化图片缓存，并返回其新鲜度。
+
+        :param url: 已完成协议和主机校验的远程图片地址
+        :return: 图片字节、扩展名和是否仍在刷新周期内；未命中返回 ``None``
+        """
+        cache_dir = self.data_path / "cache" / "remote-images"
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        for extension in _image_mime_map:
+            candidate = cache_dir / f"{digest}{extension}"
+            try:
+                stat = candidate.stat()
+                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > 50 * 1024 * 1024:
+                    continue
+                return candidate.read_bytes(), extension, time() - stat.st_mtime <= _REMOTE_IMAGE_CACHE_TTL_SECONDS
+            except OSError:
+                continue
+        return None
+
+    def _write_remote_image_cache(self, url: str, extension: str, image_bytes: bytes) -> None:
+        """
+        原子写入远程图片缓存，并按最近使用时间限制缓存规模。
+
+        :param url: 用于生成稳定缓存键的远程图片地址
+        :param extension: 已根据响应头识别且在白名单内的图片扩展名
+        :param image_bytes: 已经过远程下载大小限制的图片内容
+        """
+        cache_dir = self.data_path / "cache" / "remote-images"
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        safe_extension = extension if extension in _image_mime_map else ".jpg"
+        target = cache_dir / f"{digest}{safe_extension}"
+        atomic_write_bytes(target, image_bytes)
+
+        entries: list[tuple[Path, int, float]] = []
+        for candidate in cache_dir.iterdir():
+            try:
+                if candidate.is_symlink() or not candidate.is_file() or candidate.suffix.lower() not in _image_mime_map:
+                    continue
+                stat = candidate.stat()
+                entries.append((candidate, stat.st_size, stat.st_mtime))
+            except OSError:
+                continue
+        entries.sort(key=lambda item: item[2], reverse=True)
+        retained_bytes = 0
+        for index, (candidate, size, _mtime) in enumerate(entries):
+            retained_bytes += size
+            if index < _REMOTE_IMAGE_CACHE_MAX_FILES and retained_bytes <= _REMOTE_IMAGE_CACHE_MAX_BYTES:
+                continue
+            try:
+                candidate.unlink()
+            except OSError:
+                self.logger.debug("清理远程图片缓存失败: %s", candidate, exc_info=True)
+
     @_ipc_handler("FILE_RESOLVE_FAILED")
     async def file_resolve(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -125,10 +194,36 @@ class FileHandlers(_FrontendState):
         url = _normalize_image_url(body.get("url"))
         if url is None:
             return {"success": False, "message": "无效的图片 URL", "errorCode": "INVALID_IMAGE_URL"}
-        image_bytes, response = await _download_remote_image(url)
-        extension = _guess_image_extension(response, url)
+        cached = await to_thread.run_sync(self._read_remote_image_cache, url)
+        if cached is not None and cached[2]:
+            image_bytes, extension, _fresh = cached
+            data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
+            return {
+                "success": True,
+                "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": True},
+            }
+        try:
+            image_bytes, response = await _download_remote_image(url)
+            extension = _guess_image_extension(response, url)
+        except (httpx.HTTPError, OSError, ValueError):
+            if cached is None:
+                raise
+            image_bytes, extension, _fresh = cached
+            self.logger.warning("远程图片刷新失败，继续使用磁盘缓存: %s", url)
+            data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
+            return {
+                "success": True,
+                "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": True, "stale": True},
+            }
+        try:
+            await to_thread.run_sync(self._write_remote_image_cache, url, extension, image_bytes)
+        except OSError:
+            self.logger.warning("远程图片缓存写入失败，本次仍使用已下载内容: %s", url, exc_info=True)
         data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
-        return {"success": True, "data": {"dataUrl": data_url, "base64": encoded, "url": url}}
+        return {
+            "success": True,
+            "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": False},
+        }
 
     @_ipc_handler("IMAGE_SAVE_URL_ERROR")
     async def image_save_url(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -325,6 +420,27 @@ class FileHandlers(_FrontendState):
         file_path = await to_thread.run_sync(_pick)
         return self._normalize_file_path(str(file_path)) if file_path else ""
 
+    async def _pick_save_path(self, title: str, default_name: str, extensions: list[str]) -> str:
+        """
+        在 Tauri 主窗口上打开系统文件保存对话框。
+
+        :param title: 系统对话框标题
+        :param default_name: 预填充且不包含目录部分的文件名
+        :param extensions: 允许用户选择的扩展名列表
+        :return: 用户确认的绝对路径；取消时返回空字符串
+        """
+        if self._webview is None:
+            return ""
+
+        file_path = await to_thread.run_sync(
+            lambda: DialogExt.file(self._webview).blocking_save_file(
+                add_filter=("ZIP 压缩包", extensions),
+                set_file_name=default_name,
+                set_title=title,
+            )
+        )
+        return self._normalize_file_path(str(file_path)) if file_path else ""
+
     @_ipc_handler("SELECT_DIRECTORY_ERROR")
     async def select_directory(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -379,9 +495,42 @@ class FileHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        path = await self._pick_path(False, "选择文件")
+        try:
+            request = FileSelectionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        if request.purpose == FileSelectionPurpose.CRASH_ANALYSIS:
+            path = await self._pick_path(False, "选择 Minecraft 崩溃日志", ["log", "txt", "zip"])
+        else:
+            path = await self._pick_path(False, "选择文件")
         self.logger.info("文件选择结果: %s", path)
         return {"success": True, "data": {"path": path}}
+
+    @_ipc_handler("SELECT_SAVE_FILE_ERROR")
+    async def select_save_file(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        按导出用途打开系统 ZIP 文件保存对话框。
+
+        该命令只选择目标路径，不写入任何内容；实际导出仍由对应业务命令负责。
+
+        :param body: 符合 ``FileSaveRequest`` 的导出用途
+        :return: 用户选择的 ZIP 绝对路径；取消时路径为空
+        """
+        try:
+            request = FileSaveRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        if request.purpose == FileSavePurpose.CRASH_REPORT:
+            title = "保存 Minecraft 崩溃报告"
+            default_name = "EuoraCraft-crash-report.zip"
+        else:
+            title = "保存 EuoraCraft 启动器日志"
+            default_name = "EuoraCraft-logs.zip"
+        selected = await self._pick_save_path(title, default_name, ["zip"])
+        if selected and Path(selected).suffix.casefold() != ".zip":
+            selected = str(Path(selected).with_suffix(".zip"))
+        self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
+        return success({"path": selected})
 
     @_ipc_handler("OPEN_FOLDER_FAILED")
     async def open_folder(self, body: dict[str, Any]) -> dict[str, Any]:

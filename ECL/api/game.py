@@ -7,6 +7,9 @@ from pydantic import ValidationError
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import (
+    CrashAnalyzeRequest,
+    CrashExportRequest,
+    CrashReportRequest,
     GameCatalogRequest,
     GameConfigPatch,
     GameConfigUpdate,
@@ -259,6 +262,59 @@ class GameHandlers(_FrontendState):
             return self._invalid_request(exc)
         await to_thread.run_sync(self.game.stop_instance, request.instance_id)
         return success()
+
+    @_ipc_handler("CRASH_ANALYSIS_FAILED")
+    async def game_crash_analyze(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        在指定版本上下文中分析用户选择的 Minecraft 日志或 ZIP。
+
+        :param body: 符合 ``CrashAnalyzeRequest`` 的文件和版本上下文
+        :return: 会话报告编号、原因、证据和可用输出信息
+        """
+        try:
+            request = CrashAnalyzeRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        result = await to_thread.run_sync(
+            self.game.analyze_crash_file,
+            request.file_path,
+            request.game_path,
+            request.version_id,
+        )
+        return success(result)
+
+    @_ipc_handler("CRASH_OUTPUT_FAILED")
+    async def game_crash_output(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        按需读取当前会话报告中的脱敏游戏输出。
+
+        :param body: 符合 ``CrashReportRequest`` 的报告编号
+        :return: 输出文件名和最多五百行进程输出
+        """
+        try:
+            request = CrashReportRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(await to_thread.run_sync(self.game.get_crash_output, request.report_id))
+
+    @_ipc_handler("CRASH_EXPORT_FAILED")
+    async def game_crash_export(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        将当前会话报告导出为经过脱敏的 ZIP。
+
+        :param body: 报告编号和可选的目标 ZIP 路径
+        :return: 实际写入的导出路径
+        """
+        try:
+            request = CrashExportRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        result = await to_thread.run_sync(
+            self.game.export_crash_report,
+            request.report_id,
+            request.output_path,
+        )
+        return success(result)
 
 
 __all__ = ["GameHandlers"]

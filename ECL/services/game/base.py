@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import gettempdir
 from threading import Event, RLock, Thread
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ECL.events import EventBus
 from ECL.game import (
@@ -27,6 +30,9 @@ from ECL.services.authlib import AuthlibInjector
 from ECL.utils import get_logger
 
 from .version_stats import VersionStatsStore
+
+if TYPE_CHECKING:
+    from .crash_analysis import CrashAnalyzer
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
 DownloaderFactory = Callable[..., Downloader]
@@ -71,13 +77,19 @@ class _RunningGame:
 
     token: str
     version_id: str
+    loader: str
     game_path: Path
+    game_directory: Path
     started_at: float
+    started_wall_time: float
     instance_id: str | None = None
     pending: bool = True
     exited: bool = False
     exit_code: int | None = None
     stopping: bool = False
+    startup_complete: bool = False
+    crash_marked: bool = False
+    output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=500))
 
 
 class _GameState:
@@ -132,7 +144,12 @@ class _GameState:
         self._downloader_factory = downloader_factory
         self._command_builder = command_builder
         self._java_scanner_factory = java_scanner_factory
-        self._java_cache_file = Path(data_path) / "java_cache.json" if data_path else None
+        self._data_path = (
+            Path(data_path).resolve(strict=False)
+            if data_path
+            else (Path(gettempdir()) / "EuoraCraft-Launcher").resolve(strict=False)
+        )
+        self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
         # Java 与 Core 上下文按需创建并复用，避免每次目录查询重新建立网络客户端。
         self._java_runtimes: list[Any] = []
@@ -143,6 +160,12 @@ class _GameState:
         # 已启动进程由 InstancesManager 拥有；这里只保存当前会话的展示与统计元数据。
         self._running_games: dict[str, _RunningGame] = {}
         self._version_stats = VersionStatsStore()
+        from .crash_analysis import CrashAnalyzer
+
+        self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path)
+        self._crash_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ECL-CrashAnalyzer")
+        self._crash_futures: set[Future[Any]] = set()
+        self._closing = False
         self._launch_cancel_event: Event | None = None
         # 版本目录监听状态由唯一后台线程使用，所有共享容器仍受同一把锁保护。
         self._version_scan_cache: dict[str, list[dict[str, Any]]] = {}
@@ -252,6 +275,8 @@ class _GameState:
         """
         self._version_watch_stop.set()
         with self._lock:
+            self._closing = True
+        with self._lock:
             running_tokens = [token for token, run in self._running_games.items() if not run.pending]
         for token in running_tokens:
             self._finalize_instance_run(token, action="launcher_closed")
@@ -294,6 +319,8 @@ class _GameState:
                 context.api_client.close()
             except Exception:
                 self.logger.exception("关闭游戏 API 客户端失败")
+        self._crash_executor.shutdown(wait=True, cancel_futures=True)
+        self._crash_analyzer.close()
         if self.authlib_injector is not None:
             self.authlib_injector.close()
         self.logger.debug("游戏服务已关闭")

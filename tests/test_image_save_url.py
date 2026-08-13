@@ -1,6 +1,8 @@
 import asyncio
+import os
 import struct
 import sys
+import time
 from importlib import import_module
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -97,6 +99,7 @@ sys.modules["pytauri.webview"] = pytauri_webview_module
 
 FrontendApi = import_module("ECL.api").FrontendApi
 frontend_module = import_module("ECL.api.frontend")
+files_module = import_module("ECL.api.files")
 ConfigManager = import_module("ECL.utils").ConfigManager
 EventBus = import_module("ECL.events").EventBus
 
@@ -278,3 +281,55 @@ def test_image_save_url_follows_redirect_and_returns_data_url(tmp_path, monkeypa
     assert data["url"] == "https://example.com/redirect"
     assert data["dataUrl"].startswith("data:image/png;base64,")
     assert data["base64"]
+
+
+def test_image_fetch_data_url_persists_remote_texture_across_api_instances(tmp_path, monkeypatch) -> None:
+    png_bytes = _make_png_bytes()
+    response = _MockResponse(
+        200,
+        png_bytes,
+        headers={"content-type": "image/png"},
+        url="https://textures.minecraft.net/texture/avatar",
+    )
+    downloads = []
+
+    async def download(url):
+        downloads.append(url)
+        return png_bytes, response
+
+    monkeypatch.setattr(files_module, "_download_remote_image", download)
+    url = "https://textures.minecraft.net/texture/avatar"
+
+    first = asyncio.run(_build_api(tmp_path).image_fetch_data_url({"url": url}))
+    second = asyncio.run(_build_api(tmp_path).image_fetch_data_url({"url": url}))
+
+    assert first["success"] is True
+    assert first["data"]["cached"] is False
+    assert second["success"] is True
+    assert second["data"]["cached"] is True
+    assert second["data"]["dataUrl"] == first["data"]["dataUrl"]
+    assert downloads == [url]
+
+
+def test_image_fetch_data_url_uses_stale_disk_cache_when_texture_server_fails(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://textures.minecraft.net/texture/avatar"
+    png_bytes = _make_png_bytes()
+    api._write_remote_image_cache(url, ".png", png_bytes)
+    cache_file = next((api.data_path / "cache" / "remote-images").glob("*.png"))
+    stale_time = time.time() - files_module._REMOTE_IMAGE_CACHE_TTL_SECONDS - 10
+    os.utime(cache_file, (stale_time, stale_time))
+
+    async def fail_download(_url):
+        request = httpx.Request("GET", url)
+        response = httpx.Response(502, request=request)
+        raise httpx.HTTPStatusError("bad gateway", request=request, response=response)
+
+    monkeypatch.setattr(files_module, "_download_remote_image", fail_download)
+
+    result = asyncio.run(api.image_fetch_data_url({"url": url}))
+
+    assert result["success"] is True
+    assert result["data"]["cached"] is True
+    assert result["data"]["stale"] is True
+    assert result["data"]["dataUrl"].startswith("data:image/png;base64,")

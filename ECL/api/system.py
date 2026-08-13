@@ -13,6 +13,36 @@ from .bridge import _FrontendState, _ipc_handler
 
 
 class SystemHandlers(_FrontendState):
+    async def launcher_errors_pending(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        返回尚未被前端确认呈现的严重错误。
+
+        :param body: 必须为空的请求对象
+        :return: 当前启动器会话内待呈现的错误事件列表
+        """
+        if body:
+            return {"success": False, "message": "launcher_errors_pending 不接受参数", "errorCode": "INVALID_REQUEST"}
+        with self._frontend_event_lock:
+            pending = list(self._pending_error_presentations.values())
+        return success(pending)
+
+    async def launcher_errors_ack(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        确认前端已经接收一批严重错误并释放其内存副本。
+
+        :param body: 包含一个或多个 ``error_ids`` 的请求对象
+        :return: 已确认移除的错误数量
+        """
+        error_ids = body.get("error_ids")
+        if not isinstance(error_ids, list) or not error_ids or any(not isinstance(item, str) or not item for item in error_ids):
+            return {"success": False, "message": "错误编号列表无效", "errorCode": "INVALID_REQUEST"}
+        removed = 0
+        with self._frontend_event_lock:
+            for error_id in error_ids:
+                if self._pending_error_presentations.pop(error_id, None) is not None:
+                    removed += 1
+        return success({"removed": removed})
+
     async def system_ping(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         检查连接。

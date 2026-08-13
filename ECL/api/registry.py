@@ -3,10 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from ECL.api.bridge import guard_ipc_handler
 from ECL.api.frontend import FrontendApi
 
 COMMAND_NAMES = (
     "frontend_ready",
+    "launcher_errors_pending",
+    "launcher_errors_ack",
     "system_ping",
     "system_memory",
     "launcher_info",
@@ -33,6 +36,9 @@ COMMAND_NAMES = (
     "game_launch",
     "game_launch_cancel",
     "game_instance_stop",
+    "game_crash_analyze",
+    "game_crash_output",
+    "game_crash_export",
     "accounts_list",
     "accounts_current",
     "accounts_add_offline",
@@ -69,6 +75,7 @@ COMMAND_NAMES = (
     "select_java",
     "select_image",
     "select_file",
+    "select_save_file",
     "open_folder",
     "open_url",
     "file_resolve",
@@ -109,7 +116,7 @@ def command_handlers(api: FrontendApi) -> dict[str, Callable[..., Any]]:
     :param api: 已连接应用上下文的前端 API 门面
     :return: 命令名到处理器的稳定映射
     """
-    return {name: getattr(api, name) for name in COMMAND_NAMES}
+    return {name: guard_ipc_handler(api, name, getattr(api, name)) for name in COMMAND_NAMES}
 
 
 __all__ = ["COMMAND_NAMES", "command_handlers"]

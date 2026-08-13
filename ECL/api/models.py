@@ -38,6 +38,15 @@ class ImagePurpose(StrEnum):
     CAPE = "cape"
 
 
+class FileSelectionPurpose(StrEnum):
+    CRASH_ANALYSIS = "crash-analysis"
+
+
+class FileSavePurpose(StrEnum):
+    CRASH_REPORT = "crash-report"
+    LAUNCHER_LOGS = "launcher-logs"
+
+
 class SettingsQuery(RequestModel):
     section: str | None = None
     sections: list[str] | None = None
@@ -119,6 +128,32 @@ class GameVersionRequest(GamePathRequest):
 
 class GameInstanceRequest(RequestModel):
     instance_id: str = Field(min_length=1)
+
+
+class CrashAnalyzeRequest(GameVersionRequest):
+    file_path: Path
+
+    @field_validator("file_path", mode="before")
+    @classmethod
+    def validate_file_path(cls, value):
+        if isinstance(value, str) and (not value.strip() or "\0" in value):
+            raise ValueError("崩溃日志路径无效")
+        return value
+
+
+class CrashReportRequest(RequestModel):
+    report_id: str = Field(min_length=1, pattern=r"^[a-f0-9]{32}$")
+
+
+class CrashExportRequest(CrashReportRequest):
+    output_path: Path | None = None
+
+    @field_validator("output_path", mode="before")
+    @classmethod
+    def validate_output_path(cls, value):
+        if isinstance(value, str) and (not value.strip() or "\0" in value):
+            raise ValueError("导出路径无效")
+        return value
 
 
 class InstallRequest(RequestModel):
@@ -205,6 +240,14 @@ class ImageSelectionRequest(RequestModel):
     purpose: ImagePurpose = ImagePurpose.BACKGROUND
 
 
+class FileSelectionRequest(RequestModel):
+    purpose: FileSelectionPurpose | None = None
+
+
+class FileSaveRequest(RequestModel):
+    purpose: FileSavePurpose
+
+
 REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "settings_get": SettingsQuery,
     "settings_set": SettingsUpdate,
@@ -220,6 +263,9 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_config_patch": GameConfigPatch,
     "game_version_stats": GameVersionRequest,
     "game_instance_stop": GameInstanceRequest,
+    "game_crash_analyze": CrashAnalyzeRequest,
+    "game_crash_output": CrashReportRequest,
+    "game_crash_export": CrashExportRequest,
     "wardrobe_import": WardrobeImportRequest,
     "wardrobe_sync_account_skin": AccountTextureRequest,
     "wardrobe_update": WardrobeUpdateRequest,
@@ -232,6 +278,8 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "microsoft_set_cape": MicrosoftCapeRequest,
     "microsoft_reset_cape": AccountTextureRequest,
     "select_image": ImageSelectionRequest,
+    "select_file": FileSelectionRequest,
+    "select_save_file": FileSaveRequest,
 }
 
 
@@ -246,6 +294,13 @@ def request_schemas() -> dict[str, dict]:
 __all__ = [
     "REQUEST_MODELS",
     "AccountTextureRequest",
+    "CrashAnalyzeRequest",
+    "CrashExportRequest",
+    "CrashReportRequest",
+    "FileSavePurpose",
+    "FileSaveRequest",
+    "FileSelectionPurpose",
+    "FileSelectionRequest",
     "GameCatalogRequest",
     "GameConfigPatch",
     "GameConfigUpdate",

@@ -22,6 +22,10 @@ class ApiFailure(TypedDict):
     success: Literal[False]
     message: str
     errorCode: str
+    presentation: NotRequired[Literal["message", "modal"]]
+    errorId: NotRequired[str]
+    title: NotRequired[str]
+    detail: NotRequired[str]
 
 
 ApiResponse = ApiSuccess[Any] | ApiFailure
@@ -36,11 +40,35 @@ def success(data: T | None = None) -> ApiSuccess[T | None]:
     return {"success": True, "data": data}
 
 
-def failure(message: str, error_code: str) -> ApiFailure:
+def failure(
+    message: str,
+    error_code: str,
+    *,
+    presentation: Literal["message", "modal"] = "message",
+    error_id: str | None = None,
+    title: str | None = None,
+    detail: str | None = None,
+) -> ApiFailure:
     """
     创建失败响应。
 
     :param message: 面向用户的错误说明
     :param error_code: 供前端识别的稳定错误码
+    :param presentation: 建议前端使用顶部消息或全局弹窗呈现
+    :param error_id: 严重错误与日志、事件关联的唯一编号
+    :param title: 严重错误弹窗标题
+    :param detail: 可安全展示给用户的补充信息
     """
-    return {"success": False, "message": message, "errorCode": error_code}
+    result: ApiFailure = {
+        "success": False,
+        "message": message,
+        "errorCode": error_code,
+        "presentation": presentation,
+    }
+    if error_id:
+        result["errorId"] = error_id
+    if title:
+        result["title"] = title
+    if detail:
+        result["detail"] = detail
+    return result

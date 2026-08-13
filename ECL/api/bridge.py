@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -78,6 +79,17 @@ _IPC_ERRORS = (
     httpx.HTTPError,
     OSError,
     ValueError,
+)
+
+_MODAL_ERROR_CODES = frozenset(
+    {
+        "ACCOUNT_SAVE_FAILED",
+        "ECL_CONFIG_WRITE_FAILED",
+        "MOD_COPY_FAILED",
+        "VERSION_UNINSTALL_FAILED",
+        "WARDROBE_FILE_READ_FAILED",
+        "WARDROBE_METADATA_INVALID",
+    }
 )
 
 
@@ -172,10 +184,59 @@ def _open_folder(path: str) -> None:
         subprocess.run(["xdg-open", str(target)], check=False)
 
 
-def _make_error_response(exc: Exception, fallback_code: str) -> ApiResponse:
+def _make_error_response(exc: Exception, fallback_code: str, events: Any | None = None) -> ApiResponse:
     error_code = getattr(exc, "error_code", fallback_code)
     message = str(exc).strip() or type(exc).__name__
+    is_unexpected_file_error = isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError)
+    if error_code in _MODAL_ERROR_CODES or is_unexpected_file_error:
+        error_id = uuid4().hex
+        title = "启动器无法完成本地数据操作"
+        payload = {"error_id": error_id, "title": title, "message": message}
+        if events is not None:
+            events.emit("launcher:error", payload)
+        return failure(message, error_code, presentation="modal", error_id=error_id, title=title)
     return failure(message, error_code)
+
+
+def _make_unexpected_error_response(state: Any, operation: str) -> ApiResponse:
+    error_id = uuid4().hex
+    message = "启动器执行操作时发生内部错误，请导出日志以便排查"
+    title = "启动器发生内部错误"
+    state.logger.exception("%s 发生未预期异常，错误编号: %s", operation, error_id)
+    state.events.emit("launcher:error", {"error_id": error_id, "title": title, "message": message})
+    return failure(
+        message,
+        "INTERNAL_ERROR",
+        presentation="modal",
+        error_id=error_id,
+        title=title,
+    )
+
+
+def guard_ipc_handler(state: Any, operation: str, handler: Any) -> Any:
+    """
+    为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
+
+    :param state: 拥有日志与应用事件总线的前端 API 门面
+    :param operation: 注册到 PyTauri 的稳定命令名
+    :param handler: 原始异步命令处理器
+    :return: 捕获所有异常并返回 ``ApiResponse`` 的异步处理器
+    """
+
+    @functools.wraps(handler)
+    async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
+        try:
+            return await handler(*args, **kwargs)
+        except _IPC_ERRORS as exc:
+            if isinstance(exc, httpx.HTTPError):
+                state.logger.warning("%s 远程请求失败: %s", operation, exc)
+            else:
+                state.logger.exception("%s 执行失败", operation)
+            return _make_error_response(exc, "INTERNAL_ERROR", state.events)
+        except Exception:
+            return _make_unexpected_error_response(state, operation)
+
+    return guarded
 
 
 def _ipc_handler(fallback_code: str = "INTERNAL_ERROR"):
@@ -185,8 +246,13 @@ def _ipc_handler(fallback_code: str = "INTERNAL_ERROR"):
             try:
                 return await func(self, *args, **kwargs)
             except _IPC_ERRORS as exc:
-                self.logger.exception("%s 执行失败", func.__name__)
-                return _make_error_response(exc, fallback_code)
+                if isinstance(exc, httpx.HTTPError):
+                    self.logger.warning("%s 远程请求失败: %s", func.__name__, exc)
+                else:
+                    self.logger.exception("%s 执行失败", func.__name__)
+                return _make_error_response(exc, fallback_code, self.events)
+            except Exception:
+                return _make_unexpected_error_response(self, func.__name__)
 
         return wrapper
 
@@ -210,6 +276,10 @@ class _FrontendState:
         self.data_path: Path = self.launcher.data_path
         self._webview: WebviewWindow | None = None
         self._pending_frontend_events: list[tuple[str, Any]] = []
+        # 严重错误在收到前端确认前保留一份内存副本。Tauri 事件用于即时呈现，IPC
+        # 拉取用于恢复工作线程事件丢失；两条链路由同一 error_id 在前端去重。
+        self._pending_error_presentations: dict[str, dict[str, Any]] = {}
+        self._frontend_event_lock = RLock()
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
@@ -225,9 +295,10 @@ class _FrontendState:
     def _queue_frontend_event(self, event: str, payload: Any) -> None:
         if event not in _queued_frontend_events:
             return
-        self._pending_frontend_events.append((event, payload))
-        if len(self._pending_frontend_events) > _max_pending_frontend_events:
-            self._pending_frontend_events.pop(0)
+        with self._frontend_event_lock:
+            self._pending_frontend_events.append((event, payload))
+            if len(self._pending_frontend_events) > _max_pending_frontend_events:
+                self._pending_frontend_events.pop(0)
 
     def emit_to_frontend(self, event: str, payload: Any) -> None:
         """
@@ -239,10 +310,22 @@ class _FrontendState:
         if self._webview is None:
             self._queue_frontend_event(event, payload)
             return
+        webview = self._webview
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        def emit_on_main_thread() -> None:
+            try:
+                _Emitter.emit_str_to(webview, EventTarget.Any(), event, serialized)
+            except (OSError, TypeError, ValueError, RuntimeError):
+                self.logger.exception("向前端推送事件失败: %s", event)
+                self._queue_frontend_event(event, payload)
+
         try:
-            _Emitter.emit_str_to(self._webview, EventTarget.Any(), event, json.dumps(payload, ensure_ascii=False))
+            # 游戏退出和崩溃分析回调运行在工作线程。WebView 发射必须切回 Tauri
+            # 主线程，否则事件会被排队在一个已经完成 frontend_ready 的会话中。
+            webview.run_on_main_thread(emit_on_main_thread)
         except (OSError, TypeError, ValueError, RuntimeError):
-            self.logger.exception("向前端推送事件失败: %s", event)
+            self.logger.exception("调度前端事件失败: %s", event)
             self._queue_frontend_event(event, payload)
 
     def emit_popup_to_frontend(self, payload: dict[str, Any]) -> None:
@@ -273,6 +356,14 @@ class _FrontendState:
         detail = payload.get("detail")
         if isinstance(detail, str) and detail.strip():
             normalized["detail"] = detail.strip()
+        if payload.get("kind") == "game_crash" and isinstance(payload.get("crash"), dict):
+            normalized["kind"] = "game_crash"
+            normalized["crash"] = payload["crash"]
+        with self._frontend_event_lock:
+            self._pending_error_presentations[normalized["error_id"]] = normalized
+            while len(self._pending_error_presentations) > _max_pending_frontend_events:
+                oldest = next(iter(self._pending_error_presentations))
+                self._pending_error_presentations.pop(oldest, None)
         self.emit_to_frontend("launcher:error", normalized)
 
     def focus_window(self) -> bool:
@@ -297,8 +388,9 @@ class _FrontendState:
         return True
 
     def _flush_pending_frontend_events(self) -> None:
-        pending_events = self._pending_frontend_events
-        self._pending_frontend_events = []
+        with self._frontend_event_lock:
+            pending_events = self._pending_frontend_events
+            self._pending_frontend_events = []
         for event, payload in pending_events:
             self.emit_to_frontend(event, payload)
 

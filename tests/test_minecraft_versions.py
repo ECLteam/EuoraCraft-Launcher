@@ -2,11 +2,24 @@ import json
 
 import pytest
 
+from ECL.game import SearchMinecraft
 from ECL.services import GameService, VersionScanError
 
 
 class FakeAccounts:
     pass
+
+
+def test_neoforge_loader_name_uses_frontend_canonical_mapping() -> None:
+    version_json = {
+        "libraries": [{"name": "net.neoforged:neoforge:26.2.0.25-beta"}],
+        "arguments": {"game": ["--fml.neoForgeVersion", "26.2.0.25-beta"]},
+    }
+
+    loader = SearchMinecraft._find_loader_type(version_json)
+
+    assert loader == "NeoForge"
+    assert SearchMinecraft._find_loader_version(version_json, loader) == "26.2.0.25-beta"
 
 
 def _write_version_json(game_path, version_name: str, data: dict) -> None:

@@ -32,8 +32,11 @@ sys.modules["pytauri_plugins.dialog"] = pytauri_plugins_dialog_module
 FrontendApi = import_module("ECL.api").FrontendApi
 Adapter = import_module("ECL.adapters.tauri").Adapter
 frontend_module = import_module("ECL.api.frontend")
+files_module = import_module("ECL.api.files")
 ConfigManager = import_module("ECL.utils").ConfigManager
 EventBus = import_module("ECL.events").EventBus
+AccountError = import_module("ECL.services.accounts").AccountError
+command_handlers = import_module("ECL.api.registry").command_handlers
 
 
 class FakeAccounts:
@@ -167,6 +170,7 @@ class FakeGame:
         self.launch_call = None
         self.requested_paths = None
         self.scan_force = False
+        self.crash_call = None
 
     def scan_versions(self, paths, *, force=False):
         self.requested_paths = paths
@@ -201,12 +205,31 @@ class FakeGame:
             "gamePath": str(options["game_path"]),
         }
 
+    def analyze_crash_file(self, file_path, game_path, version_id):
+        self.crash_call = (file_path, game_path, version_id)
+        return {
+            "reportId": "a" * 32,
+            "versionId": version_id,
+            "exitCode": None,
+            "detectedBy": ["manual"],
+            "reasons": [],
+            "sourceFiles": [Path(file_path).name],
+            "hasOutput": True,
+        }
+
+    def get_crash_output(self, report_id):
+        return {"name": "game-output.log", "content": f"output:{report_id}"}
+
+    def export_crash_report(self, report_id, output_path=None):
+        return {"path": str(output_path or f"C:/exports/{report_id}.zip")}
+
 
 class FakeWebviewWindow:
     def __init__(self):
         self.visible = False
         self.minimized = True
         self.focused = False
+        self.main_thread_calls = 0
 
     def show(self) -> None:
         self.visible = True
@@ -218,6 +241,7 @@ class FakeWebviewWindow:
         self.focused = True
 
     def run_on_main_thread(self, handler) -> None:
+        self.main_thread_calls += 1
         handler()
 
 
@@ -369,6 +393,64 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
     assert api.game.launch_call[1]["version_isolation"] is True
 
 
+def test_crash_report_commands_validate_and_delegate(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    log_path = tmp_path / "latest.log"
+    log_path.write_text("crash", encoding="utf-8")
+    report_id = "a" * 32
+
+    analyzed = asyncio.run(
+        api.game_crash_analyze(
+            {
+                "file_path": str(log_path),
+                "game_path": str(tmp_path / ".minecraft"),
+                "version_id": "1.21.8",
+            }
+        )
+    )
+    output = asyncio.run(api.game_crash_output({"report_id": report_id}))
+    exported = asyncio.run(api.game_crash_export({"report_id": report_id}))
+
+    assert analyzed["success"] is True
+    assert analyzed["data"]["reportId"] == report_id
+    assert api.game.crash_call == (log_path, tmp_path / ".minecraft", "1.21.8")
+    assert output["data"]["content"] == f"output:{report_id}"
+    assert exported["data"]["path"].endswith(f"{report_id}.zip")
+
+
+def test_crash_report_id_rejects_invalid_values(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.game_crash_output({"report_id": "../report"}))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "INVALID_REQUEST"
+
+
+def test_select_save_file_uses_system_dialog_and_normalizes_zip_suffix(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakeSaveDialog:
+        def blocking_save_file(self, **options):
+            calls.append(options)
+            return tmp_path / "crash-report"
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakeSaveDialog()))
+
+    result = asyncio.run(api.select_save_file({"purpose": "crash-report"}))
+
+    assert result == {"success": True, "data": {"path": str(tmp_path / "crash-report.zip")}}
+    assert calls == [
+        {
+            "add_filter": ("ZIP 压缩包", ["zip"]),
+            "set_file_name": "EuoraCraft-crash-report.zip",
+            "set_title": "保存 Minecraft 崩溃报告",
+        }
+    ]
+
+
 def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
@@ -492,6 +574,21 @@ def test_microsoft_authorization_event_focuses_before_forwarding() -> None:
     assert calls == ["focus", ("accounts_microsoft_login_status", event)]
 
 
+def test_adapter_forwards_launcher_notifications(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    forwarded = []
+    monkeypatch.setattr(api, "emit_to_frontend", lambda event, payload: forwarded.append((event, payload)))
+    adapter = object.__new__(Adapter)
+    adapter.frontend_api_instance = api
+    adapter.events = api.events
+    payload = {"type": "warning", "title": "Notice", "message": "Please check settings"}
+
+    adapter._register_events()
+    api.events.emit("launcher:notify", payload)
+
+    assert forwarded == [("launcher:notify", payload)]
+
+
 def test_sidebar_state_is_forwarded_to_plugins(tmp_path) -> None:
     api = _build_api(tmp_path)
 
@@ -505,7 +602,50 @@ def test_sidebar_state_is_forwarded_to_plugins(tmp_path) -> None:
         "success": False,
         "message": "侧栏状态必须是布尔值",
         "errorCode": "INVALID_SIDEBAR_STATE",
+        "presentation": "message",
     }
+
+
+def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    emitted = []
+    api.events.subscribe("launcher:error", emitted.append)
+    monkeypatch.setattr(api.accounts, "list_accounts", lambda: (_ for _ in ()).throw(RuntimeError("secret detail")))
+
+    result = asyncio.run(command_handlers(api)["accounts_list"]({}))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "INTERNAL_ERROR"
+    assert result["presentation"] == "modal"
+    assert result["errorId"]
+    assert "secret detail" not in result["message"]
+    assert emitted == [
+        {
+            "error_id": result["errorId"],
+            "title": result["title"],
+            "message": result["message"],
+        }
+    ]
+
+
+def test_critical_persistence_error_returns_modal_metadata_and_emits_event(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    emitted = []
+    api.events.subscribe("launcher:error", emitted.append)
+    monkeypatch.setattr(
+        api.accounts,
+        "remove_account",
+        lambda *_args: (_ for _ in ()).throw(AccountError("保存账号数据失败", "ACCOUNT_SAVE_FAILED")),
+        raising=False,
+    )
+
+    result = asyncio.run(api.accounts_remove({"account_id": "account"}))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "ACCOUNT_SAVE_FAILED"
+    assert result["presentation"] == "modal"
+    assert emitted[0]["error_id"] == result["errorId"]
+    assert emitted[0]["message"] == "保存账号数据失败"
 
 
 def test_frontend_ready_pushes_cacheable_development_warning(tmp_path, monkeypatch) -> None:
@@ -554,6 +694,15 @@ def test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeyp
         "title": "后端错误",
         "message": "前端就绪前发生错误。",
         "detail": "测试详情",
+        "kind": "game_crash",
+        "crash": {
+            "reportId": "a" * 32,
+            "versionId": "1.21.8",
+            "detectedBy": ["exit_code"],
+            "reasons": [],
+            "sourceFiles": [],
+            "hasOutput": False,
+        },
     }
 
     api.emit_popup_to_frontend(popup)
@@ -565,12 +714,47 @@ def test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeyp
         "emit_str_to",
         lambda *args: emitted.append((args[-2], json.loads(args[-1]))),
     )
-    asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+    webview = FakeWebviewWindow()
+    asyncio.run(api.frontend_ready({}, webview))
 
     assert emitted == [
         ("launcher:popup", popup),
         ("launcher:error", error),
     ]
+    assert webview.main_thread_calls == 2
+
+
+def test_ready_frontend_events_are_marshaled_to_main_thread(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api.launcher.debug = False
+    webview = FakeWebviewWindow()
+    asyncio.run(api.frontend_ready({}, webview))
+    emitted = []
+    monkeypatch.setattr(
+        frontend_module._Emitter,
+        "emit_str_to",
+        lambda *args: emitted.append((args[-2], json.loads(args[-1]))),
+    )
+    payload = {"error_id": "worker-error", "title": "崩溃", "message": "后台分析完成"}
+
+    api.emit_error_to_frontend(payload)
+
+    assert webview.main_thread_calls == 1
+    assert emitted == [("launcher:error", payload)]
+
+
+def test_serious_errors_remain_available_until_frontend_acknowledges_them(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    payload = {"error_id": "recoverable-event", "title": "崩溃", "message": "后台分析完成"}
+
+    api.emit_error_to_frontend(payload)
+    pending = asyncio.run(api.launcher_errors_pending({}))
+    acknowledged = asyncio.run(api.launcher_errors_ack({"error_ids": ["recoverable-event"]}))
+    empty = asyncio.run(api.launcher_errors_pending({}))
+
+    assert pending == {"success": True, "data": [payload]}
+    assert acknowledged == {"success": True, "data": {"removed": 1}}
+    assert empty == {"success": True, "data": []}
 
 
 def test_wardrobe_list_delegates_to_registered_store(tmp_path) -> None:

@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from ECL.events import EventBus
+from ECL.game import LaunchConfig, build_minecraft_cmd
 from ECL.services.game import GameService, GameServiceError
 
 
@@ -36,6 +39,7 @@ class EmptySearchMinecraft:
 class FakeProcess:
     def __init__(self):
         self.running = True
+        self.pid = 24680
 
     def poll(self):
         return None if self.running else 0
@@ -147,6 +151,7 @@ def _launch_lifecycle_fixture(tmp_path, monkeypatch, clock):
             java_path=java_path,
         )
     )
+    instances.created["log_callback"]("[Render thread/INFO]: Sound engine started", result["instanceId"])
     return service, instances, game_path, java_path, result
 
 
@@ -442,6 +447,11 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
         instances_manager=instances,
         command_builder=lambda config: captured_configs.append(config) or '"java.exe" game.Main',
     )
+    service._search_factory = lambda _path: SimpleNamespace(
+        search_minecraft=lambda: {"1.21.8": {"LoaderType": "NeoForge"}}
+    )
+    crashes = []
+    service.events.subscribe("launcher:error", crashes.append)
     monkeypatch.setattr(
         service,
         "_context",
@@ -479,8 +489,10 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
             "name": "1.21.8",
             "type": "Minecraft",
             "isRunning": True,
+            "pid": 24680,
             "version": "1.21.8",
             "versionId": "1.21.8",
+            "loader": "NeoForge",
             "gamePath": str(game_path.resolve()),
         }
     ]
@@ -502,6 +514,16 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
         "lastRunDurationSeconds": 42,
         "totalRunDurationSeconds": 42,
     }
+    deadline = time.monotonic() + 3
+    while not crashes and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(crashes) == 1
+    assert crashes[0]["title"] == "Minecraft 实例崩溃"
+    assert crashes[0]["message"] == "实例“1.21.8”异常退出，退出码：1"
+    assert crashes[0]["error_id"]
+    assert crashes[0]["kind"] == "game_crash"
+    assert crashes[0]["crash"]["reportId"] == crashes[0]["error_id"]
+    service.close()
 
 
 def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(tmp_path, monkeypatch) -> None:
@@ -524,6 +546,8 @@ def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(
 def test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, monkeypatch) -> None:
     clock = [50.0]
     service, instances, game_path, _java_path, result = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)
+    crashes = []
+    service.events.subscribe("launcher:error", crashes.append)
 
     clock[0] = 58.2
     service.stop_instance(result["instanceId"])
@@ -531,11 +555,243 @@ def test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, mon
     assert service.list_instances() == []
     assert instances.items[0]["Instance"].running is False
     assert instances.exit_requests == [(result["instanceId"], {"wait_timeout": 3.0})]
+    assert crashes == []
     assert service.get_version_stats(game_path, "1.21.8") == {
         "launchCount": 1,
         "lastRunDurationSeconds": 8,
         "totalRunDurationSeconds": 8,
     }
+
+
+def test_clean_exit_after_startup_marker_does_not_trigger_crash(tmp_path, monkeypatch) -> None:
+    clock = [50.0]
+    service, instances, _game_path, _java_path, result = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)
+    crashes = []
+    service.events.subscribe("launcher:error", crashes.append)
+
+    instances.created["log_callback"]("[Render thread/INFO]: Sound engine started", result["instanceId"])
+    instances.exit_instance(result["instanceId"], exit_code=0)
+
+    assert crashes == []
+    service.close()
+
+
+def test_launch_handles_process_that_exits_before_instance_registration_finishes(tmp_path, monkeypatch) -> None:
+    class ImmediateExitInstances(FakeInstances):
+        def create_instance(self, **options):
+            instance_id = super().create_instance(**options)
+            options["exit_callback"](1, options["instance_name"])
+            self.items[0]["Instance"].running = False
+            return instance_id
+
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "broken"
+    version_path.mkdir(parents=True)
+    (version_path / "broken.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    events = []
+    service = _build_service(
+        instances_manager=ImmediateExitInstances(),
+        command_builder=lambda _config: '"java.exe" broken.Main',
+    )
+    service.events.subscribe("launcher:error", events.append)
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+    monkeypatch.setattr(
+        service._crash_analyzer,
+        "analyze_runtime",
+        lambda **_kwargs: {
+            "reportId": "instant-crash",
+            "versionId": "broken",
+            "exitCode": 1,
+            "detectedBy": ["exit_code", "startup_incomplete"],
+            "reasons": [],
+            "sourceFiles": [],
+            "hasOutput": False,
+        },
+    )
+
+    asyncio.run(service.launch_instance({"version_id": "broken"}, game_path=game_path, java_path=java_path))
+
+    deadline = time.monotonic() + 1
+    while not events and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert events[0]["kind"] == "game_crash"
+    assert events[0]["error_id"] == "instant-crash"
+    assert service.list_instances() == []
+    service.close()
+
+
+def test_launch_environment_rejects_java_below_minimum(tmp_path) -> None:
+    service = _build_service()
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"java")
+    service._java_runtimes = [
+        SimpleNamespace(path=java_path, version="21.0.8", architecture="amd64", vendor="OpenJDK", is_jdk=True)
+    ]
+
+    with pytest.raises(GameServiceError) as error:
+        service._validate_launch_environment(str(java_path), 25, 4096)
+
+    assert error.value.error_code == "JAVA_VERSION_INCOMPATIBLE"
+    assert "Java 25" in str(error.value)
+
+
+def test_launch_environment_accepts_java_newer_than_minimum(tmp_path) -> None:
+    service = _build_service()
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"java")
+    service._java_runtimes = [
+        SimpleNamespace(path=java_path, version="26-ea", architecture="amd64", vendor="OpenJDK", is_jdk=True)
+    ]
+
+    service._validate_launch_environment(str(java_path), 25, 4096)
+
+
+def test_command_builder_rejects_missing_inherited_version_metadata(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "neoforge"
+    version_path.mkdir(parents=True)
+    (version_path / "neoforge.json").write_text(
+        json.dumps(
+            {
+                "id": "neoforge",
+                "inheritsFrom": "26.2",
+                "mainClass": "net.neoforged.fml.startup.Client",
+                "arguments": {"game": ["--fml.neoForgeVersion", "26.2.0.25-beta"]},
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = LaunchConfig(
+        java_path="java.exe",
+        game_path=game_path,
+        version_name="neoforge",
+        use_ram=4096,
+        player_name="Player",
+        auth_uuid="0" * 32,
+    )
+
+    with pytest.raises(FileNotFoundError, match=r"缺少基础版本 26\.2"):
+        build_minecraft_cmd(config)
+
+
+def test_command_builder_places_neoforge_game_arguments_after_main_class(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "neoforge"
+    version_path.mkdir(parents=True)
+    (version_path / "neoforge.json").write_text(
+        json.dumps(
+            {
+                "id": "neoforge",
+                "inheritsFrom": "26.2",
+                "mainClass": "net.neoforged.fml.startup.Client",
+                "arguments": {"game": ["--fml.neoForgeVersion", "26.2.0.25-beta"]},
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (version_path / "26.2.json").write_text(
+        json.dumps(
+            {
+                "id": "26.2",
+                "arguments": {
+                    "jvm": ["-Djava.library.path=${natives_directory}", "-cp", "${classpath}"],
+                    "game": ["--username", "${auth_player_name}"],
+                },
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (version_path / "26.2.jar").write_bytes(b"jar")
+    config = LaunchConfig(
+        java_path="java.exe",
+        game_path=game_path,
+        version_name="neoforge",
+        use_ram=4096,
+        player_name="Player",
+        auth_uuid="0" * 32,
+    )
+
+    command = build_minecraft_cmd(config)
+
+    assert command.index('"net.neoforged.fml.startup.Client"') < command.index("--fml.neoForgeVersion")
+
+
+def test_launch_downloads_missing_inherited_version_metadata_before_file_check(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "neoforge"
+    version_path.mkdir(parents=True)
+    (version_path / "neoforge.json").write_text(
+        json.dumps(
+            {
+                "id": "neoforge",
+                "inheritsFrom": "26.2",
+                "mainClass": "net.neoforged.fml.startup.Client",
+                "arguments": {"game": ["--fml.neoForgeVersion", "26.2.0.25-beta"]},
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    calls = []
+
+    class FakeGames:
+        def build_minecraft_download_list(self, version_id, save_name, save_version_info):
+            calls.append((version_id, save_name, save_version_info))
+            (version_path / "26.2.json").write_text('{"id":"26.2"}', encoding="utf-8")
+            return "release", {"id": "26.2"}
+
+    class InheritanceCheckingFiles:
+        def check_files(self, *_args):
+            assert (version_path / "26.2.json").is_file()
+            return []
+
+    service = _build_service(
+        instances_manager=FakeInstances(),
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=InheritanceCheckingFiles(), games=FakeGames()),
+    )
+
+    asyncio.run(service.launch_instance({"version_id": "neoforge"}, game_path=game_path, java_path=java_path))
+
+    assert calls == [("26.2", "neoforge", False)]
+    service.close()
+
+
+def test_launch_environment_rejects_large_memory_with_32_bit_java(tmp_path) -> None:
+    service = _build_service()
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"java")
+    service._java_runtimes = [
+        SimpleNamespace(path=java_path, version="8.0.451", architecture="x86", vendor="OpenJDK", is_jdk=True)
+    ]
+
+    with pytest.raises(GameServiceError) as error:
+        service._validate_launch_environment(str(java_path), 8, 4096)
+
+    assert error.value.error_code == "JAVA_ARCH_MEMORY_LIMIT"
+
+
+@pytest.mark.parametrize(
+    ("game_version", "expected"),
+    [("1.16.5", 8), ("1.17.1", 16), ("1.20.4", 17), ("1.20.5", 21), ("26.2", 25)],
+)
+def test_fallback_required_java_tracks_minecraft_runtime_generations(game_version, expected) -> None:
+    assert GameService._fallback_required_java(game_version) == expected
 
 
 def test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None:
@@ -549,6 +805,7 @@ def test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None
             java_path=java_path,
         )
     )
+    instances.created["log_callback"]("[Render thread/INFO]: Sound engine started", second["instanceId"])
 
     clock[0] = 125.0
     instances.exit_instance(second["instanceId"])
@@ -560,6 +817,7 @@ def test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None
         "lastRunDurationSeconds": 40,
         "totalRunDurationSeconds": 55,
     }
+    service.close()
 
 
 def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -> None:
@@ -811,6 +1069,56 @@ def test_ecl_config_read_write_and_patch(tmp_path) -> None:
     updated = service.patch_ecl_config(game_path, {"activeVersion": "1.20.1", "newKey": "hello"})
     assert updated == {"activeVersion": "1.20.1", "customField": 42, "newKey": "hello"}
     assert service.read_ecl_config(game_path) == updated
+
+
+def test_ecl_config_skips_unchanged_writes(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+    writes = []
+    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+
+    def tracked_write(path, data):
+        writes.append((path, data))
+        original_write(path, data)
+
+    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    config = {"activeVersion": "1.21.1", "customField": 42}
+
+    service.write_ecl_config(game_path, config)
+    service.write_ecl_config(game_path, dict(config))
+    patched = service.patch_ecl_config(game_path, {"activeVersion": "1.21.1"})
+
+    assert patched == config
+    assert len(writes) == 1
+
+
+def test_ecl_config_serializes_concurrent_identical_patches(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+    service.write_ecl_config(game_path, {"activeVersion": "old", "customField": 42})
+    writes = []
+    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+
+    def tracked_write(path, data):
+        writes.append((path, data))
+        time.sleep(0.02)
+        original_write(path, data)
+
+    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda _index: service.patch_ecl_config(game_path, {"activeVersion": "new"}),
+                range(2),
+            )
+        )
+
+    assert results == [
+        {"activeVersion": "new", "customField": 42},
+        {"activeVersion": "new", "customField": 42},
+    ]
+    assert len(writes) == 1
+    assert service.read_ecl_config(game_path) == results[0]
 
 
 def test_ecl_active_version_get_and_set(tmp_path) -> None:

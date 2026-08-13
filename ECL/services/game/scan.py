@@ -256,18 +256,19 @@ class ScanCoordinator(_GameState):
         :param game_path: Minecraft 游戏根目录
         """
         ecl_path = self._ecl_json_path(game_path)
-        if ecl_path.is_file():
-            return
-        try:
-            ecl_path.parent.mkdir(parents=True, exist_ok=True)
-            default_config = {
-                "activeVersion": "",
-                "lastLaunched": "",
-            }
-            atomic_write_text(ecl_path, json.dumps(default_config, ensure_ascii=False, indent=2))
-            self.logger.debug("初始化默认 ecl.json: %s", ecl_path)
-        except OSError as exc:
-            self.logger.warning("初始化 ecl.json 失败 %s: %s", ecl_path, exc)
+        with self._lock:
+            if ecl_path.is_file():
+                return
+            try:
+                ecl_path.parent.mkdir(parents=True, exist_ok=True)
+                default_config = {
+                    "activeVersion": "",
+                    "lastLaunched": "",
+                }
+                atomic_write_text(ecl_path, json.dumps(default_config, ensure_ascii=False, indent=2))
+                self.logger.debug("初始化默认 ecl.json: %s", ecl_path)
+            except OSError as exc:
+                self.logger.warning("初始化 ecl.json 失败 %s: %s", ecl_path, exc)
 
     def read_ecl_config(self, game_path: Any) -> dict[str, Any]:
         """
@@ -299,10 +300,19 @@ class ScanCoordinator(_GameState):
         if not isinstance(data, dict):
             raise GameServiceError("ecl.json 数据必须是字典", "INVALID_ECL_CONFIG")
         ecl_path = self._ecl_json_path(game_path)
-        self.logger.debug("写入 ecl.json: %s，activeVersion=%s", ecl_path, data.get("activeVersion", ""))
         try:
-            ecl_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(ecl_path, json.dumps(data, ensure_ascii=False, indent=2))
+            with self._lock:
+                if ecl_path.is_file():
+                    try:
+                        existing = json.loads(ecl_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, UnicodeDecodeError):
+                        existing = None
+                    if existing == data:
+                        self.logger.debug("跳过未变化的 ecl.json 写入: %s", ecl_path)
+                        return
+                self.logger.debug("写入 ecl.json: %s，activeVersion=%s", ecl_path, data.get("activeVersion", ""))
+                ecl_path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(ecl_path, json.dumps(data, ensure_ascii=False, indent=2))
         except OSError as exc:
             raise GameServiceError(f"写入 ecl.json 失败: {exc}", "ECL_CONFIG_WRITE_FAILED") from exc
 
@@ -315,11 +325,18 @@ class ScanCoordinator(_GameState):
         """
         if not isinstance(patch, dict):
             raise GameServiceError("ecl.json 增量数据必须是字典", "INVALID_ECL_CONFIG")
-        self.logger.debug("增量更新 ecl.json: %s，字段=%s", self._ecl_json_path(game_path), list(patch.keys()))
-        current = self.read_ecl_config(game_path)
-        current.update(patch)
-        self.write_ecl_config(game_path, current)
-        return current
+        # 必须把读取、合并和原子替换置于同一临界区；只锁单次写入仍会让并发 patch
+        # 基于同一份旧数据生成两个结果，Windows 下还可能同时替换目标文件。
+        with self._lock:
+            current = self.read_ecl_config(game_path)
+            changed = {key: value for key, value in patch.items() if current.get(key) != value}
+            if not changed:
+                self.logger.debug("跳过未变化的 ecl.json 增量更新: %s", self._ecl_json_path(game_path))
+                return current
+            self.logger.debug("增量更新 ecl.json: %s，字段=%s", self._ecl_json_path(game_path), list(changed.keys()))
+            current.update(changed)
+            self.write_ecl_config(game_path, current)
+            return current
 
     def get_active_version(self, game_path: Any) -> str | None:
         """
