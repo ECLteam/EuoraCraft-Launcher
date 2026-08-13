@@ -4,10 +4,11 @@ import logging
 import sys
 from enum import IntEnum
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from ECL.adapters import Adapter
-from ECL.application import ApplicationContext, create_application
+from ECL.application import ApplicationContext, ApplicationState, create_application
 from ECL.common import __version__, __version_type__, get_runtime_info
 from ECL.services.maintenance import apply_pending_debug_maintenance
 from ECL.utils import configure_logging
@@ -79,6 +80,7 @@ class EuoraCraftLauncher:
         """
         执行启动维护任务并构造后端应用上下文。
         """
+        started = perf_counter()
         self.logger.info("正在初始化")
         if sys.platform not in {"win32", "linux", "darwin"}:
             raise RuntimeError(f"不支持的系统环境: {sys.platform}")
@@ -94,7 +96,7 @@ class EuoraCraftLauncher:
             for result in maintenance_results:
                 self.logger.warning("已执行调试维护操作 %s，备份位置: %s", result.action, result.backup_path or "无")
 
-        self.context = create_application(self.runtime_info)
+        self.context = create_application(self.runtime_info, on_state_ready=self._apply_bootstrap_state)
         self.config = self.context.state.config
         self.debug = self.context.state.debug
         if self.debug:
@@ -106,7 +108,18 @@ class EuoraCraftLauncher:
             type(self.context.game).__name__,
             type(self.context.plugins).__name__,
         )
-        self.logger.info("后端初始化完成")
+        self.logger.info("后端初始化完成，total=%.2fs", perf_counter() - started)
+
+    def _apply_bootstrap_state(self, state: ApplicationState) -> None:
+        """
+        在服务和插件构造前应用启动配置，使 Debug 日志立即进入终端。
+
+        :param state: 已读取持久化配置、但尚未构造业务服务的应用状态
+        """
+        self.config = state.config
+        self.debug = state.debug
+        self.logging.set_level(logging.DEBUG if state.debug else logging.INFO)
+        self.logger.debug("启动阶段日志级别已应用: debug=%s", state.debug)
 
     def _require_context(self) -> ApplicationContext:
         """

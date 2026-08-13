@@ -15,6 +15,8 @@ def test_version_stats_store_creates_defaults_and_accumulates_runs(tmp_path) -> 
         "launchCount": 0,
         "lastRunDurationSeconds": 0,
         "totalRunDurationSeconds": 0,
+        "lastLaunchedAt": None,
+        "externalSnapshots": {},
     }
 
     store.record_launch(game_path, "1.21.8")
@@ -22,11 +24,12 @@ def test_version_stats_store_creates_defaults_and_accumulates_runs(tmp_path) -> 
     store.record_duration(game_path, "1.21.8", 65)
     store.record_duration(game_path, "1.21.8", 5)
 
-    assert json.loads((version_path / "eclversion.json").read_text(encoding="utf-8")) == {
-        "launchCount": 2,
-        "lastRunDurationSeconds": 5,
-        "totalRunDurationSeconds": 70,
-    }
+    stats = json.loads((version_path / "eclversion.json").read_text(encoding="utf-8"))
+    assert stats["launchCount"] == 2
+    assert stats["lastRunDurationSeconds"] == 5
+    assert stats["totalRunDurationSeconds"] == 70
+    assert stats["lastLaunchedAt"]
+    assert stats["externalSnapshots"] == {}
 
 
 def test_version_stats_store_recovers_malformed_file_on_next_write(tmp_path) -> None:
@@ -41,8 +44,9 @@ def test_version_stats_store_recovers_malformed_file_on_next_write(tmp_path) -> 
 
     store.record_launch(game_path, "broken")
 
-    assert json.loads(stats_file.read_text(encoding="utf-8")) == {
-        "launchCount": 1,
-        "lastRunDurationSeconds": 0,
-        "totalRunDurationSeconds": 0,
-    }
+    recovered = json.loads(stats_file.read_text(encoding="utf-8"))
+    assert recovered["launchCount"] == 1
+    assert recovered["lastRunDurationSeconds"] == 0
+    assert recovered["totalRunDurationSeconds"] == 0
+    assert recovered["lastLaunchedAt"]
+    assert recovered["externalSnapshots"] == {}

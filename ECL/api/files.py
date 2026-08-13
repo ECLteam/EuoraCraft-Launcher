@@ -481,6 +481,9 @@ class FileHandlers(_FrontendState):
         elif request.purpose == ImagePurpose.CAPE:
             title = "选择 Minecraft 披风"
             extensions = ["png"]
+        elif request.purpose == ImagePurpose.INSTANCE_ICON:
+            title = "选择实例图标"
+            extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
         else:
             title = "选择背景图片"
             extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
@@ -506,6 +509,28 @@ class FileHandlers(_FrontendState):
         self.logger.info("文件选择结果: %s", path)
         return {"success": True, "data": {"path": path}}
 
+    @_ipc_handler("SELECT_FILES_ERROR")
+    async def select_files(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        按实例工作台用途选择多个本地文件。
+        """
+        try:
+            request = FileSelectionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        if self._webview is None:
+            return success({"paths": []})
+
+        def pick_files():
+            dialog = DialogExt.file(self._webview)
+            if request.purpose == FileSelectionPurpose.RESOURCE_FILES:
+                return dialog.blocking_pick_files(add_filter=("资源文件", ["jar", "zip", "disabled", "schem", "litematic"]))
+            return dialog.blocking_pick_files(set_title="选择文件")
+
+        selected = await to_thread.run_sync(pick_files)
+        paths = [self._normalize_file_path(str(path)) for path in (selected or [])]
+        return success({"paths": paths})
+
     @_ipc_handler("SELECT_SAVE_FILE_ERROR")
     async def select_save_file(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -523,11 +548,25 @@ class FileHandlers(_FrontendState):
         if request.purpose == FileSavePurpose.CRASH_REPORT:
             title = "保存 Minecraft 崩溃报告"
             default_name = "EuoraCraft-crash-report.zip"
-        else:
+        elif request.purpose == FileSavePurpose.LAUNCHER_LOGS:
             title = "保存 EuoraCraft 启动器日志"
             default_name = "EuoraCraft-logs.zip"
-        selected = await self._pick_save_path(title, default_name, ["zip"])
-        if selected and Path(selected).suffix.casefold() != ".zip":
+        elif request.purpose == FileSavePurpose.WORLD_EXPORT:
+            title, default_name = "导出 Minecraft 存档", "world.zip"
+        elif request.purpose == FileSavePurpose.INSTANCE_EXPORT:
+            title, default_name = "导出实例整合包", "instance.zip"
+        elif request.purpose == FileSavePurpose.SCREENSHOT:
+            title, default_name = "另存 Minecraft 截图", "screenshot.png"
+        else:
+            title, default_name = "导出资源清单", "resources.json"
+        if request.purpose == FileSavePurpose.RESOURCE_MANIFEST:
+            extensions = ["json", "csv"]
+        elif request.purpose == FileSavePurpose.SCREENSHOT:
+            extensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp"]
+        else:
+            extensions = ["zip"]
+        selected = await self._pick_save_path(title, default_name, extensions)
+        if selected and request.purpose not in {FileSavePurpose.RESOURCE_MANIFEST, FileSavePurpose.SCREENSHOT} and Path(selected).suffix.casefold() != ".zip":
             selected = str(Path(selected).with_suffix(".zip"))
         self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
         return success({"path": selected})

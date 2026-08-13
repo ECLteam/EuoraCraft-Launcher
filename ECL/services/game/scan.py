@@ -9,6 +9,7 @@ from typing import Any
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
+from .instance_compat import InstanceCompatibilityReader
 
 
 class ScanCoordinator(_GameState):
@@ -101,11 +102,43 @@ class ScanCoordinator(_GameState):
         return str(game_path.resolve(strict=False)).casefold()
 
     @staticmethod
-    def _version_directory_snapshot(game_path: Path) -> tuple[tuple[str, int, int], ...]:
+    def _version_metadata_snapshot(version_directory: Path) -> list[tuple[str, int, int]]:
+        records: list[tuple[str, int, int]] = []
+        candidates = list(version_directory.glob("*.json"))
+        candidates.extend(
+            (
+                version_directory / "eclversion.json",
+                version_directory / ".ecl" / "instance.json",
+                version_directory / "PCL" / "Setup.ini",
+                version_directory / "PCL" / "Logo.png",
+                version_directory / ".hmcl" / "config" / "instance-game-settings.json",
+            )
+        )
+        for pattern in ("icon.*", ".ecl/icon.*"):
+            candidates.extend(version_directory.glob(pattern))
+        seen: set[str] = set()
+        for candidate in candidates:
+            relative_path = str(candidate.relative_to(version_directory))
+            if relative_path in seen or not candidate.is_file():
+                continue
+            seen.add(relative_path)
+            try:
+                stat = candidate.stat()
+            except OSError:
+                continue
+            records.append((relative_path, stat.st_mtime_ns, stat.st_size))
+        return records
+
+    @staticmethod
+    def _version_directory_snapshot(
+        game_path: Path,
+        qomicex_path: str | Path | None = None,
+    ) -> tuple[tuple[str, int, int], ...]:
         """
         生成轻量版本目录快照，只跟踪目录项和直接 JSON 文件。
 
         :param game_path: Minecraft 游戏根目录
+        :param qomicex_path: 可选的 Qomicex 手动数据文件或目录
         """
         versions_path = game_path / "versions"
         records: list[tuple[str, int, int]] = []
@@ -127,21 +160,24 @@ class ScanCoordinator(_GameState):
         for version_directory in version_directories:
             append_stat(f"{version_directory.name}/", version_directory)
             try:
-                json_files = version_directory.glob("*.json")
-                for json_file in json_files:
-                    if json_file.is_file():
-                        append_stat(f"{version_directory.name}/{json_file.name}", json_file)
+                for relative_path, modified_ns, size in ScanCoordinator._version_metadata_snapshot(version_directory):
+                    records.append((f"{version_directory.name}/{relative_path}", modified_ns, size))
             except OSError:
                 continue
+        resolved_qomicex = InstanceCompatibilityReader.resolve_qomicex_path(qomicex_path)
+        if resolved_qomicex is not None:
+            append_stat("@qomicex/instances.json", resolved_qomicex)
         return tuple(sorted(records))
 
-    def _watch_version_path(self, game_path: Path) -> str:
+    def _watch_version_path(self, game_path: Path, qomicex_path: str | Path | None = None) -> str:
         key = self._version_path_key(game_path)
-        snapshot = self._version_directory_snapshot(game_path)
+        resolved_qomicex = InstanceCompatibilityReader.resolve_qomicex_path(qomicex_path)
+        snapshot = self._version_directory_snapshot(game_path, resolved_qomicex)
         thread: Thread | None = None
         with self._lock:
             previous_snapshot = self._version_watch_snapshots.get(key)
             self._version_watch_paths[key] = game_path
+            self._version_watch_qomicex_paths[key] = resolved_qomicex
             self._version_watch_snapshots[key] = snapshot
             if previous_snapshot is not None and previous_snapshot != snapshot:
                 self._version_scan_cache.pop(key, None)
@@ -163,7 +199,9 @@ class ScanCoordinator(_GameState):
 
         changed_paths: list[str] = []
         for key, game_path in watched_paths:
-            snapshot = self._version_directory_snapshot(game_path)
+            with self._lock:
+                qomicex_path = self._version_watch_qomicex_paths.get(key)
+            snapshot = self._version_directory_snapshot(game_path, qomicex_path)
             with self._lock:
                 if key not in self._version_watch_paths:
                     continue
@@ -189,7 +227,11 @@ class ScanCoordinator(_GameState):
             except Exception:
                 self.logger.exception("监视 Minecraft 版本目录失败")
 
-    def _scan_game_path(self, game_path: Path) -> list[dict[str, Any]]:
+    def _scan_game_path(
+        self,
+        game_path: Path,
+        qomicex_path: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
         versions_path = game_path / "versions"
         if not versions_path.is_dir():
             self.logger.debug("跳过不存在的版本目录: %s", versions_path)
@@ -206,34 +248,51 @@ class ScanCoordinator(_GameState):
             for version_name, info in versions.items()
             if isinstance(version_name, str) and version_name.strip()
         ]
+        enriched_versions: list[dict[str, Any]] = []
         for version in normalized_versions:
             version_id = str(version.get("versionId") or "").strip()
             if version_id:
                 self._version_stats.ensure(game_path, version_id)
-        return normalized_versions
+                try:
+                    version = self._instance_profiles.enrich_version(
+                        game_path,
+                        version,
+                        qomicex_path=qomicex_path,
+                    )
+                except (OSError, TypeError, ValueError):
+                    self.logger.exception("合并实例资料失败: %s/%s", game_path, version_id)
+            enriched_versions.append(version)
+        return enriched_versions
 
-    def scan_versions(self, paths: Any, *, force: bool = False) -> list[dict[str, Any]]:
+    def scan_versions(
+        self,
+        paths: Any,
+        *,
+        force: bool = False,
+        qomicex_path: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
         """
         扫描 Minecraft 目录；目录未变化时复用缓存结果。
 
         :param paths: 用户指定的扫描路径列表
         :param force: 是否忽略有效缓存并重新扫描
+        :param qomicex_path: 可选的 Qomicex ``instances.json`` 手动路径
         """
         scanned_versions: list[dict[str, Any]] = []
         normalized_paths = list(self._normalize_scan_paths(paths))
         self.logger.debug("开始扫描版本目录，共 %d 个路径，force=%s", len(normalized_paths), force)
         for game_path in normalized_paths:
-            key = self._watch_version_path(game_path)
+            key = self._watch_version_path(game_path, qomicex_path)
             # 确保每个游戏路径下都有 ecl.json
             self._ensure_ecl_config(game_path)
             with self._lock:
                 cached_versions = None if force else self._version_scan_cache.get(key)
             if cached_versions is None:
                 self.logger.debug("扫描版本目录: %s", game_path)
-                versions = self._scan_game_path(game_path)
+                versions = self._scan_game_path(game_path, qomicex_path)
                 with self._lock:
                     self._version_scan_cache[key] = deepcopy(versions)
-                    self._version_watch_snapshots[key] = self._version_directory_snapshot(game_path)
+                    self._version_watch_snapshots[key] = self._version_directory_snapshot(game_path, qomicex_path)
                     self._version_watch_pending.pop(key, None)
             else:
                 self.logger.debug("扫描版本目录: %s，共 %d 个版本", game_path, len(cached_versions))

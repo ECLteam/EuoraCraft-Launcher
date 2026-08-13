@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from anyio.from_thread import start_blocking_portal
@@ -32,18 +33,29 @@ class Adapter:
         """
         启动 Tauri 前端。
         """
+        started = perf_counter()
         self.logger.info("正在初始化前端适配器")
         self._register_commands()
         self._register_events()
         tauri_config = self._build_config()
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
+            phase_started = perf_counter()
+            self.logger.debug("正在创建 Tauri 运行上下文")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
+            self.logger.debug("Tauri 运行上下文已创建，duration=%.2fs", perf_counter() - phase_started)
+            phase_started = perf_counter()
+            self.logger.debug("正在构建 Tauri 应用")
             app = builder_factory().build(
                 context=context,
                 invoke_handler=self.commands.generate_handler(portal),
                 plugins=[dialog_init()],
             )
-            self.logger.info("前端适配器初始化完成")
+            self.logger.info(
+                "前端适配器初始化完成，build=%.2fs，total=%.2fs",
+                perf_counter() - phase_started,
+                perf_counter() - started,
+            )
+            self.logger.info("Tauri 主循环已启动，正在等待前端就绪")
             app.run_return()
         self.logger.info("前端已退出")
 
@@ -70,12 +82,17 @@ class Adapter:
 
     def _register_commands(self) -> None:
         api = self.frontend_api_instance
-        for name, handler in command_handlers(api).items():
+        logger = getattr(self, "logger", get_logger("Adapter"))
+        handlers = command_handlers(api)
+        for name, handler in handlers.items():
             self.commands.command(name)(handler)
+        logger.debug("IPC 命令注册完成: count=%d", len(handlers))
 
     def _register_events(self) -> None:
         api = self.frontend_api_instance
         bus = self.events
+        logger = getattr(self, "logger", get_logger("Adapter"))
+        logger.debug("正在注册后端到前端的事件转发")
 
         bus.subscribe(
             "config:updated",
@@ -110,6 +127,10 @@ class Adapter:
         bus.subscribe(
             "game:instances_changed",
             lambda payload: api.emit_to_frontend("game:instances_changed", payload),
+        )
+        bus.subscribe(
+            "game:operation_progress",
+            lambda payload: api.emit_to_frontend("game:operation_progress", payload),
         )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
@@ -201,6 +222,7 @@ class Adapter:
                 },
             ),
         )
+        logger.debug("后端到前端的事件转发注册完成")
 
     def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:
         if data.get("focus"):

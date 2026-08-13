@@ -497,11 +497,11 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
         }
     ]
     stats_file = version_path / "eclversion.json"
-    assert json.loads(stats_file.read_text(encoding="utf-8")) == {
-        "launchCount": 1,
-        "lastRunDurationSeconds": 0,
-        "totalRunDurationSeconds": 0,
-    }
+    launch_stats = json.loads(stats_file.read_text(encoding="utf-8"))
+    assert launch_stats["launchCount"] == 1
+    assert launch_stats["lastRunDurationSeconds"] == 0
+    assert launch_stats["totalRunDurationSeconds"] == 0
+    assert launch_stats["lastLaunchedAt"]
 
     exit_callback = instances.created["exit_callback"]
     clock[0] = 142.9
@@ -509,11 +509,10 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     exit_callback(1, "1.21.8")
 
     assert service.list_instances() == []
-    assert service.get_version_stats(game_path, "1.21.8") == {
-        "launchCount": 1,
-        "lastRunDurationSeconds": 42,
-        "totalRunDurationSeconds": 42,
-    }
+    settled_stats = service.get_version_stats(game_path, "1.21.8")
+    assert settled_stats["launchCount"] == 1
+    assert settled_stats["lastRunDurationSeconds"] == 42
+    assert settled_stats["totalRunDurationSeconds"] == 42
     deadline = time.monotonic() + 3
     while not crashes and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -536,11 +535,10 @@ def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(
 
     assert instances.shutdown_calls == []
     assert instances.items[0]["Instance"].running is True
-    assert service.get_version_stats(game_path, "1.21.8") == {
-        "launchCount": 1,
-        "lastRunDurationSeconds": 15,
-        "totalRunDurationSeconds": 15,
-    }
+    stats = service.get_version_stats(game_path, "1.21.8")
+    assert stats["launchCount"] == 1
+    assert stats["lastRunDurationSeconds"] == 15
+    assert stats["totalRunDurationSeconds"] == 15
 
 
 def test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, monkeypatch) -> None:
@@ -556,11 +554,10 @@ def test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, mon
     assert instances.items[0]["Instance"].running is False
     assert instances.exit_requests == [(result["instanceId"], {"wait_timeout": 3.0})]
     assert crashes == []
-    assert service.get_version_stats(game_path, "1.21.8") == {
-        "launchCount": 1,
-        "lastRunDurationSeconds": 8,
-        "totalRunDurationSeconds": 8,
-    }
+    stats = service.get_version_stats(game_path, "1.21.8")
+    assert stats["launchCount"] == 1
+    assert stats["lastRunDurationSeconds"] == 8
+    assert stats["totalRunDurationSeconds"] == 8
 
 
 def test_clean_exit_after_startup_marker_does_not_trigger_crash(tmp_path, monkeypatch) -> None:
@@ -812,11 +809,10 @@ def test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None
     clock[0] = 140.0
     instances.exit_instance(first["instanceId"])
 
-    assert service.get_version_stats(game_path, "1.21.8") == {
-        "launchCount": 2,
-        "lastRunDurationSeconds": 40,
-        "totalRunDurationSeconds": 55,
-    }
+    stats = service.get_version_stats(game_path, "1.21.8")
+    assert stats["launchCount"] == 2
+    assert stats["lastRunDurationSeconds"] == 40
+    assert stats["totalRunDurationSeconds"] == 55
     service.close()
 
 

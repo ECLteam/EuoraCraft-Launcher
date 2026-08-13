@@ -19,6 +19,12 @@ from ECL.api.models import (
     GameUninstallRequest,
     GameVersionRequest,
     InstallRequest,
+    InstanceCategoryDeleteRequest,
+    InstanceCategoryUpsertRequest,
+    InstanceIconRequest,
+    InstancePinOrderRequest,
+    InstanceProfilePatchRequest,
+    InstanceProfileResetRequest,
     LaunchRequest,
     LoaderCatalogRequest,
 )
@@ -96,11 +102,19 @@ class GameHandlers(_FrontendState):
             return self._invalid_request(exc)
         paths = request.paths
         if paths is None:
-            configured_paths = (self._get_effective_config().get("game") or {}).get("minecraft_paths") or []
+            game_config = self._get_effective_config().get("game") or {}
+            configured_paths = game_config.get("minecraft_paths") or []
             paths = [item.get("path") if isinstance(item, dict) else item for item in configured_paths]
-        versions = await to_thread.run_sync(
-            lambda: self.game.scan_versions([str(path) for path in paths if path], force=request.force)
-        )
+        else:
+            game_config = self._get_effective_config().get("game") or {}
+        scan_paths = [str(path) for path in paths if path]
+        qomicex_path = game_config.get("qomicex_instances_path")
+        if qomicex_path:
+            versions = await to_thread.run_sync(
+                lambda: self.game.scan_versions(scan_paths, force=request.force, qomicex_path=qomicex_path)
+            )
+        else:
+            versions = await to_thread.run_sync(lambda: self.game.scan_versions(scan_paths, force=request.force))
         return success(versions)
 
     @_ipc_handler("VERSION_INSTALL_FAILED")
@@ -138,7 +152,7 @@ class GameHandlers(_FrontendState):
             request = GameUninstallRequest.model_validate(body)
         except ValidationError as exc:
             return self._invalid_request(exc)
-        await to_thread.run_sync(self.game.uninstall_version, request.version_id, request.game_path)
+        await to_thread.run_sync(self.game.delete_instance_to_trash, request.game_path, request.version_id)
         return success()
 
     @_ipc_handler("GAME_CONFIG_FAILED")
@@ -209,6 +223,147 @@ class GameHandlers(_FrontendState):
             return self._invalid_request(exc)
         return success(await to_thread.run_sync(self.game.get_version_stats, request.game_path, request.version_id))
 
+    @_ipc_handler("INSTANCE_PROFILE_FAILED")
+    async def game_instance_profile_get(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        读取单个实例的 ECL 原始覆盖资料。
+
+        :param body: 符合 ``GameVersionRequest`` 的实例目标
+        :return: 未自动补齐字段的原始实例资料
+        """
+        try:
+            request = GameVersionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(await to_thread.run_sync(self.game.get_instance_profile, request.game_path, request.version_id))
+
+    @_ipc_handler("INSTANCE_PROFILE_FAILED")
+    async def game_instance_profile_patch(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        合并保存实例资料覆盖字段。
+
+        :param body: 符合 ``InstanceProfilePatchRequest`` 的增量资料
+        :return: 保存后的原始实例资料
+        """
+        try:
+            request = InstanceProfilePatchRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        patch = request.patch.model_dump(mode="json", exclude_unset=True, by_alias=True)
+        return success(
+            await to_thread.run_sync(
+                self.game.patch_instance_profile,
+                request.game_path,
+                request.version_id,
+                patch,
+            )
+        )
+
+    @_ipc_handler("INSTANCE_PROFILE_FAILED")
+    async def game_instance_profile_reset(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        删除指定实例覆盖字段，使其恢复自动解析。
+
+        :param body: 符合 ``InstanceProfileResetRequest`` 的字段列表
+        :return: 保存后的原始实例资料
+        """
+        try:
+            request = InstanceProfileResetRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(
+            await to_thread.run_sync(
+                self.game.reset_instance_profile,
+                request.game_path,
+                request.version_id,
+                request.fields,
+            )
+        )
+
+    @_ipc_handler("INSTANCE_ICON_FAILED")
+    async def game_instance_icon_set(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        设置实例自动、内置、加载器或本地图片图标。
+
+        :param body: 符合 ``InstanceIconRequest`` 的图标选择
+        :return: 保存后的原始实例资料
+        """
+        try:
+            request = InstanceIconRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(
+            await to_thread.run_sync(
+                self.game.set_instance_icon,
+                request.game_path,
+                request.version_id,
+                request.icon_type.value,
+                request.value,
+                request.source_path,
+            )
+        )
+
+    @_ipc_handler("INSTANCE_PROFILE_FAILED")
+    async def game_instance_pin_order_set(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        保存全部置顶实例的拖拽顺序。
+
+        :param body: 符合 ``InstancePinOrderRequest`` 的有序实例列表
+        :return: 空的成功响应
+        """
+        try:
+            request = InstancePinOrderRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        entries = [entry.model_dump(mode="json") for entry in request.entries]
+        await to_thread.run_sync(self.game.set_instance_pin_order, entries)
+        return success()
+
+    async def game_instance_categories_get(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        返回内置与用户自定义实例分类。
+        """
+        if body:
+            return failure("game_instance_categories_get 不接受请求参数", "INVALID_REQUEST")
+        return success(await to_thread.run_sync(self.game.get_instance_categories))
+
+    @_ipc_handler("INSTANCE_CATEGORY_FAILED")
+    async def game_instance_categories_upsert(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        新建或更新用户自定义实例分类。
+
+        :param body: 符合 ``InstanceCategoryUpsertRequest`` 的分类数据
+        :return: 保存后的分类
+        """
+        try:
+            request = InstanceCategoryUpsertRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(
+            await to_thread.run_sync(
+                self.game.upsert_instance_category,
+                request.category_id,
+                request.name,
+                request.color,
+                request.order,
+            )
+        )
+
+    @_ipc_handler("INSTANCE_CATEGORY_FAILED")
+    async def game_instance_categories_delete(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        删除用户自定义实例分类。
+
+        :param body: 符合 ``InstanceCategoryDeleteRequest`` 的分类 ID
+        :return: 空的成功响应
+        """
+        try:
+            request = InstanceCategoryDeleteRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        await to_thread.run_sync(self.game.delete_instance_category, request.category_id)
+        return success()
+
     @_ipc_handler("GAME_LAUNCH_FAILED")
     async def game_launch(self, body: dict[str, Any]) -> ApiResponse:
         """
@@ -226,6 +381,17 @@ class GameHandlers(_FrontendState):
         game_path = values.pop("game_path")
         source = values.pop("source")
         java_path = values.pop("java_path")
+        quick_target = values.pop("quick_target", None)
+        if quick_target:
+            values["game_args"] = [
+                *values.get("game_args", []),
+                *self.game.quick_launch_arguments(
+                    game_path,
+                    version_id,
+                    quick_target,
+                    values.get("version_isolation", False),
+                ),
+            ]
         result = await self.game.launch_instance(
             {"version_id": version_id},
             game_path=game_path,

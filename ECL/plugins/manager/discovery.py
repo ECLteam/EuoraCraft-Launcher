@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from ECL.plugins.dependencies import (
@@ -102,6 +103,7 @@ class PluginDiscovery(_PluginState):
             self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
 
     def _load_plugin(self, plugin_dir: Path, metadata_path: Path, is_system: bool) -> None:
+        started = perf_counter()
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -114,6 +116,13 @@ class PluginDiscovery(_PluginState):
             self.logger.warning("插件 %s 重复，跳过", name)
             return
         entry_point = metadata.get("entry_point", "main:Plugin")
+        self.logger.debug(
+            "开始加载插件: name=%s, entry_point=%s, system=%s, path=%s",
+            name,
+            entry_point,
+            is_system,
+            plugin_dir,
+        )
         # 在实例化之前注册权限声明，使 __init__ 中的装饰器注册能立即生效
         permissions_meta = metadata.get("permissions", [])
         self._permission_manager.register_plugin_permissions(name, permissions_meta)
@@ -136,7 +145,7 @@ class PluginDiscovery(_PluginState):
         self._plugins[name] = plugin
         self._status[name] = "loaded"
         self._call_plugin_hook(plugin, "on_load")
-        self.logger.info("插件已加载: %s v%s", name, plugin.version)
+        self.logger.info("插件已加载: %s v%s，duration=%.2fs", name, plugin.version, perf_counter() - started)
 
     def _create_instance(
         self, name: str, plugin_dir: Path, metadata: dict[str, Any], entry_point: str, is_system: bool
@@ -172,8 +181,12 @@ class PluginDiscovery(_PluginState):
         :param method_name: 需要调用的插件生命周期方法名
         :param fail_status: 调用失败时记录的插件状态
         """
+        started = perf_counter()
+        succeeded = False
+        self.logger.debug("开始执行插件钩子: plugin=%s, hook=%s", plugin.name, method_name)
         try:
             getattr(plugin, method_name)()
+            succeeded = True
             return True
         except PermissionError as exc:
             detail = str(exc)
@@ -187,3 +200,21 @@ class PluginDiscovery(_PluginState):
             if fail_status is not None:
                 self._status[plugin.name] = fail_status
             return False
+        finally:
+            duration = perf_counter() - started
+            if duration >= 2.0:
+                self.logger.warning(
+                    "插件钩子执行缓慢: plugin=%s, hook=%s, success=%s, duration=%.2fs",
+                    plugin.name,
+                    method_name,
+                    succeeded,
+                    duration,
+                )
+            else:
+                self.logger.debug(
+                    "插件钩子执行完成: plugin=%s, hook=%s, success=%s, duration=%.2fs",
+                    plugin.name,
+                    method_name,
+                    succeeded,
+                    duration,
+                )

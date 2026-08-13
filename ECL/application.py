@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -84,16 +86,21 @@ class ApplicationContext:
             logger.debug("应用上下文已关闭")
 
 
-def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
+def create_application(
+    runtime_info: RuntimeInfo,
+    *,
+    on_state_ready: Callable[[ApplicationState], None] | None = None,
+) -> ApplicationContext:
     """
     构造一次应用运行所需的完整后端依赖图。
 
     初始化中途失败时，本函数会按逆序释放已经创建的资源，再将原始异常抛给启动器。
 
     :param runtime_info: 运行目录、资源目录和打包状态
+    :param on_state_ready: 配置读取后、服务构造前的可选回调，用于提前应用日志级别
     :return: 负责后端依赖与资源生命周期的应用上下文
     """
-
+    startup_started = perf_counter()
     state = ApplicationState(
         app_path=runtime_info["app_path"],
         resource_path=runtime_info["resource_path"],
@@ -105,6 +112,8 @@ def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
     config = ConfigStore(state.data_path, events)
     state.config = environment.apply_to_config(config.get_config())
     state.debug = bool((state.config.get("launcher") or {}).get("debug"))
+    if on_state_ready is not None:
+        on_state_ready(state)
     logger.debug(
         "正在构造后端依赖图: data_path=%s, frozen=%s, debug=%s",
         state.data_path,
@@ -114,30 +123,50 @@ def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
 
     created: list[Any] = []
     try:
+        phase_started = perf_counter()
+        logger.debug("正在创建共享 HTTP 客户端")
         http = httpx.Client(
             timeout=httpx.Timeout(30, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
         )
         created.append(http)
-        logger.debug("共享 HTTP 客户端已创建")
+        logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
+
+        phase_started = perf_counter()
+        logger.info("正在初始化账户服务")
         accounts = AccountManager(
             state.data_path,
             microsoft_client_id=environment.get_value("MICROSOFT_CLIENT_ID"),
             event_bus=events,
         )
         created.append(accounts)
-        logger.debug("账户服务已创建，Microsoft 登录可用=%s", accounts.microsoft_login_config()["available"])
+        logger.info(
+            "账户服务初始化完成，duration=%.2fs，Microsoft 登录可用=%s",
+            perf_counter() - phase_started,
+            accounts.microsoft_login_config()["available"],
+        )
+
+        phase_started = perf_counter()
         wardrobe = WardrobeStore(state.data_path)
-        logger.debug("本地衣柜已创建，条目数=%s", len(wardrobe.list_items()))
+        logger.debug(
+            "本地衣柜已创建，条目数=%s，duration=%.2fs",
+            len(wardrobe.list_items()),
+            perf_counter() - phase_started,
+        )
         info_card = InfoCardManager(state.data_path, http_client=http)
+
+        phase_started = perf_counter()
+        logger.info("正在初始化游戏服务")
         game = GameService(accounts, data_path=state.data_path, event_bus=events)
         created.append(game)
-        logger.debug("游戏服务已创建")
+        logger.info("游戏服务初始化完成，duration=%.2fs", perf_counter() - phase_started)
+
+        phase_started = perf_counter()
         plugins = PluginManager(events)
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
-        logger.debug("插件管理器已初始化")
+        logger.debug("插件管理器已初始化，duration=%.2fs", perf_counter() - phase_started)
     except Exception:
         logger.exception("后端依赖图构造失败，正在回收已创建的资源")
         for resource in reversed(created):
@@ -174,6 +203,7 @@ def create_application(runtime_info: RuntimeInfo) -> ApplicationContext:
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
+    logger.info("后端依赖图构造完成，total=%.2fs", perf_counter() - startup_started)
     return context
 
 

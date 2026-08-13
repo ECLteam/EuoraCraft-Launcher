@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
@@ -36,15 +37,37 @@ class ImagePurpose(StrEnum):
     BACKGROUND = "background"
     SKIN = "skin"
     CAPE = "cape"
+    INSTANCE_ICON = "instance_icon"
+
+
+class InstanceExternalSource(StrEnum):
+    AUTO = "auto"
+    PCL = "pcl"
+    HMCL = "hmcl"
+    QOMICEX = "qomicex"
+
+
+class InstanceIconType(StrEnum):
+    AUTO = "auto"
+    BUILTIN = "builtin"
+    LOADER = "loader"
+    LOCAL = "local"
 
 
 class FileSelectionPurpose(StrEnum):
     CRASH_ANALYSIS = "crash-analysis"
+    RESOURCE_FILES = "resource-files"
+    MODPACK = "modpack"
+    WORLD_IMPORT = "world-import"
 
 
 class FileSavePurpose(StrEnum):
     CRASH_REPORT = "crash-report"
     LAUNCHER_LOGS = "launcher-logs"
+    WORLD_EXPORT = "world-export"
+    INSTANCE_EXPORT = "instance-export"
+    RESOURCE_MANIFEST = "resource-manifest"
+    SCREENSHOT = "screenshot"
 
 
 class SettingsQuery(RequestModel):
@@ -126,6 +149,67 @@ class GameVersionRequest(GamePathRequest):
     version_id: str = Field(min_length=1)
 
 
+class InstanceProfilePatchData(RequestModel):
+    alias: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    favorite: bool | None = None
+    pinned: bool | None = None
+    hidden: bool | None = None
+    category_id: str | None = Field(default=None, alias="categoryId", min_length=1, max_length=64)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    pin_order: int | None = Field(default=None, alias="pinOrder", ge=0)
+    preferred_external_source: InstanceExternalSource | None = Field(default=None, alias="preferredExternalSource")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and any(not tag.strip() or len(tag.strip()) > 40 for tag in value):
+            raise ValueError("标签不能为空且不能超过 40 个字符")
+        return value
+
+
+class InstanceProfilePatchRequest(GameVersionRequest):
+    patch: InstanceProfilePatchData
+
+
+class InstanceProfileResetRequest(GameVersionRequest):
+    fields: list[str] = Field(min_length=1)
+
+
+class InstanceIconRequest(GameVersionRequest):
+    icon_type: InstanceIconType
+    value: str | None = Field(default=None, max_length=80)
+    source_path: Path | None = None
+
+    @model_validator(mode="after")
+    def validate_icon_input(self):
+        if self.icon_type == InstanceIconType.LOCAL and self.source_path is None:
+            raise ValueError("本地图标需要 source_path")
+        if self.icon_type in {InstanceIconType.BUILTIN, InstanceIconType.LOADER} and not self.value:
+            raise ValueError("内置或加载器图标需要 value")
+        return self
+
+
+class InstancePinEntry(RequestModel):
+    game_path: Path
+    version_id: str = Field(min_length=1)
+
+
+class InstancePinOrderRequest(RequestModel):
+    entries: list[InstancePinEntry]
+
+
+class InstanceCategoryUpsertRequest(RequestModel):
+    category_id: str | None = Field(default=None, min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=40)
+    color: str = Field(pattern=r"^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$")
+    order: int = Field(default=50, ge=0, le=100000)
+
+
+class InstanceCategoryDeleteRequest(RequestModel):
+    category_id: str = Field(min_length=1, max_length=64)
+
+
 class GameInstanceRequest(RequestModel):
     instance_id: str = Field(min_length=1)
 
@@ -174,6 +258,16 @@ class InstallRequest(RequestModel):
         return value
 
 
+class WorldQuickTarget(RequestModel):
+    type: Literal["world"]
+    world_id: str = Field(min_length=1, max_length=255)
+
+
+class ServerQuickTarget(RequestModel):
+    type: Literal["server"]
+    address: str = Field(min_length=1, max_length=255)
+
+
 class LaunchRequest(RequestModel):
     version_id: str = Field(min_length=1)
     game_path: Path
@@ -185,6 +279,7 @@ class LaunchRequest(RequestModel):
     jvm_args: list[str] = Field(default_factory=list)
     game_args: list[str] = Field(default_factory=list)
     version_isolation: bool = False
+    quick_target: Annotated[WorldQuickTarget | ServerQuickTarget, Field(discriminator="type")] | None = None
 
     @field_validator("game_path", "java_path", mode="before")
     @classmethod
@@ -192,6 +287,155 @@ class LaunchRequest(RequestModel):
         if isinstance(value, str) and "\0" in value:
             raise ValueError("路径包含非法字符")
         return value
+
+
+class InstanceTarget(RequestModel):
+    game_path: Path
+    version_id: str = Field(min_length=1, max_length=255)
+    version_isolation: bool = False
+
+    @field_validator("version_id")
+    @classmethod
+    def validate_version_id(cls, value: str) -> str:
+        if value in {".", ".."} or Path(value).name != value or any(char in value for char in ("/", "\\", "\0")):
+            raise ValueError("实例 ID 格式无效")
+        return value
+
+
+class InstanceFolderRequest(InstanceTarget):
+    folder: Literal["instance", "mods", "saves", "screenshots", "logs", "crash-reports"]
+
+
+class InstanceCloneRequest(InstanceTarget):
+    new_version_id: str = Field(min_length=1, max_length=255)
+
+
+class InstancePackImportRequest(RequestModel):
+    game_path: Path
+    source_path: Path
+    new_version_id: str = Field(min_length=1, max_length=255)
+
+
+class InstancePackExportRequest(InstanceTarget):
+    output_path: Path
+    pack_format: Literal["ecl", "modrinth", "curseforge"]
+    includes: list[Literal["saves", "servers.dat", "screenshots", "logs", "crash-reports"]] = Field(default_factory=list)
+
+
+class OperationRequest(RequestModel):
+    operation_id: str = Field(min_length=32, max_length=64, pattern=r"^[a-f0-9]+$")
+
+
+class WorldRequest(InstanceTarget):
+    world_id: str = Field(min_length=1, max_length=255)
+
+
+class WorldPatchData(RequestModel):
+    difficulty: int | None = Field(default=None, ge=0, le=3)
+    allow_commands: bool | None = Field(default=None, alias="allowCommands")
+    difficulty_locked: bool | None = Field(default=None, alias="difficultyLocked")
+
+
+class WorldPatchRequest(WorldRequest):
+    patch: WorldPatchData
+
+
+class WorldCopyRequest(WorldRequest):
+    new_world_id: str = Field(min_length=1, max_length=255)
+
+
+class WorldTransferRequest(WorldRequest):
+    output_path: Path
+
+
+class WorldIconRequest(WorldRequest):
+    source_path: Path
+
+
+class WorldImportRequest(InstanceTarget):
+    source_path: Path
+
+
+class WorldBackupRequest(WorldRequest):
+    backup_id: str | None = Field(default=None, max_length=80)
+    locked: bool | None = None
+
+
+class ScreenshotRequest(InstanceTarget):
+    screenshot_id: str = Field(min_length=1, max_length=255)
+
+
+class ScreenshotThumbnailRequest(ScreenshotRequest):
+    size: int = Field(default=360, ge=64, le=1024)
+
+
+class ScreenshotSaveRequest(ScreenshotRequest):
+    output_path: Path
+
+
+class ServerUpsertRequest(InstanceTarget):
+    server_id: str | None = None
+    name: str = Field(min_length=1, max_length=120)
+    address: str = Field(min_length=1, max_length=255)
+    favorite: bool = False
+
+
+class ServerIdRequest(InstanceTarget):
+    server_id: str = Field(min_length=1, max_length=20)
+
+
+class ServerOrderRequest(InstanceTarget):
+    server_ids: list[str]
+
+
+class ServerStatusRequest(RequestModel):
+    addresses: list[str] = Field(max_length=64)
+    timeout: float = Field(default=3.0, ge=0.5, le=10.0)
+
+
+class ResourceQuery(InstanceTarget):
+    resource_type: Literal["mod", "resourcepack", "shaderpack", "datapack", "schematic"]
+    world_id: str | None = Field(default=None, max_length=255)
+
+
+class ResourceInstallRequest(ResourceQuery):
+    source_paths: list[Path] = Field(min_length=1, max_length=200)
+
+
+class ResourceToggleRequest(ResourceQuery):
+    resource_id: str = Field(min_length=1, max_length=255)
+    enabled: bool
+
+
+class ResourceDeleteRequest(ResourceQuery):
+    resource_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class ResourceManifestExportRequest(ResourceQuery):
+    output_path: Path
+    output_format: Literal["json", "csv"]
+
+
+class ResourceSearchRequest(RequestModel):
+    query: str = Field(min_length=1, max_length=120)
+    game_version: str = Field(min_length=1, max_length=80)
+    loader: str = Field(min_length=1, max_length=40)
+    source: Literal["modrinth", "curseforge"] = "modrinth"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class ResourceHashRequest(RequestModel):
+    sha512: str = Field(min_length=128, max_length=128, pattern=r"^[a-fA-F0-9]+$")
+
+
+class ResourceUpdateCheckRequest(ResourceQuery):
+    game_version: str = Field(min_length=1, max_length=80)
+    loader: str = Field(min_length=1, max_length=40)
+
+
+class ResourceUpdateRequest(ResourceQuery):
+    resource_id: str = Field(min_length=1, max_length=255)
+    update: dict[str, JsonValue]
 
 
 class WardrobeImportRequest(RequestModel):
@@ -262,6 +506,13 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_config_set": GameConfigUpdate,
     "game_config_patch": GameConfigPatch,
     "game_version_stats": GameVersionRequest,
+    "game_instance_profile_get": GameVersionRequest,
+    "game_instance_profile_patch": InstanceProfilePatchRequest,
+    "game_instance_profile_reset": InstanceProfileResetRequest,
+    "game_instance_icon_set": InstanceIconRequest,
+    "game_instance_pin_order_set": InstancePinOrderRequest,
+    "game_instance_categories_upsert": InstanceCategoryUpsertRequest,
+    "game_instance_categories_delete": InstanceCategoryDeleteRequest,
     "game_instance_stop": GameInstanceRequest,
     "game_crash_analyze": CrashAnalyzeRequest,
     "game_crash_output": CrashReportRequest,
@@ -312,6 +563,12 @@ __all__ = [
     "ImagePurpose",
     "ImageSelectionRequest",
     "InstallRequest",
+    "InstanceCategoryDeleteRequest",
+    "InstanceCategoryUpsertRequest",
+    "InstanceIconRequest",
+    "InstancePinOrderRequest",
+    "InstanceProfilePatchRequest",
+    "InstanceProfileResetRequest",
     "JavaScanRequest",
     "LaunchRequest",
     "LoaderCatalogRequest",

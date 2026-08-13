@@ -29,6 +29,8 @@ from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
 from ECL.utils import get_logger
 
+from .instance_profiles import InstanceProfileStore
+from .operations import GameOperationManager
 from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
@@ -160,6 +162,10 @@ class _GameState:
         # 已启动进程由 InstancesManager 拥有；这里只保存当前会话的展示与统计元数据。
         self._running_games: dict[str, _RunningGame] = {}
         self._version_stats = VersionStatsStore()
+        self._instance_profiles = InstanceProfileStore(self._data_path, self._version_stats)
+        self._game_operations = GameOperationManager(self._data_path, self.events)
+        self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._server_status_lock = RLock()
         from .crash_analysis import CrashAnalyzer
 
         self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path)
@@ -170,6 +176,7 @@ class _GameState:
         # 版本目录监听状态由唯一后台线程使用，所有共享容器仍受同一把锁保护。
         self._version_scan_cache: dict[str, list[dict[str, Any]]] = {}
         self._version_watch_paths: dict[str, Path] = {}
+        self._version_watch_qomicex_paths: dict[str, Path | None] = {}
         self._version_watch_snapshots: dict[str, tuple[tuple[str, int, int], ...]] = {}
         self._version_watch_pending: dict[str, float] = {}
         self._version_watcher_enabled = (
@@ -288,6 +295,7 @@ class _GameState:
             self._version_watch_thread = None
             self._version_scan_cache.clear()
             self._version_watch_paths.clear()
+            self._version_watch_qomicex_paths.clear()
             self._version_watch_snapshots.clear()
             self._version_watch_pending.clear()
             self._active_downloads.clear()
@@ -320,6 +328,7 @@ class _GameState:
             except Exception:
                 self.logger.exception("关闭游戏 API 客户端失败")
         self._crash_executor.shutdown(wait=True, cancel_futures=True)
+        self._game_operations.close()
         self._crash_analyzer.close()
         if self.authlib_injector is not None:
             self.authlib_injector.close()

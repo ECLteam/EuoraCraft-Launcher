@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from ECL.events import EventBus
@@ -60,6 +61,7 @@ class _PluginState:
         :param data_path: 启动器数据目录
         :param resource_path: 启动器只读资源目录
         """
+        started = perf_counter()
         self._data_path = Path(data_path)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
         self._plugin_dir = self._data_path / "plugins"
@@ -67,6 +69,11 @@ class _PluginState:
         self._plugin_config_dir = self._data_path / "plugin_config"
         self._plugin_config_dir.mkdir(parents=True, exist_ok=True)
         self._plugin_state_path = self._data_path / "plugin_state.json"
+        self.logger.info(
+            "正在初始化插件框架: user_dir=%s, system_dir=%s",
+            self._plugin_dir,
+            self._resource_path / "resources" / "system_plugins",
+        )
         self._load_plugin_state()
         # 订阅 HTML 注入事件，收集插槽内容
         if not self._event_handlers_registered:
@@ -75,27 +82,34 @@ class _PluginState:
             self.events.subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = True
 
+        phase_started = perf_counter()
         candidates = self._collect_candidates(self._plugin_dir, is_system=False)
         candidates.extend(
             self._collect_candidates(self._resource_path / "resources" / "system_plugins", is_system=True)
         )
         self.logger.debug(
-            "插件发现完成: candidates=%d, disabled=%d, user_dir=%s",
+            "插件发现完成: candidates=%d, disabled=%d, user_dir=%s, duration=%.2fs",
             len(candidates),
             len(self._disabled_plugins),
             self._plugin_dir,
+            perf_counter() - phase_started,
         )
         self._candidate_map = {c["name"]: c for c in candidates}
+        phase_started = perf_counter()
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
         self.logger.debug(
-            "插件依赖解析完成: load_order=%s, errors=%d",
+            "插件依赖解析完成: load_order=%s, errors=%d, duration=%.2fs",
             self._dependency_resolution.load_order,
             len(self._dependency_resolution.errors),
+            perf_counter() - phase_started,
         )
+        self.logger.info("正在按依赖顺序加载 %d 个插件候选项", len(candidates))
         self._load_plugins_in_order(candidates, self._dependency_resolution.load_order)
+        self.logger.debug("插件加载阶段完成，正在启用已加载插件")
         self._enable_all()
         self.logger.info(
-            "插件框架初始化完成，已加载 %d 个插件，已禁用 %d 个插件",
+            "插件框架初始化完成，已加载 %d 个插件，已禁用 %d 个插件，duration=%.2fs",
             len(self._plugins),
             len(self._disabled_plugins),
+            perf_counter() - started,
         )

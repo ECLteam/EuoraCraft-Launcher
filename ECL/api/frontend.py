@@ -12,9 +12,11 @@ from ECL.api.mods import ModHandlers
 from ECL.api.plugins import PluginHandlers
 from ECL.api.settings import SettingsHandlers
 from ECL.api.system import SystemHandlers
+from ECL.api.workspace import WorkspaceHandlers
 
 
 class FrontendApi(
+    WorkspaceHandlers,
     PluginHandlers,
     ModHandlers,
     FileHandlers,

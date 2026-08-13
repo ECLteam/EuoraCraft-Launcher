@@ -1,0 +1,407 @@
+from __future__ import annotations
+
+import json
+import shutil
+import tempfile
+import zipfile
+from contextlib import suppress
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote_plus
+
+import nbtlib
+from PIL import Image, UnidentifiedImageError
+
+from ECL.utils import atomic_write_text
+
+from .base import GameServiceError
+from .operations import OperationContext
+from .workspace import move_to_trash, resolve_relative_id, safe_extract_zip
+
+
+def _nbt_scalar(value: Any, default: Any = None) -> Any:
+    try:
+        return value.unpack(json=True) if hasattr(value, "unpack") else value
+    except Exception:
+        return default
+
+
+class WorldCoordinator:
+    """
+    管理实例实际游戏目录中的世界、备份与数据包元数据。
+    """
+
+    def _world_root(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> Path:
+        return self.resolve_instance(game_path, version_id, version_isolation).data_path / "saves"
+
+    def _world_path(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> Path:
+        root = self._world_root(game_path, version_id, version_isolation)
+        return resolve_relative_id(root, world_id)
+
+    @staticmethod
+    def _read_world(world_path: Path) -> dict[str, Any]:
+        level_path = world_path / "level.dat"
+        if not level_path.is_file():
+            raise GameServiceError("存档缺少 level.dat", "WORLD_LEVEL_DAT_MISSING")
+        try:
+            root = nbtlib.load(level_path)
+            data = root.get("Data", root)
+        except Exception as exc:
+            raise GameServiceError(f"读取世界数据失败：{exc}", "WORLD_NBT_INVALID") from exc
+        game_type = int(_nbt_scalar(data.get("GameType"), 0) or 0)
+        difficulty = int(_nbt_scalar(data.get("Difficulty"), 2) or 0)
+        version = data.get("Version") or {}
+        version_name = _nbt_scalar(version.get("Name"), "未知") if hasattr(version, "get") else "未知"
+        last_played = int(_nbt_scalar(data.get("LastPlayed"), 0) or 0)
+        modified = world_path.stat().st_mtime
+        return {
+            "id": world_path.name,
+            "name": str(_nbt_scalar(data.get("LevelName"), world_path.name) or world_path.name),
+            "path": str(world_path),
+            "iconPath": str(world_path / "icon.png") if (world_path / "icon.png").is_file() else None,
+            "gameMode": {0: "生存", 1: "创造", 2: "冒险", 3: "旁观"}.get(game_type, "未知"),
+            "gameModeId": game_type,
+            "difficulty": {0: "和平", 1: "简单", 2: "普通", 3: "困难"}.get(difficulty, "未知"),
+            "difficultyId": difficulty,
+            "difficultyLocked": bool(_nbt_scalar(data.get("DifficultyLocked"), False)),
+            "allowCommands": bool(_nbt_scalar(data.get("allowCommands"), False)),
+            "version": str(version_name),
+            "seed": str(_nbt_scalar(data.get("RandomSeed"), "")),
+            "lastPlayedAt": datetime.fromtimestamp(last_played / 1000, UTC).isoformat() if last_played else None,
+            "modifiedAt": datetime.fromtimestamp(modified, UTC).isoformat(),
+            "createdAt": datetime.fromtimestamp(world_path.stat().st_ctime, UTC).isoformat(),
+        }
+
+    def list_worlds(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> list[dict[str, Any]]:
+        """
+        读取全部有效存档；损坏存档以错误状态返回而不是阻断列表。
+        """
+        root = self._world_root(game_path, version_id, version_isolation)
+        if not root.is_dir():
+            return []
+        worlds: list[dict[str, Any]] = []
+        for path in root.iterdir():
+            if not path.is_dir():
+                continue
+            try:
+                worlds.append(self._read_world(path))
+            except GameServiceError as exc:
+                worlds.append({"id": path.name, "name": path.name, "path": str(path), "error": str(exc)})
+        return sorted(worlds, key=lambda item: item.get("modifiedAt") or "", reverse=True)
+
+    def world_detail(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> dict[str, Any]:
+        return self._read_world(self._world_path(game_path, version_id, world_id, version_isolation))
+
+    def _assert_world_writable(self, target: Any, world_path: Path) -> None:
+        game_key = str(target.game_path).casefold()
+        if any(
+            str(item.get("gamePath") or "").casefold() == game_key and item.get("versionId") == target.version_id
+            for item in self.list_instances()
+        ):
+            raise GameServiceError("游戏运行时不能修改存档", "INSTANCE_IS_RUNNING")
+        lock_path = world_path / "session.lock"
+        if lock_path.is_file():
+            try:
+                with lock_path.open("r+b"):
+                    pass
+            except OSError as exc:
+                raise GameServiceError("存档正在被占用", "WORLD_IS_LOCKED") from exc
+
+    @staticmethod
+    def _atomic_save_nbt(document: Any, destination: Path) -> None:
+        temp = destination.with_name(f".{destination.name}.ecl-tmp")
+        try:
+            document.save(temp, gzipped=True)
+            temp.replace(destination)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    def patch_world(
+        self,
+        game_path: Any,
+        version_id: Any,
+        world_id: Any,
+        patch: dict[str, Any],
+        version_isolation: Any = False,
+    ) -> dict[str, Any]:
+        """
+        备份后原子修改难度、作弊和难度锁定，保留所有未知 NBT 字段。
+        """
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        world_path = self._world_path(game_path, version_id, world_id, version_isolation)
+        self._assert_world_writable(target, world_path)
+        self.create_world_backup(game_path, version_id, world_id, version_isolation, automatic=True)
+        level_path = world_path / "level.dat"
+        try:
+            document = nbtlib.load(level_path)
+            data = document.get("Data", document)
+            if "difficulty" in patch:
+                difficulty = int(patch["difficulty"])
+                if difficulty not in range(4):
+                    raise GameServiceError("难度值无效", "INVALID_WORLD_DIFFICULTY")
+                data["Difficulty"] = nbtlib.Byte(difficulty)
+            if "allowCommands" in patch:
+                data["allowCommands"] = nbtlib.Byte(1 if patch["allowCommands"] else 0)
+            if "difficultyLocked" in patch:
+                data["DifficultyLocked"] = nbtlib.Byte(1 if patch["difficultyLocked"] else 0)
+            self._atomic_save_nbt(document, level_path)
+        except GameServiceError:
+            raise
+        except Exception as exc:
+            raise GameServiceError(f"修改世界数据失败：{exc}", "WORLD_UPDATE_FAILED") from exc
+        return self._read_world(world_path)
+
+    def copy_world(
+        self, game_path: Any, version_id: Any, world_id: Any, new_world_id: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
+        """
+        异步复制世界目录，目标目录只允许安全相对名称。
+        """
+        root = self._world_root(game_path, version_id, version_isolation)
+        source = resolve_relative_id(root, world_id)
+        destination = resolve_relative_id(root, new_world_id, must_exist=False)
+        if destination.exists():
+            raise GameServiceError("目标世界目录已存在", "WORLD_ALREADY_EXISTS")
+
+        def worker(context: OperationContext) -> dict[str, str]:
+            context.progress(10, "正在复制存档")
+            shutil.copytree(source, destination)
+            context.check_cancelled()
+            context.progress(100, "存档复制完成")
+            return {"worldId": destination.name}
+
+        return self._game_operations.submit("world_copy", worker)
+
+    def set_world_icon(
+        self,
+        game_path: Any,
+        version_id: Any,
+        world_id: Any,
+        source_path: Any,
+        version_isolation: Any = False,
+    ) -> dict[str, str]:
+        """
+        校验并原子写入世界图标，原始图片不被修改。
+        """
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        world = self._world_path(game_path, version_id, world_id, version_isolation)
+        self._assert_world_writable(target, world)
+        source = Path(str(source_path)).expanduser().resolve(strict=True)
+        try:
+            with Image.open(source) as image:
+                image.thumbnail((64, 64))
+                converted = image.convert("RGBA")
+                temp = world / ".icon.png.ecl-tmp"
+                converted.save(temp, "PNG")
+                temp.replace(world / "icon.png")
+        except (OSError, UnidentifiedImageError) as exc:
+            raise GameServiceError("世界图标必须是可读图片", "INVALID_WORLD_ICON") from exc
+        return {"path": str(world / "icon.png")}
+
+    def delete_world_to_trash(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> None:
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        world = self._world_path(game_path, version_id, world_id, version_isolation)
+        self._assert_world_writable(target, world)
+        move_to_trash(world)
+
+    def export_world(
+        self, game_path: Any, version_id: Any, world_id: Any, output_path: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
+        world = self._world_path(game_path, version_id, world_id, version_isolation)
+        output = Path(str(output_path)).expanduser().resolve(strict=False)
+
+        def worker(context: OperationContext) -> dict[str, str]:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temp = output.with_name(f".{output.name}.ecl-tmp")
+            try:
+                context.progress(10, "正在导出存档")
+                with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
+                    files = [path for path in world.rglob("*") if path.is_file()]
+                    for index, path in enumerate(files, 1):
+                        context.check_cancelled()
+                        archive.write(path, Path(world.name) / path.relative_to(world))
+                        context.progress(index * 90 / max(1, len(files)), "正在导出存档")
+                temp.replace(output)
+                return {"path": str(output)}
+            finally:
+                temp.unlink(missing_ok=True)
+
+        return self._game_operations.submit("world_export", worker)
+
+    def import_world(
+        self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
+        root = self._world_root(game_path, version_id, version_isolation)
+        source = Path(str(source_path)).expanduser().resolve(strict=True)
+
+        def worker(context: OperationContext) -> dict[str, str]:
+            root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="ecl-world-import-", dir=root.parent) as temp_dir:
+                temp = Path(temp_dir)
+                if source.is_dir():
+                    copied = temp / source.name
+                    shutil.copytree(source, copied)
+                elif zipfile.is_zipfile(source):
+                    safe_extract_zip(source, temp)
+                else:
+                    raise GameServiceError("仅支持世界目录或 ZIP 文件", "UNSUPPORTED_WORLD_IMPORT")
+                candidates = [path.parent for path in temp.rglob("level.dat")]
+                if len(candidates) != 1:
+                    raise GameServiceError("导入内容必须且只能包含一个有效存档", "INVALID_WORLD_ARCHIVE")
+                candidate = candidates[0]
+                self._read_world(candidate)
+                destination = resolve_relative_id(root, candidate.name, must_exist=False)
+                if destination.exists():
+                    raise GameServiceError("同名存档已存在", "WORLD_ALREADY_EXISTS")
+                context.check_cancelled()
+                shutil.move(str(candidate), destination)
+                return {"worldId": destination.name}
+
+        return self._game_operations.submit("world_import", worker)
+
+    def _backup_root(self, target: Any, world_id: str) -> Path:
+        return target.game_path / "ECLBackups" / target.version_id / world_id
+
+    def create_world_backup(
+        self,
+        game_path: Any,
+        version_id: Any,
+        world_id: Any,
+        version_isolation: Any = False,
+        *,
+        automatic: bool = False,
+    ) -> dict[str, Any]:
+        """
+        创建带元数据的 ZIP 备份并只保留最近十个未锁定备份。
+        """
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        world = self._world_path(game_path, version_id, world_id, version_isolation)
+        backup_root = self._backup_root(target, world.name)
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        archive_path = backup_root / f"{backup_id}.zip"
+        temp = archive_path.with_suffix(".tmp")
+        with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in world.rglob("*"):
+                if path.is_file():
+                    archive.write(path, path.relative_to(world))
+        temp.replace(archive_path)
+        metadata = {"id": backup_id, "createdAt": datetime.now(UTC).isoformat(), "locked": False, "automatic": automatic}
+        atomic_write_text(backup_root / f"{backup_id}.json", json.dumps(metadata, ensure_ascii=False, indent=2))
+        unlocked = [item for item in self.list_world_backups(game_path, version_id, world.name) if not item["locked"]]
+        keep_count = 10
+        for old in unlocked[keep_count:]:
+            move_to_trash(Path(old["path"]))
+            metadata_path = Path(old["metadataPath"])
+            if metadata_path.exists():
+                move_to_trash(metadata_path)
+        return metadata
+
+    def start_world_backup(
+        self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
+        """
+        在统一长任务协调器中创建世界备份并返回任务标识。
+        """
+
+        def worker(context: OperationContext) -> dict[str, Any]:
+            context.progress(5, "正在创建世界备份")
+            result = self.create_world_backup(game_path, version_id, world_id, version_isolation)
+            context.progress(100, "世界备份已创建")
+            return result
+
+        return self._game_operations.submit("world_backup", worker)
+
+    def list_world_backups(self, game_path: Any, version_id: Any, world_id: Any) -> list[dict[str, Any]]:
+        target = self.resolve_instance(game_path, version_id)
+        backup_root = self._backup_root(target, str(world_id))
+        results: list[dict[str, Any]] = []
+        if not backup_root.is_dir():
+            return results
+        for archive in backup_root.glob("*.zip"):
+            metadata_path = archive.with_suffix(".json")
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
+            except (OSError, ValueError):
+                metadata = {}
+            results.append({
+                "id": archive.stem,
+                "createdAt": metadata.get("createdAt"),
+                "locked": bool(metadata.get("locked")),
+                "automatic": bool(metadata.get("automatic")),
+                "size": archive.stat().st_size,
+                "path": str(archive),
+                "metadataPath": str(metadata_path),
+            })
+        return sorted(results, key=lambda item: item["id"], reverse=True)
+
+    def lock_world_backup(self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any, locked: bool) -> dict[str, Any]:
+        target = self.resolve_instance(game_path, version_id)
+        root = self._backup_root(target, str(world_id))
+        archive = resolve_relative_id(root, f"{backup_id}.zip")
+        metadata_path = archive.with_suffix(".json")
+        metadata = {"id": archive.stem, "createdAt": datetime.now(UTC).isoformat(), "automatic": False}
+        if metadata_path.is_file():
+            with suppress(OSError, ValueError):
+                metadata.update(json.loads(metadata_path.read_text(encoding="utf-8")))
+        metadata["locked"] = bool(locked)
+        atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2))
+        return metadata
+
+    def delete_world_backup(self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any) -> None:
+        """
+        把指定备份及其元数据移入系统回收站。
+        """
+        target = self.resolve_instance(game_path, version_id)
+        root = self._backup_root(target, str(world_id))
+        archive = resolve_relative_id(root, f"{backup_id}.zip")
+        move_to_trash(archive)
+        metadata = archive.with_suffix(".json")
+        if metadata.exists():
+            move_to_trash(metadata)
+
+    def restore_world_backup(
+        self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        current = self._world_path(game_path, version_id, world_id, version_isolation)
+        self._assert_world_writable(target, current)
+        archive = resolve_relative_id(self._backup_root(target, current.name), f"{backup_id}.zip")
+
+        def worker(context: OperationContext) -> dict[str, str]:
+            with tempfile.TemporaryDirectory(prefix="ecl-world-restore-", dir=current.parent) as temp_dir:
+                restored = Path(temp_dir) / "world"
+                restored.mkdir()
+                safe_extract_zip(archive, restored)
+                self._read_world(restored)
+                context.check_cancelled()
+                old = current.with_name(f".{current.name}.ecl-restore-old")
+                current.replace(old)
+                try:
+                    restored.replace(current)
+                except Exception:
+                    old.replace(current)
+                    raise
+                move_to_trash(old)
+                return {"worldId": current.name}
+
+        return self._game_operations.submit("world_restore", worker)
+
+    def world_quick_play_capability(self, game_path: Any, version_id: Any) -> dict[str, Any]:
+        target = self.resolve_instance(game_path, version_id)
+        manifest_path = target.instance_path / f"{target.version_id}.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            game_args = ((manifest.get("arguments") or {}).get("game") or [])
+            supported = any("quickPlaySingleplayer" in str(item) for item in game_args)
+        except (OSError, UnicodeDecodeError, ValueError):
+            supported = False
+        return {"supported": supported, "reason": None if supported else "该版本不支持 --quickPlaySingleplayer"}
+
+    def chunkbase_url(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> dict[str, str]:
+        world = self.world_detail(game_path, version_id, world_id, version_isolation)
+        version = str(world.get("version") or "")
+        if not version or any(char.isalpha() for char in version.replace("Java", "")):
+            raise GameServiceError("快照或未知版本无法映射到 Chunkbase", "CHUNKBASE_VERSION_UNSUPPORTED")
+        return {"url": f"https://www.chunkbase.com/apps/seed-map#seed={quote_plus(world['seed'])}&platform=java_{quote_plus(version)}"}

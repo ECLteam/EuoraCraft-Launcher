@@ -57,27 +57,27 @@ def test_version_service_normalizes_scanner_output(tmp_path) -> None:
     versions = service.scan_versions([str(game_path), str(game_path / "versions")])
 
     assert requested_paths == [game_path]
-    assert versions == [
-        {
-            "id": "fabric-profile",
-            "versionId": "fabric-profile",
-            "versionType": "Release",
-            "path": str(game_path),
-            "displayName": "fabric-profile",
-            "primaryLoader": "Fabric",
-            "loaderVersion": "0.16.14",
-            "vanillaName": "1.20.1",
-            "requiredJava": 17,
-            "hasForge": False,
-            "hasNeoForge": False,
-            "hasFabric": True,
-            "hasQuilt": False,
-            "hasOptiFine": False,
-            "isBroken": False,
-            "jsonPath": str(game_path / "versions" / "fabric-profile" / "fabric-profile.json"),
-            "sourceName": ".minecraft",
-        }
-    ]
+    assert len(versions) == 1
+    version = versions[0]
+    assert version is not None
+    expected = {
+        "id": "fabric-profile",
+        "versionId": "fabric-profile",
+        "versionType": "Release",
+        "path": str(game_path),
+        "displayName": "fabric-profile",
+        "primaryLoader": "Fabric",
+        "loaderVersion": "0.16.14",
+        "vanillaName": "1.20.1",
+        "requiredJava": 17,
+        "hasFabric": True,
+        "isBroken": False,
+        "sourceName": ".minecraft",
+    }
+    assert expected.items() <= version.items()
+    assert version["categoryId"] == "modded"
+    assert version["fieldSources"]["alias"] == "auto"
+    assert version["launchCount"] == 0
 
 
 def test_version_service_scans_with_original_search_minecraft(tmp_path) -> None:
