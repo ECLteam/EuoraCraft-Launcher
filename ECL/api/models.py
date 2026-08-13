@@ -113,6 +113,10 @@ class GameUninstallRequest(GamePathRequest):
     version_id: str = Field(min_length=1)
 
 
+class GameVersionRequest(GamePathRequest):
+    version_id: str = Field(min_length=1)
+
+
 class GameInstanceRequest(RequestModel):
     instance_id: str = Field(min_length=1)
 
@@ -214,6 +218,7 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_config_get": GamePathRequest,
     "game_config_set": GameConfigUpdate,
     "game_config_patch": GameConfigPatch,
+    "game_version_stats": GameVersionRequest,
     "game_instance_stop": GameInstanceRequest,
     "wardrobe_import": WardrobeImportRequest,
     "wardrobe_sync_account_skin": AccountTextureRequest,
@@ -248,6 +253,7 @@ __all__ = [
     "GamePathRequest",
     "GameScanRequest",
     "GameUninstallRequest",
+    "GameVersionRequest",
     "ImagePurpose",
     "ImageSelectionRequest",
     "InstallRequest",

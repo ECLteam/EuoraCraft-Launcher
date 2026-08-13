@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
 from ECL.api.game import GameHandlers
 from ECL.api.models import (
+    GameVersionRequest,
     InstallRequest,
     LaunchRequest,
     LoaderCatalogRequest,
@@ -20,11 +23,13 @@ def test_request_models_accept_valid_payloads() -> None:
         {"version_id": "1.21.1", "game_path": ".minecraft", "loader_type": "fabric"}
     )
     launch = LaunchRequest.model_validate({"version_id": "1.21.1", "game_path": ".minecraft"})
+    version_stats = GameVersionRequest.model_validate({"version_id": "1.21.1", "game_path": ".minecraft"})
     wardrobe = WardrobeImportRequest.model_validate({"path": "skin.png", "kind": "skin", "model": "slim"})
 
     assert query.sections == ["launcher", "game"]
     assert install.loader_type.value == "fabric"
     assert launch.memory == 4096
+    assert version_stats.version_id == "1.21.1"
     assert wardrobe.model.value == "slim"
 
 
@@ -60,6 +65,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "game_config_get",
         "game_config_set",
         "game_config_patch",
+        "game_version_stats",
         "game_instance_stop",
         "wardrobe_import",
         "wardrobe_sync_account_skin",
@@ -85,3 +91,19 @@ async def test_invalid_ipc_payload_uses_stable_error_code() -> None:
 
     assert response["success"] is False
     assert response["errorCode"] == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_version_stats_ipc_validates_and_forwards_target() -> None:
+    handler = object.__new__(GameHandlers)
+    calls = []
+    handler.game = SimpleNamespace(
+        get_version_stats=lambda game_path, version_id: calls.append((game_path, version_id))
+        or {"launchCount": 1, "lastRunDurationSeconds": 2, "totalRunDurationSeconds": 3}
+    )
+
+    response = await handler.game_version_stats({"game_path": ".minecraft", "version_id": "1.21.1"})
+
+    assert response["success"] is True
+    assert response["data"]["totalRunDurationSeconds"] == 3
+    assert calls[0][1] == "1.21.1"

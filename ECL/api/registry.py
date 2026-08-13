@@ -29,6 +29,7 @@ COMMAND_NAMES = (
     "game_config_set",
     "game_config_patch",
     "game_instances",
+    "game_version_stats",
     "game_launch",
     "game_launch_cancel",
     "game_instance_stop",

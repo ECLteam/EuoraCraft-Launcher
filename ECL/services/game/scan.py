@@ -201,11 +201,16 @@ class ScanCoordinator(_GameState):
             raise VersionScanError(f"扫描游戏目录失败: {game_path}: {exc}") from exc
         if not isinstance(versions, dict):
             raise VersionScanError(f"版本扫描器返回了无效数据: {game_path}")
-        return [
+        normalized_versions = [
             self._normalize_scanned_version(game_path, version_name.strip(), info)
             for version_name, info in versions.items()
             if isinstance(version_name, str) and version_name.strip()
         ]
+        for version in normalized_versions:
+            version_id = str(version.get("versionId") or "").strip()
+            if version_id:
+                self._version_stats.ensure(game_path, version_id)
+        return normalized_versions
 
     def scan_versions(self, paths: Any, *, force: bool = False) -> list[dict[str, Any]]:
         """

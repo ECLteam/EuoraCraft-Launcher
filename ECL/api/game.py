@@ -14,6 +14,7 @@ from ECL.api.models import (
     GamePathRequest,
     GameScanRequest,
     GameUninstallRequest,
+    GameVersionRequest,
     InstallRequest,
     LaunchRequest,
     LoaderCatalogRequest,
@@ -191,6 +192,20 @@ class GameHandlers(_FrontendState):
             return failure("game_instances 不接受请求参数", "INVALID_REQUEST")
         return success(self.game.list_instances())
 
+    @_ipc_handler("VERSION_STATS_FAILED")
+    async def game_version_stats(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        返回指定 Minecraft 版本的持久化运行统计。
+
+        :param body: 符合 ``GameVersionRequest`` 的请求数据
+        :return: 启动次数、上次运行秒数和总运行秒数
+        """
+        try:
+            request = GameVersionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(await to_thread.run_sync(self.game.get_version_stats, request.game_path, request.version_id))
+
     @_ipc_handler("GAME_LAUNCH_FAILED")
     async def game_launch(self, body: dict[str, Any]) -> ApiResponse:
         """
@@ -233,7 +248,7 @@ class GameHandlers(_FrontendState):
     @_ipc_handler("INSTANCE_STOP_FAILED")
     async def game_instance_stop(self, body: dict[str, Any]) -> ApiResponse:
         """
-        终止指定的运行中 Minecraft 实例。
+        通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 
         :param body: 符合 ``GameInstanceRequest`` 的请求数据
         :return: 空的成功响应

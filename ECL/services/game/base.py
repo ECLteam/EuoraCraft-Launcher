@@ -26,6 +26,8 @@ from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
 from ECL.utils import get_logger
 
+from .version_stats import VersionStatsStore
+
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
 DownloaderFactory = Callable[..., Downloader]
 CommandBuilder = Callable[[LaunchConfig], str]
@@ -56,6 +58,26 @@ class _CoreContext:
     api_client: BaseApiClient
     files_checker: FilesChecker
     games: GetGames
+
+
+@dataclass
+class _RunningGame:
+    """
+    保存一次游戏运行在当前启动器会话中的内存态元数据。
+
+    ``token`` 在进程管理器返回实例 ID 前即可被退出回调捕获，用于消除极短生命周期
+    进程带来的注册竞态；这些数据不会写入硬盘。
+    """
+
+    token: str
+    version_id: str
+    game_path: Path
+    started_at: float
+    instance_id: str | None = None
+    pending: bool = True
+    exited: bool = False
+    exit_code: int | None = None
+    stopping: bool = False
 
 
 class _GameState:
@@ -118,8 +140,9 @@ class _GameState:
         # 下载器和 asyncio 任务必须持有强引用，关闭服务时才能可靠停止或取消。
         self._active_downloads: dict[str, Downloader] = {}
         self._install_tasks: dict[str, asyncio.Task[None]] = {}
-        # 已启动进程由 InstancesManager 拥有，这里只保存 API 展示所需的版本映射。
-        self._instance_versions: dict[str, str] = {}
+        # 已启动进程由 InstancesManager 拥有；这里只保存当前会话的展示与统计元数据。
+        self._running_games: dict[str, _RunningGame] = {}
+        self._version_stats = VersionStatsStore()
         self._launch_cancel_event: Event | None = None
         # 版本目录监听状态由唯一后台线程使用，所有共享容器仍受同一把锁保护。
         self._version_scan_cache: dict[str, list[dict[str, Any]]] = {}
@@ -228,6 +251,10 @@ class _GameState:
         取消后台任务并释放服务资源，保留已启动的游戏实例。
         """
         self._version_watch_stop.set()
+        with self._lock:
+            running_tokens = [token for token, run in self._running_games.items() if not run.pending]
+        for token in running_tokens:
+            self._finalize_instance_run(token, action="launcher_closed")
         with self._lock:
             downloads = list(self._active_downloads.values())
             install_tasks = list(self._install_tasks.values())

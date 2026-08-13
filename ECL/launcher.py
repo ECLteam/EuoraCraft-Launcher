@@ -79,6 +79,7 @@ class EuoraCraftLauncher:
         """
         执行启动维护任务并构造后端应用上下文。
         """
+        self.logger.info("正在初始化")
         if sys.platform not in {"win32", "linux", "darwin"}:
             raise RuntimeError(f"不支持的系统环境: {sys.platform}")
         if not self.is_frozen:

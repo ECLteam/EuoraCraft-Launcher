@@ -103,6 +103,10 @@ class Adapter:
             "game:versions_changed",
             lambda payload: api.emit_to_frontend("game:versions_changed", payload),
         )
+        bus.subscribe(
+            "game:instances_changed",
+            lambda payload: api.emit_to_frontend("game:instances_changed", payload),
+        )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
         bus.subscribe(

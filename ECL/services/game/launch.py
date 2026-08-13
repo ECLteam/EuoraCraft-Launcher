@@ -4,7 +4,9 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
+from time import monotonic
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from anyio import to_thread
@@ -12,7 +14,7 @@ from anyio import to_thread
 from ECL.game import LaunchConfig
 from ECL.services.authlib import AuthlibError
 
-from .base import GameServiceError, _GameState
+from .base import GameServiceError, _GameState, _RunningGame
 
 
 class LaunchCoordinator(_GameState):
@@ -230,17 +232,46 @@ class LaunchCoordinator(_GameState):
 
             self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
-            instance_id = self.instances.create_instance(
-                instance_name=version_name,
-                instance_type="Minecraft",
-                args=command,
-                cwd=path / "versions" / version_name,
-                new_session=True,
-                log_callback=lambda line, current_id: self.logger.debug("[%s] %s", current_id, line),
-                exit_callback=lambda code, name: self.logger.info("Minecraft %s 已退出，退出码: %s", name, code),
+            run_token = uuid4().hex
+            run = _RunningGame(
+                token=run_token,
+                version_id=version_name,
+                game_path=path,
+                started_at=monotonic(),
             )
             with self._lock:
-                self._instance_versions[instance_id] = version_name
+                self._running_games[run_token] = run
+            try:
+                instance_id = self.instances.create_instance(
+                    instance_name=version_name,
+                    instance_type="Minecraft",
+                    args=command,
+                    cwd=path / "versions" / version_name,
+                    new_session=True,
+                    log_callback=lambda line, current_id: self.logger.debug("[%s] %s", current_id, line),
+                    exit_callback=lambda code, name: self._handle_instance_exit(run_token, code, name),
+                )
+            except Exception:
+                with self._lock:
+                    self._running_games.pop(run_token, None)
+                raise
+
+            with self._lock:
+                registered_run = self._running_games.get(run_token)
+                if registered_run is not None:
+                    registered_run.instance_id = instance_id
+            self._version_stats.record_launch(path, version_name)
+            with self._lock:
+                registered_run = self._running_games.get(run_token)
+                if registered_run is not None:
+                    registered_run.pending = False
+                    already_exited = registered_run.exited
+                else:
+                    already_exited = True
+            if already_exited:
+                self._finalize_instance_run(run_token, action="exited")
+            else:
+                self._emit_instance_change(run, "started")
             self._emit_launch_progress("launched", f"{version_name} 已启动", 100)
             return {
                 "instanceId": instance_id,
@@ -275,18 +306,91 @@ class LaunchCoordinator(_GameState):
             downloader.stop()
         return True
 
+    def _emit_instance_change(self, run: _RunningGame, action: str) -> None:
+        if not run.instance_id:
+            return
+        self.events.emit(
+            "game:instances_changed",
+            {
+                "action": action,
+                "instanceId": run.instance_id,
+                "versionId": run.version_id,
+                "gamePath": str(run.game_path),
+            },
+        )
+
+    def _handle_instance_exit(self, run_token: str, exit_code: int, instance_name: str) -> None:
+        """
+        接收进程管理器线程的唯一退出通知，并在启动注册完成后结算统计。
+
+        :param run_token: 启动前创建的会话内令牌
+        :param exit_code: Minecraft 进程退出码
+        :param instance_name: 供日志识别的版本名称
+        """
+        self.logger.info("Minecraft %s 已退出，退出码: %s", instance_name, exit_code)
+        with self._lock:
+            run = self._running_games.get(run_token)
+            if run is None:
+                return
+            run.exited = True
+            run.exit_code = exit_code
+            if run.pending:
+                return
+            action = "stopped" if run.stopping else "exited"
+        self._finalize_instance_run(run_token, action=action)
+
+    def _finalize_instance_run(self, run_token: str, *, action: str) -> None:
+        """
+        从内存运行表移除一次运行，并恰好一次地累计已观察时长。
+
+        该方法同时服务于自然退出、用户终止、列表校正和应用关闭。先从共享表移除再
+        写入统计，确保并发回调不会重复累计。
+
+        :param run_token: 会话内运行令牌
+        :param action: ``exited``、``stopped`` 或 ``launcher_closed``
+        """
+        with self._lock:
+            run = self._running_games.get(run_token)
+            if run is None or run.pending:
+                return
+            self._running_games.pop(run_token, None)
+        duration_seconds = max(0, int(monotonic() - run.started_at))
+        self._version_stats.record_duration(run.game_path, run.version_id, duration_seconds)
+        self.logger.debug(
+            "游戏运行已结算: version=%s, action=%s, duration=%ss",
+            run.version_id,
+            action,
+            duration_seconds,
+        )
+        if action != "launcher_closed":
+            self._emit_instance_change(run, action)
+
+    def get_version_stats(self, game_path: Any, version_id: Any) -> dict[str, int]:
+        """
+        返回指定版本目录中的运行统计。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 版本目录名称
+        :return: 启动次数、上次运行秒数和总运行秒数
+        """
+        path = self._normalize_game_path(game_path)
+        name = self._normalize_version_name(version_id)
+        if not (path / "versions" / name).is_dir():
+            raise GameServiceError("游戏实例不存在", "VERSION_NOT_FOUND")
+        return dict(self._version_stats.read(path, name))
+
     def list_instances(self) -> list[dict[str, Any]]:
         """
         返回由启动器管理的运行中 Minecraft 实例。
 
         """
         raw_instances = self.instances.get_instances_info()
-        live_ids = {str(item.get("ID")) for item in raw_instances if item.get("ID")}
         with self._lock:
-            for instance_id in list(self._instance_versions):
-                if instance_id not in live_ids:
-                    self._instance_versions.pop(instance_id, None)
-            versions = dict(self._instance_versions)
+            runs_by_instance = {
+                run.instance_id: (token, run)
+                for token, run in self._running_games.items()
+                if run.instance_id is not None and not run.pending
+            }
 
         result = []
         for item in raw_instances:
@@ -294,20 +398,31 @@ class LaunchCoordinator(_GameState):
                 continue
             instance_id = str(item.get("ID") or "")
             process = item.get("Instance")
+            mapped = runs_by_instance.get(instance_id)
+            is_running = bool(process is not None and process.poll() is None)
+            if not is_running:
+                if mapped is not None:
+                    token, run = mapped
+                    self._finalize_instance_run(token, action="stopped" if run.stopping else "exited")
+                continue
+            run = mapped[1] if mapped is not None else None
+            version_id = run.version_id if run is not None else str(item.get("Name") or "")
             result.append(
                 {
                     "id": instance_id,
-                    "name": str(item.get("Name") or versions.get(instance_id) or "Minecraft"),
+                    "name": str(item.get("Name") or version_id or "Minecraft"),
                     "type": "Minecraft",
-                    "isRunning": bool(process is not None and process.poll() is None),
-                    "version": versions.get(instance_id) or str(item.get("Name") or ""),
+                    "isRunning": True,
+                    "version": version_id,
+                    "versionId": version_id,
+                    "gamePath": str(run.game_path) if run is not None else "",
                 }
             )
         return result
 
     def stop_instance(self, instance_id: Any) -> None:
         """
-        终止指定的运行中 Minecraft 实例。
+        通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 
         :param instance_id: 运行中游戏实例的标识
         """
@@ -318,6 +433,17 @@ class LaunchCoordinator(_GameState):
         }
         if instance_id not in existing_ids:
             raise GameServiceError("游戏实例不存在", "INSTANCE_NOT_FOUND")
-        self.instances.stop_instance(instance_id, wait_timeout=3.0)
         with self._lock:
-            self._instance_versions.pop(instance_id, None)
+            matched = next(
+                (
+                    (token, run)
+                    for token, run in self._running_games.items()
+                    if run.instance_id == instance_id and not run.pending
+                ),
+                None,
+            )
+            if matched is not None:
+                matched[1].stopping = True
+        self.instances.request_instance_exit(instance_id, wait_timeout=3.0)
+        if matched is not None:
+            self._finalize_instance_run(matched[0], action="stopped")

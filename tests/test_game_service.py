@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shlex
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -44,10 +45,13 @@ class FakeInstances:
     def __init__(self):
         self.items = []
         self.created = None
+        self.exit_requests = []
         self.shutdown_calls = []
+        self._create_count = 0
 
     def create_instance(self, **options):
-        instance_id = "minecraft-instance"
+        self._create_count += 1
+        instance_id = "minecraft-instance" if self._create_count == 1 else f"minecraft-instance-{self._create_count}"
         self.created = options
         self.items.append(
             {
@@ -55,9 +59,19 @@ class FakeInstances:
                 "Name": options["instance_name"],
                 "Type": options["instance_type"],
                 "Instance": FakeProcess(),
+                "ExitCallback": options["exit_callback"],
             }
         )
         return instance_id
+
+    def exit_instance(self, instance_id, exit_code=0):
+        for item in list(self.items):
+            if item["ID"] != instance_id:
+                continue
+            item["Instance"].running = False
+            self.items.remove(item)
+            item["ExitCallback"](exit_code, item["Name"])
+            return
 
     def get_instances_info(self):
         return list(self.items)
@@ -67,6 +81,10 @@ class FakeInstances:
             if item["ID"] == instance_id:
                 item["Instance"].running = False
         return True
+
+    def request_instance_exit(self, instance_id, **options):
+        self.exit_requests.append((instance_id, options))
+        return self.stop_instance(instance_id, **options)
 
     def shutdown_all(self, **options):
         self.shutdown_calls.append(options)
@@ -102,6 +120,34 @@ def _build_service(**options) -> GameService:
         downloader_factory=options.pop("downloader_factory", FakeDownloader),
         **options,
     )
+
+
+def _launch_lifecycle_fixture(tmp_path, monkeypatch, clock):
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    instances = FakeInstances()
+    service = _build_service(
+        instances_manager=instances,
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    monkeypatch.setattr("ECL.services.game.launch.monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+    result = asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+        )
+    )
+    return service, instances, game_path, java_path, result
 
 
 def test_scan_versions_is_owned_by_game_service(tmp_path) -> None:
@@ -390,6 +436,8 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     java_path.write_bytes(b"")
     instances = FakeInstances()
     captured_configs = []
+    clock = [100.0]
+    monkeypatch.setattr("ECL.services.game.launch.monotonic", lambda: clock[0])
     service = _build_service(
         instances_manager=instances,
         command_builder=lambda config: captured_configs.append(config) or '"java.exe" game.Main',
@@ -432,17 +480,86 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
             "type": "Minecraft",
             "isRunning": True,
             "version": "1.21.8",
+            "versionId": "1.21.8",
+            "gamePath": str(game_path.resolve()),
         }
     ]
+    stats_file = version_path / "eclversion.json"
+    assert json.loads(stats_file.read_text(encoding="utf-8")) == {
+        "launchCount": 1,
+        "lastRunDurationSeconds": 0,
+        "totalRunDurationSeconds": 0,
+    }
+
+    exit_callback = instances.created["exit_callback"]
+    clock[0] = 142.9
+    instances.exit_instance("minecraft-instance", exit_code=1)
+    exit_callback(1, "1.21.8")
+
+    assert service.list_instances() == []
+    assert service.get_version_stats(game_path, "1.21.8") == {
+        "launchCount": 1,
+        "lastRunDurationSeconds": 42,
+        "totalRunDurationSeconds": 42,
+    }
 
 
-def test_close_keeps_running_game_instances_alive() -> None:
-    instances = FakeInstances()
-    service = _build_service(instances_manager=instances)
+def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(tmp_path, monkeypatch) -> None:
+    clock = [10.0]
+    service, instances, game_path, _java_path, _result = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)
+
+    clock[0] = 25.8
 
     service.close()
 
     assert instances.shutdown_calls == []
+    assert instances.items[0]["Instance"].running is True
+    assert service.get_version_stats(game_path, "1.21.8") == {
+        "launchCount": 1,
+        "lastRunDurationSeconds": 15,
+        "totalRunDurationSeconds": 15,
+    }
+
+
+def test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, monkeypatch) -> None:
+    clock = [50.0]
+    service, instances, game_path, _java_path, result = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)
+
+    clock[0] = 58.2
+    service.stop_instance(result["instanceId"])
+
+    assert service.list_instances() == []
+    assert instances.items[0]["Instance"].running is False
+    assert instances.exit_requests == [(result["instanceId"], {"wait_timeout": 3.0})]
+    assert service.get_version_stats(game_path, "1.21.8") == {
+        "launchCount": 1,
+        "lastRunDurationSeconds": 8,
+        "totalRunDurationSeconds": 8,
+    }
+
+
+def test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None:
+    clock = [100.0]
+    service, instances, game_path, java_path, first = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)
+    clock[0] = 110.0
+    second = asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+        )
+    )
+
+    clock[0] = 125.0
+    instances.exit_instance(second["instanceId"])
+    clock[0] = 140.0
+    instances.exit_instance(first["instanceId"])
+
+    assert service.get_version_stats(game_path, "1.21.8") == {
+        "launchCount": 2,
+        "lastRunDurationSeconds": 40,
+        "totalRunDurationSeconds": 55,
+    }
 
 
 def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -> None:

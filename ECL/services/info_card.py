@@ -76,8 +76,8 @@ class InfoCardManager:
                 "User-Agent": "EuoraCraft-Launcher",
             },
             follow_redirects=True,
-            timeout=NOTICE_TIMEOUT_SECONDS,
-            # verify=False,
+            timeout=httpx.Timeout(NOTICE_TIMEOUT_SECONDS, connect=3.0),
+            verify=False,
         )
         response.raise_for_status()
         return response.json()
