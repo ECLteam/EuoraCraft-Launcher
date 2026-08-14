@@ -89,7 +89,7 @@ jobs:
         run: |
           python - <<'PY'
           import os, re
-          path = "ECL/Common/build_env.py"
+          path = "ECL/common/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           cid = os.environ["CLIENT_ID"]
