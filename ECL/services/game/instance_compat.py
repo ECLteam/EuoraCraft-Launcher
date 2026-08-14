@@ -262,13 +262,30 @@ class InstanceCompatibilityReader:
         version_key = version_id.casefold()
         vanilla_key = vanilla_name.casefold()
         loader_key = primary_loader.casefold()
-        return [
+        matched = [
             item
             for item in instances
             if str(item.get("name") or "").casefold() == version_key
             and str(item.get("gameVersion") or "").casefold() in {"", vanilla_key}
             and str(item.get("loader") or "vanilla").casefold() in {"", loader_key}
         ]
+        if len(matched) > 1:
+            _logger = get_logger("EuoraCraft-Launcher.InstanceCompatibilityReader")
+            _logger.debug(
+                "Qomicex 模糊匹配: instance_path=%s, version_id=%s, vanilla_name=%s, "
+                "loader=%s, matched_count=%d, candidates=[%s]",
+                instance_path,
+                version_id,
+                vanilla_name,
+                primary_loader,
+                len(matched),
+                ", ".join(
+                    f"name={m.get('name','?')},gameDir={m.get('gameDir','?')},"
+                    f"gameVersion={m.get('gameVersion','?')},loader={m.get('loader','?')}"
+                    for m in matched
+                ),
+            )
+        return matched
 
     def _load_qomicex_instances(
         self,
@@ -327,7 +344,16 @@ class InstanceCompatibilityReader:
         )
         if len(matches) != 1:
             if len(matches) > 1:
-                self._logger.warning("Qomicex 实例匹配存在歧义: %s", instance_path)
+                self._logger.warning(
+                    "Qomicex 实例匹配存在歧义: instance_path=%s, version_id=%s, vanilla_name=%s, "
+                    "primary_loader=%s, matched_count=%d, matched_names=[%s]",
+                    instance_path,
+                    version_id,
+                    vanilla_name,
+                    primary_loader,
+                    len(matches),
+                    ", ".join(str(m.get("name", "?")) for m in matches),
+                )
             return None
 
         item = matches[0]

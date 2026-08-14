@@ -98,6 +98,68 @@ jobs:
               f.write(text)
           PY
 
+      - name: Parse version from tag
+        id: version_info
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          # Strip v prefix, then extract version and type
+          if [[ "$TAG" == v* ]]; then
+            VER="${TAG#v}"
+            # Determine version type from suffix
+            if [[ "$VER" == *-beta* ]]; then
+              echo "type=beta" >> "$GITHUB_OUTPUT"
+            elif [[ "$VER" == *-alpha* ]]; then
+              echo "type=alpha" >> "$GITHUB_OUTPUT"
+            else
+              echo "type=release" >> "$GITHUB_OUTPUT"
+            fi
+            # Strip pre-release suffix for the semver version
+            CLEAN_VER="${VER%-*}"
+            if [ "$CLEAN_VER" = "$VER" ]; then
+              # No suffix, use as-is
+              echo "version=$VER" >> "$GITHUB_OUTPUT"
+            else
+              echo "version=$CLEAN_VER" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "type=" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inject version info into version.py
+        shell: bash
+        env:
+          VTYPE: ${{ steps.version_info.outputs.type }}
+          VVER: ${{ steps.version_info.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, re
+          vtype = os.environ.get("VTYPE", "")
+          vver = os.environ.get("VVER", "")
+          if vtype and vver:
+              path = "ECL/common/version.py"
+              with open(path, encoding="utf-8") as f:
+                  text = f.read()
+              # Update __version__
+              text = re.sub(
+                  r"""__version__\s*=\s*['"][^'"]*['"]""",
+                  f'__version__ = "{vver}"',
+                  text,
+              )
+              # Update __version_type__
+              text = re.sub(
+                  r"""__version_type__\s*=\s*['"][^'"]*['"]""",
+                  f'__version_type__ = "{vtype}"',
+                  text,
+              )
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
+              print(f"Injected version={vver}, version_type={vtype}")
+          else:
+              print("No tag detected, keeping existing version.py")
+          PY
+
       - name: Build with PyInstaller
         run: pyinstaller EuoraCraft-Launcher.spec
 
@@ -118,7 +180,7 @@ jobs:
         with:
           path: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
           archive: false
-          
+
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -126,4 +188,3 @@ jobs:
           files: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
