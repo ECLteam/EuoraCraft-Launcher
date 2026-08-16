@@ -160,30 +160,10 @@ jobs:
               print("No tag detected, keeping existing version.py")
           PY
 
-      - name: Install UPX
-        # UPX 压缩 C 扩展以减小 exe；macOS 与 ARM runner 跳过（spec 中对 macOS 排除 UPX）
-        if: runner.os != 'macOS' && runner.arch == 'X64'
-        shell: bash
-        run: |
-          set -e
-          DIR="$GITHUB_WORKSPACE/_upx"
-          case "$RUNNER_OS" in
-            Windows)
-              mkdir -p "$DIR"
-              curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip -o "$DIR/upx.zip"
-              7z x -y -o"$DIR" "$DIR/upx.zip" >/dev/null
-              echo "ECL_UPX_DIR=$(cygpath -w "$DIR/upx-4.2.4-win64")" >> "$GITHUB_ENV"
-              ;;
-            Linux)
-              mkdir -p "$DIR"
-              curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz -o "$DIR/upx.txz"
-              tar -xf "$DIR/upx.txz" -C "$DIR"
-              chmod +x "$DIR"/upx-4.2.4-amd64_linux/upx
-              echo "ECL_UPX_DIR=$DIR/upx-4.2.4-amd64_linux" >> "$GITHUB_ENV"
-              ;;
-          esac
-
       - name: Build with PyInstaller
+        # 临时禁用 UPX，验证 exe 运行失败是否为 UPX 压缩 python DLL 所致
+        env:
+          ECL_UPX: "0"
         run: pyinstaller EuoraCraft-Launcher.spec
 
       - name: Package artifact for Unix
