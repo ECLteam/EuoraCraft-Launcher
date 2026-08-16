@@ -40,6 +40,7 @@ dist/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+/.vite/
 
 # Launcher runtime data
 /ECL_data/
@@ -79,4 +80,4 @@ Desktop.ini
 
 frontend_QML/
 
-.vite/
+.vite/*
