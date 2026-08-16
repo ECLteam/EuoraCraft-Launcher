@@ -94,6 +94,22 @@ class SettingsUpdate(RequestModel):
     data: JsonValue
 
 
+class FrontendLogLevel(StrEnum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    WARN = "warn"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class FrontendLogRequest(RequestModel):
+    level: FrontendLogLevel
+    message: str = Field(min_length=1, max_length=20000)
+    detail: str | None = Field(default=None, max_length=100000)
+    logger: str | None = Field(default=None, max_length=200)
+
+
 class GameCatalogRequest(RequestModel):
     filter_type: str | None = None
     classified: bool = False
@@ -147,6 +163,10 @@ class GameUninstallRequest(GamePathRequest):
 
 class GameVersionRequest(GamePathRequest):
     version_id: str = Field(min_length=1)
+
+
+class GameVersionSettingsUpdate(GameVersionRequest):
+    data: dict[str, JsonValue]
 
 
 class InstanceProfilePatchData(RequestModel):
@@ -492,9 +512,43 @@ class FileSaveRequest(RequestModel):
     purpose: FileSavePurpose
 
 
+
+
+class PortRequest(RequestModel):
+    """
+    指定端口号的请求体。
+    """
+
+    port: int = Field(ge=1, le=65535)
+
+
+class RoomCodeRequest(RequestModel):
+    """
+    房间码请求体。
+    """
+
+    code: str = Field(min_length=1, max_length=32)
+
+
+class KickRequest(RequestModel):
+    """
+    踢出玩家请求体。
+    """
+
+    machine_id: str = Field(min_length=1, max_length=128)
+
+
+
+
+
+
+
+
+
 REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "settings_get": SettingsQuery,
     "settings_set": SettingsUpdate,
+    "frontend_log": FrontendLogRequest,
     "game_versions": GameCatalogRequest,
     "game_loader_versions": LoaderCatalogRequest,
     "game_scan": GameScanRequest,
@@ -506,6 +560,8 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_config_set": GameConfigUpdate,
     "game_config_patch": GameConfigPatch,
     "game_version_stats": GameVersionRequest,
+    "game_version_settings_get": GameVersionRequest,
+    "game_version_settings_set": GameVersionSettingsUpdate,
     "game_instance_profile_get": GameVersionRequest,
     "game_instance_profile_patch": InstanceProfilePatchRequest,
     "game_instance_profile_reset": InstanceProfileResetRequest,
@@ -531,8 +587,10 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "select_image": ImageSelectionRequest,
     "select_file": FileSelectionRequest,
     "select_save_file": FileSaveRequest,
+    "connector_host_port": PortRequest,
+    "connector_join": RoomCodeRequest,
+    "connector_kick": KickRequest,
 }
-
 
 def request_schemas() -> dict[str, dict]:
     """
@@ -552,6 +610,7 @@ __all__ = [
     "FileSaveRequest",
     "FileSelectionPurpose",
     "FileSelectionRequest",
+    "FrontendLogRequest",
     "GameCatalogRequest",
     "GameConfigPatch",
     "GameConfigUpdate",
@@ -560,6 +619,7 @@ __all__ = [
     "GameScanRequest",
     "GameUninstallRequest",
     "GameVersionRequest",
+    "GameVersionSettingsUpdate",
     "ImagePurpose",
     "ImageSelectionRequest",
     "InstallRequest",
@@ -570,9 +630,12 @@ __all__ = [
     "InstanceProfilePatchRequest",
     "InstanceProfileResetRequest",
     "JavaScanRequest",
+    "KickRequest",
     "LaunchRequest",
     "LoaderCatalogRequest",
     "MicrosoftCapeRequest",
+    "PortRequest",
+    "RoomCodeRequest",
     "SettingsQuery",
     "SettingsUpdate",
     "SkinModel",
@@ -583,3 +646,4 @@ __all__ = [
     "WardrobeUpdateRequest",
     "request_schemas",
 ]
+

@@ -55,6 +55,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     assert set(schemas) == {
         "settings_get",
         "settings_set",
+        "frontend_log",
         "game_versions",
         "game_loader_versions",
         "game_scan",
@@ -66,6 +67,8 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "game_config_set",
         "game_config_patch",
         "game_version_stats",
+        "game_version_settings_get",
+        "game_version_settings_set",
         "game_instance_profile_get",
         "game_instance_profile_patch",
         "game_instance_profile_reset",
@@ -91,6 +94,9 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "microsoft_reset_skin",
         "microsoft_set_cape",
         "microsoft_reset_cape",
+        "connector_host_port",
+        "connector_join",
+        "connector_kick",
     }
     assert all(schema["type"] == "object" for schema in schemas.values())
 

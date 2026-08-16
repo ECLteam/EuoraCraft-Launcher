@@ -22,7 +22,6 @@ dependencies = [
     "lxml>=5.0.0",
     "mcstatus>=12.0.0",
     "nbtlib>=2.0.4",
-    "Pillow>=10.0.0",
     "psutil>=7.2.0",
     "Send2Trash>=1.8.3",
     "dotenv>=0.9.9"
@@ -46,12 +45,6 @@ classifiers = [
 Homepage = "https://github.com/ECLTeam/EuoraCraft-Launcher"
 Repository = "https://github.com/ECLTeam/EuoraCraft-Launcher.git"
 Issues = "https://github.com/ECLTeam/EuoraCraft-Launcher/issues"
-
-[project.scripts]
-euoracraft-launcher = "main:run_launcher"
-
-[project.gui-scripts]
-EuoraCraft-Launcher = "main:run_launcher"
 
 [project.optional-dependencies]
 dev = [

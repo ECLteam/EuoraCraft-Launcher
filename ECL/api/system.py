@@ -201,3 +201,15 @@ class SystemHandlers(_FrontendState):
         :param body: 经过边界校验的 IPC 请求数据
         """
         return self._schedule_debug_maintenance("clear_plugins")
+
+    async def debug_devtools_open(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        打开 WebView 开发者工具（F12 调试窗口）。
+
+        :param body: 必须为空的请求对象
+        :return: 包含 ``open`` 布尔值的响应
+        """
+        if self._webview is None:
+            return {"success": False, "message": "窗口尚未就绪", "errorCode": "WEBVIEW_NOT_READY"}
+        self._webview.open_devtools()
+        return success({"open": True})

@@ -39,7 +39,6 @@ default_config: dict[str, Any] = {
         },
         "background": {"type": "default", "path": "", "opacity": 1.0, "blur": 18},
     },
-    "version_settings": {},
 }
 
 

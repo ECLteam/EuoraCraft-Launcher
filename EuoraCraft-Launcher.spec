@@ -107,7 +107,6 @@ excludes = [
     "PyInstaller",
     "tkinter",
     "Tkinter",
-    "PIL",
     "setuptools",
     "pkg_resources",
     "distutils",

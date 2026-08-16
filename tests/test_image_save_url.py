@@ -143,6 +143,7 @@ def _build_api(tmp_path):
         config=ConfigManager(tmp_path / "ECL_data", bus),
         http=SimpleNamespace(),
         accounts=FakeAccounts(),
+        connector=SimpleNamespace(),
         wardrobe=FakeWardrobe(),
         info_card=FakeInfoCard(),
         game=SimpleNamespace(),

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -20,6 +20,9 @@ from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
 from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
+
+if TYPE_CHECKING:
+    from ECL.services.connector import ConnectorService
 
 logger = logging.getLogger("EuoraCraft-Launcher.Application")
 
@@ -63,6 +66,7 @@ class ApplicationContext:
     wardrobe: WardrobeStore
     info_card: InfoCardManager
     game: GameService
+    connector: ConnectorService
     plugins: PluginManager
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
@@ -163,6 +167,18 @@ def create_application(
         logger.info("游戏服务初始化完成，duration=%.2fs", perf_counter() - phase_started)
 
         phase_started = perf_counter()
+        logger.debug("正在初始化联机服务 ConnectorService")
+        from ECL.services.connector import ConnectorService
+        connector = ConnectorService()
+        logger.debug(
+            "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",
+            connector.available,
+            connector.easytier_available,
+            connector.easytier_version,
+        )
+        created.append(connector)
+        logger.debug("联机服务 ConnectorService 已初始化，duration=%.2fs", perf_counter() - phase_started)
+
         plugins = PluginManager(events)
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
@@ -186,6 +202,7 @@ def create_application(
         wardrobe=wardrobe,
         info_card=info_card,
         game=game,
+        connector=connector,
         plugins=plugins,
     )
 

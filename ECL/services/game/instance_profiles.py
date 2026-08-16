@@ -33,7 +33,7 @@ BUILTIN_CATEGORIES = (
     {"id": "vanilla", "name": "原版", "color": "#69a84f", "order": 10, "builtin": True},
     {"id": "modded", "name": "模组", "color": "#8a73c7", "order": 20, "builtin": True},
     {"id": "modpack", "name": "整合包", "color": "#d58b45", "order": 30, "builtin": True},
-    {"id": "test", "name": "测试/快照", "color": "#d55d72", "order": 40, "builtin": True},
+    {"id": "test", "name": "测试", "color": "#d55d72", "order": 40, "builtin": True},
 )
 
 

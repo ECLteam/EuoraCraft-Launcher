@@ -18,12 +18,13 @@ from pytauri.ffi import Emitter as _Emitter
 from pytauri.ipc import WebviewWindow
 
 from ECL.api.contracts import ApiResponse, failure
+from ECL.api.models import FrontendLogRequest
 from ECL.application import ApplicationContext
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
 from ECL.services.wardrobe import WardrobeError
-from ECL.utils import get_logger
+from ECL.utils import atomic_write_text, get_logger
 
 _queued_frontend_events = frozenset({"launcher:error", "launcher:popup"})
 _max_pending_frontend_events = 50
@@ -270,6 +271,7 @@ class _FrontendState:
         # HTTP 客户端由 ApplicationContext 统一关闭，API 处理器只能借用。
         self.http = context.http
         self.info_card = context.info_card
+        self.connector = context.connector
         self.game = context.game
         self.plugins = context.plugins
         self.app_path: Path = self.launcher.app_path
@@ -280,6 +282,7 @@ class _FrontendState:
         # 拉取用于恢复工作线程事件丢失；两条链路由同一 error_id 在前端去重。
         self._pending_error_presentations: dict[str, dict[str, Any]] = {}
         self._frontend_event_lock = RLock()
+        self.is_dev_mode_tips = False
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
@@ -422,13 +425,34 @@ class _FrontendState:
             return None
         return server_url
 
+    @property
+    def _authlib_servers_file(self) -> Path:
+        return Path.home() / ".ECL" / "accounts" / "authlib" / "servers.json"
+
+    def _load_authlib_servers(self) -> list[dict[str, str]]:
+        file = self._authlib_servers_file
+        try:
+            if file.is_file():
+                raw = json.loads(file.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    return [
+                        {"url": str(item.get("url") or ""), "email": str(item.get("email") or "")}
+                        for item in raw
+                        if isinstance(item, dict)
+                    ]
+        except (OSError, ValueError, TypeError):
+            self.logger.warning("读取外置登录服务器历史失败，使用空列表: %s", file)
+        return []
+
+    def _save_authlib_servers(self, servers: list[dict[str, str]]) -> None:
+        file = self._authlib_servers_file
+        file.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(file, json.dumps(servers, ensure_ascii=False, indent=2))
+
     def _get_authlib_servers(self) -> list[dict[str, str]]:
-        authlib_config = self.config.get_config("authlib") or {}
-        stored_servers = authlib_config.get("servers") or []
         servers: list[dict[str, str]] = []
-        for item in stored_servers:
-            raw_url = item.get("url") if isinstance(item, dict) else item
-            url = self._normalize_authlib_server_url(raw_url)
+        for item in self._load_authlib_servers():
+            url = self._normalize_authlib_server_url(item.get("url"))
             if not url or any(server["url"] == url for server in servers):
                 continue
             email = item.get("email") if isinstance(item, dict) else ""
@@ -438,9 +462,32 @@ class _FrontendState:
     def _remember_authlib_login(self, server_url: str, email: str) -> None:
         servers = [server for server in self._get_authlib_servers() if server["url"] != server_url]
         servers.insert(0, {"url": server_url, "email": email})
-        authlib_config = self.config.get_config("authlib") or {}
-        authlib_config["servers"] = servers[:20]
-        self.config.save_config("authlib", authlib_config)
+        self._save_authlib_servers(servers[:20])
+
+    async def frontend_log(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        记录前端通过 IPC 上报的运行日志，供统一归档排查。
+
+        前端 console 输出会被拦截后转发到这里，写入与后端一致的文件日志。
+
+        :param body: 符合 ``FrontendLogRequest`` 的日志数据
+        :return: 空的成功响应
+        """
+        try:
+            request = FrontendLogRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        message = request.message
+        if request.detail:
+            message = f"{message}\n{request.detail}"
+        if request.logger:
+            message = f"[{request.logger}] {message}"
+        log_level = request.level.value
+        if log_level == "warn":
+            log_level = "warning"
+        log_method = getattr(self.logger, log_level)
+        log_method("[Frontend] %s", message)
+        return {"success": True}
 
     def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
         config = self._get_effective_config()
@@ -477,7 +524,8 @@ class _FrontendState:
         webview_window.show()
         self._flush_pending_frontend_events()
         self.plugins.on_frontend_ready()
-        if bool(self.launcher.debug):
+        if bool(self.launcher.debug) and (self.is_dev_mode_tips is False):
+            self.is_dev_mode_tips = True
             self.emit_popup_to_frontend(
                 {
                     "id": "launcher-development-mode",

@@ -18,6 +18,7 @@ from ECL.api.models import (
     GameScanRequest,
     GameUninstallRequest,
     GameVersionRequest,
+    GameVersionSettingsUpdate,
     InstallRequest,
     InstanceCategoryDeleteRequest,
     InstanceCategoryUpsertRequest,
@@ -222,6 +223,43 @@ class GameHandlers(_FrontendState):
         except ValidationError as exc:
             return self._invalid_request(exc)
         return success(await to_thread.run_sync(self.game.get_version_stats, request.game_path, request.version_id))
+
+    @_ipc_handler("GAME_CONFIG_FAILED")
+    async def game_version_settings_get(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        读取版本目录中的独立启动设置。
+
+        :param body: 符合 ``GameVersionRequest`` 的请求数据
+        :return: 该版本的启动设置字典
+        """
+        try:
+            request = GameVersionRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(
+            await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id)
+        )
+
+    @_ipc_handler("GAME_CONFIG_FAILED")
+    async def game_version_settings_set(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        原子写入版本目录中的独立启动设置。
+
+        :param body: 符合 ``GameVersionSettingsUpdate`` 的请求数据
+        :return: 写入后的完整版本设置
+        """
+        try:
+            request = GameVersionSettingsUpdate.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return success(
+            await to_thread.run_sync(
+                self.game.write_version_settings,
+                request.game_path,
+                request.version_id,
+                request.data,
+            )
+        )
 
     @_ipc_handler("INSTANCE_PROFILE_FAILED")
     async def game_instance_profile_get(self, body: dict[str, Any]) -> ApiResponse:

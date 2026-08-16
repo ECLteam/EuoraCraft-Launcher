@@ -20,8 +20,10 @@ COMMAND_NAMES = (
     "export_logs",
     "debug_reset_launcher_data",
     "debug_clear_plugins",
+    "debug_devtools_open",
     "settings_get",
     "settings_set",
+    "frontend_log",
     "game_versions",
     "game_loader_versions",
     "game_scan",
@@ -33,6 +35,8 @@ COMMAND_NAMES = (
     "game_config_patch",
     "game_instances",
     "game_version_stats",
+    "game_version_settings_get",
+    "game_version_settings_set",
     "game_instance_profile_get",
     "game_instance_profile_patch",
     "game_instance_profile_reset",
@@ -103,6 +107,8 @@ COMMAND_NAMES = (
     "accounts_switch",
     "accounts_remove",
     "accounts_refresh_profile",
+    "accounts_set_favorite",
+    "accounts_set_pinned",
     "accounts_texture_urls",
     "wardrobe_list",
     "wardrobe_import",
@@ -158,7 +164,17 @@ COMMAND_NAMES = (
     "plugin_get_settings",
     "plugin_update_setting",
     "plugin_notify_sidebar_state",
-)
+    "connector_status",
+    "connector_host_port",
+    "connector_host_instance",
+    "connector_join",
+    "connector_leave",
+    "connector_kick",
+    "connector_match_instances",
+    "connector_easytier_status",
+    "connector_easytier_download",
+    "connector_scan_ports",
+    "connector_nat_type",)
 
 
 def command_handlers(api: FrontendApi) -> dict[str, Callable[..., Any]]:

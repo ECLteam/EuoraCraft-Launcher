@@ -1,4 +1,5 @@
 from ECL.api.accounts import AccountHandlers
+from ECL.api.connector import ConnectorHandlers
 from ECL.api.bridge import (
     _Emitter,
     _FrontendState,
@@ -16,6 +17,7 @@ from ECL.api.workspace import WorkspaceHandlers
 
 
 class FrontendApi(
+    ConnectorHandlers,
     WorkspaceHandlers,
     PluginHandlers,
     ModHandlers,

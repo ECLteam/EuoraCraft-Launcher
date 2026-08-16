@@ -61,6 +61,9 @@ class Adapter:
 
     def _build_config(self) -> dict[str, Any]:
         tauri_config = self.config.get("tauri", {})
+        launcher_config = self.config.get("launcher") or {}
+        # 开发模式下窗口默认可见，便于调试；生产环境初始隐藏，等待前端加载完成后再显示
+        dev_mode = bool(launcher_config.get("debug", False))
         return {
             "version": self.launcher_version,
             "build": {"frontendDist": tauri_config.get("frontenddist", "frontend/dist")},
@@ -74,7 +77,7 @@ class Adapter:
                         "height": tauri_config.get("height", 600),
                         "minWidth": 966,  # 真奇葩，窗口会无缘无故多了几个px出来
                         "minHeight": 609,
-                        "visible": False,  # 初始不可见，前端加载完成后可见
+                        "visible": dev_mode,  # 开发模式可见；生产初始隐藏，前端加载完成后可见
                     }
                 ]
             },

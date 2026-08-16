@@ -1156,6 +1156,50 @@ def test_ecl_config_handles_corrupted_file(tmp_path) -> None:
     assert service.read_ecl_config(game_path) == {}
 
 
+def test_version_settings_stored_in_versions_own_directory(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+
+    # 文件不存在时返回空字典
+    assert service.read_version_settings(game_path, "1.21.1") == {}
+
+    # 写入到版本自己的目录，而不是实例根目录
+    settings = {"customMemory": True, "memory": 6144, "jvmArgs": "-XX:+UseG1GC"}
+    saved = service.write_version_settings(game_path, "1.21.1", settings)
+    settings_file = game_path / "versions" / "1.21.1" / ".ecl" / "settings.json"
+    assert saved == settings
+    assert settings_file.is_file()
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == settings
+    assert not (game_path / "ecl.json").is_file()
+    assert service.read_version_settings(game_path, "1.21.1") == settings
+
+
+def test_version_settings_skips_unchanged_writes_and_rejects_invalid(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service()
+    writes = []
+    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+
+    def tracked_write(path, data):
+        writes.append((path, data))
+        original_write(path, data)
+
+    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    settings = {"customMemory": True, "memory": 6144}
+
+    service.write_version_settings(game_path, "1.21.1", settings)
+    service.write_version_settings(game_path, "1.21.1", dict(settings))
+    assert len(writes) == 1
+
+    with pytest.raises(GameServiceError) as error:
+        service.write_version_settings(game_path, "1.21.1", ["not", "a", "dict"])  # type: ignore[arg-type]
+    assert error.value.error_code == "INVALID_ECL_CONFIG"
+
+    with pytest.raises(GameServiceError) as error:
+        service.write_version_settings(game_path, "../escape", {})
+    assert error.value.error_code == "INVALID_VERSION_NAME"
+
+
 def test_local_mod_lifecycle_stays_inside_mods_directory(tmp_path) -> None:
     game_path = tmp_path / ".minecraft"
     source = tmp_path / "example.jar"

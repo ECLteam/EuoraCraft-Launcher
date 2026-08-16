@@ -164,6 +164,33 @@ class AccountHandlers(_FrontendState):
         return {"success": True}
 
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
+    async def accounts_set_favorite(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        设置账户是否收藏。
+
+        :param body: 包含账户标识与收藏标记的 IPC 请求数据
+        :return: 刷新后的完整账户列表
+        """
+        return await to_thread.run_sync(
+            self.accounts.set_favorite,
+            body.get("account_id"),
+            bool(body.get("favorite")),
+        )
+
+    @_ipc_handler("ACCOUNT_OPERATION_FAILED")
+    async def accounts_set_pinned(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        设置账户是否置顶。
+
+        :param body: 包含账户标识与置顶标记的 IPC 请求数据
+        :return: 刷新后的完整账户列表
+        """
+        return await to_thread.run_sync(
+            self.accounts.set_pinned,
+            body.get("account_id"),
+            bool(body.get("pinned")),
+        )
+    @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_refresh_profile(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         刷新账户信息。

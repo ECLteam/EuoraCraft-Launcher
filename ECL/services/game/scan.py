@@ -421,6 +421,62 @@ class ScanCoordinator(_GameState):
         self.patch_ecl_config(game_path, {"activeVersion": name})
 
     @staticmethod
+    def _version_settings_path(game_path: Path, version_id: str) -> Path:
+        return game_path / "versions" / version_id / ".ecl" / "settings.json"
+
+    def read_version_settings(self, game_path: Any, version_id: Any) -> dict[str, Any]:
+        """
+        读取版本目录中的独立启动设置（``.ecl/settings.json``）。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: Minecraft 版本或实例标识
+        :return: 该版本的启动设置；文件不存在或损坏时返回空字典
+        """
+        path = self._normalize_game_path(game_path)
+        name = self._normalize_version_name(version_id, "实例名称")
+        settings_path = self._version_settings_path(path, name)
+        if not settings_path.is_file():
+            return {}
+        try:
+            raw = settings_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            self.logger.warning("读取版本独立设置失败 %s: %s", settings_path, exc)
+            return {}
+
+    def write_version_settings(self, game_path: Any, version_id: Any, data: dict[str, Any]) -> dict[str, Any]:
+        """
+        原子写入版本目录中的独立启动设置。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: Minecraft 版本或实例标识
+        :param data: 该版本的启动设置数据
+        :return: 写入后的完整设置
+        """
+        if not isinstance(data, dict):
+            raise GameServiceError("版本设置数据必须是字典", "INVALID_ECL_CONFIG")
+        path = self._normalize_game_path(game_path)
+        name = self._normalize_version_name(version_id, "实例名称")
+        settings_path = self._version_settings_path(path, name)
+        try:
+            with self._lock:
+                settings_path.parent.mkdir(parents=True, exist_ok=True)
+                if settings_path.is_file():
+                    try:
+                        existing = json.loads(settings_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, UnicodeDecodeError):
+                        existing = None
+                    if existing == data:
+                        self.logger.debug("跳过未变化的版本独立设置写入: %s", settings_path)
+                        return deepcopy(data)
+                atomic_write_text(settings_path, json.dumps(data, ensure_ascii=False, indent=2))
+                self.logger.debug("写入版本独立设置: %s", settings_path)
+        except OSError as exc:
+            raise GameServiceError(f"写入版本独立设置失败: {exc}", "ECL_CONFIG_WRITE_FAILED") from exc
+        return deepcopy(data)
+
+    @staticmethod
     def _java_major_version(version: Any) -> int:
         value = str(version or "").strip()
         if value.startswith("1."):

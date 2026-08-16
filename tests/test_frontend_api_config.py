@@ -261,6 +261,7 @@ def _build_api(tmp_path) -> FrontendApi:
         config=ConfigManager(tmp_path / "ECL_data", bus),
         http=FakeHttp(),
         accounts=FakeAccounts(),
+        connector=SimpleNamespace(),
         wardrobe=FakeWardrobe(),
         info_card=FakeInfoCard(),
         game=FakeGame(),
@@ -481,7 +482,8 @@ def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
     )
 
 
-def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> None:
+def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
     api = _build_api(tmp_path)
 
     result = asyncio.run(
@@ -501,7 +503,10 @@ def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path) -> No
         "player@example.com",
         "secret-password",
     )
-    assert api.config.get_config("authlib")["servers"] == [
+    # 外置登录服务器历史保存在独立用户文件中，setting.json 不再包含账户相关数据。
+    assert api.config.get_config("authlib") is None
+    servers_file = tmp_path / "home" / ".ECL" / "accounts" / "authlib" / "servers.json"
+    assert json.loads(servers_file.read_text(encoding="utf-8")) == [
         {
             "url": "https://skin.example.com/api/yggdrasil/",
             "email": "player@example.com",

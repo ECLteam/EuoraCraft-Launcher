@@ -176,6 +176,8 @@ class AccountManager:
         # 离线账户和当前选择由本类持久化；在线账户数据由对应提供者保存。
         self._offline_accounts: dict[str, dict[str, Any]] = {}
         self._current_account_id: str | None = None
+        # 账户偏好（收藏/置顶）独立存储，覆盖离线、微软与外置账户。
+        self._account_prefs: dict[str, dict[str, bool]] = {}
         phase_started = perf_counter()
         self._load_state()
         self.logger.debug("账户聚合状态读取完成，duration=%.2fs", perf_counter() - phase_started)
@@ -234,6 +236,13 @@ class AccountManager:
             current_account_id = state.get("current_account_id")
             if isinstance(current_account_id, str) and current_account_id:
                 self._current_account_id = current_account_id
+            account_prefs = state.get("account_prefs", {})
+            if isinstance(account_prefs, dict):
+                self._account_prefs = {
+                    str(account_id): flags
+                    for account_id, flags in account_prefs.items()
+                    if isinstance(flags, dict) and isinstance(account_id, (str, int))
+                }
             self.logger.debug(
                 "已读取账户聚合状态: offline=%d, current_selected=%s",
                 len(self._offline_accounts),
@@ -246,6 +255,7 @@ class AccountManager:
         state = {
             "offline_accounts": self._offline_accounts,
             "current_account_id": self._current_account_id,
+            "account_prefs": self._account_prefs,
         }
         temporary_path = self.state_path.with_suffix(".json.tmp")
         try:
@@ -389,6 +399,9 @@ class AccountManager:
         accounts = offline_accounts + microsoft_accounts + authlib_accounts
         for account in accounts:
             account["isCurrent"] = account["id"] == self._current_account_id
+            self._apply_account_prefs(account)
+        # 置顶账户优先，其次是收藏账户，组内保持原有顺序。
+        accounts.sort(key=lambda account: (not account.get("pinned", False), not account.get("favorite", False)))
         return accounts
 
     def _ensure_current_account(self) -> None:
@@ -400,6 +413,67 @@ class AccountManager:
             self._current_account_id = accounts[0]["id"] if accounts else None
             if accounts or self.state_path.exists():
                 self._save_state()
+
+
+    def _apply_account_prefs(self, account: dict[str, Any]) -> None:
+        """
+        在账户数据中注入收藏/置顶标记。
+
+        :param account: 单个账户字典，会被原地修改。
+        """
+        prefs = self._account_prefs.get(account["id"], {})
+        account["favorite"] = bool(prefs.get("favorite"))
+        account["pinned"] = bool(prefs.get("pinned"))
+
+    def set_favorite(self, account_id: Any, favorite: bool) -> dict[str, Any]:
+        """
+        设置账户是否收藏。
+
+        :param account_id: 账户的稳定标识
+        :param favorite: 是否收藏
+        :returns: 刷新后的完整账户列表
+        """
+        return self._set_account_flag(account_id, "favorite", favorite)
+
+    def set_pinned(self, account_id: Any, pinned: bool) -> dict[str, Any]:
+        """
+        设置账户是否置顶。
+
+        :param account_id: 账户的稳定标识
+        :param pinned: 是否置顶
+        :returns: 刷新后的完整账户列表
+        """
+        return self._set_account_flag(account_id, "pinned", pinned)
+
+    def _set_account_flag(self, account_id: Any, flag: str, value: bool) -> dict[str, Any]:
+        """
+        设置账户的布尔标记（收藏/置顶）并持久化。
+
+        :param account_id: 账户的稳定标识
+        :param flag: 标记名（"favorite" 或 "pinned"）
+        :param value: 标记值
+        :returns: 刷新后的完整账户列表
+        """
+        if not isinstance(account_id, str) or not account_id:
+            raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
+        self._validate_account_prefs(account_id)
+        with self._lock:
+            prefs = self._account_prefs.setdefault(account_id, {})
+            prefs[flag] = bool(value)
+            self._save_state()
+        self._emit_changed()
+        return self.list_accounts()
+
+    def _validate_account_prefs(self, account_id: str) -> None:
+        """
+        验证账户是否存在，不存在时抛出 ``AccountError``。
+
+        :param account_id: 账户的稳定标识
+        """
+        with self._lock:
+            account_ids = {account["id"] for account in self._all_accounts()}
+        if account_id not in account_ids:
+            raise AccountError("账号不存在，无法设置偏好", "ACCOUNT_NOT_FOUND")
 
     def list_accounts(self) -> dict[str, Any]:
         """
@@ -629,6 +703,7 @@ class AccountManager:
             if self._current_account_id == account_id:
                 remaining_accounts = self._all_accounts()
                 self._current_account_id = remaining_accounts[0]["id"] if remaining_accounts else None
+            self._account_prefs.pop(account_id, None)
             self._save_state()
         self._emit_changed()
 
