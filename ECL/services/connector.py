@@ -5,21 +5,15 @@ import json
 import logging
 import socket
 import struct
-import sys
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-from ipaddress import IPv4Address
-from threading import Thread
 from typing import Any
 
 import easytier_pyo3
 import httpx
 import psutil
 
-from ECL.services.florolding import Florolding, find_free_port, machine_id, validate_code
-from ECL.services.florolding.Florolding.F_Client import AsyncFloroldingClient
+from ECL.services.florolding import Florolding, find_free_port, validate_code
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 
@@ -29,38 +23,6 @@ _NODE_LIST_URL = "https://api.qomicex.top/api/nodes"
 _NODE_UA = "ECL"
 _DEFAULT_NODES = ["tcp://public.easytier.cn:11010"]
 _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
-
-
-class _LoggerWriter:
-    """
-    把写往 stdout 的文本按行转发到日志记录器。
-
-    florolding 库内部用 ``print()`` 输出（忽略传入的 log_callback），改动子模块
-    会影响其独立使用，因此这里从外部把 stdout 重定向到日志，避免污染终端。
-    """
-
-    def __init__(self, level: int = logging.INFO) -> None:
-        self._level = level
-        self._buffer = ""
-
-    def write(self, text: str) -> int:
-        self._buffer += text
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            if line.strip():
-                logger.log(self._level, line)
-        return len(text)
-
-    def flush(self) -> None:
-        if self._buffer.strip():
-            logger.log(self._level, self._buffer)
-            self._buffer = ""
-
-    def isatty(self) -> bool:
-        return False
-
-    def fileno(self) -> int | None:
-        return None
 
 
 # ── 类型别名 ──────────────────────────────────────────────────────────
@@ -120,10 +82,6 @@ class ConnectorService:
         self._nodes: list[str] = list(_DEFAULT_NODES)
         self._error: str | None = None
         self._started: bool = False
-
-        # florolding 库 stdout 捕获（转发到日志记录器）
-        self._stdout_capture: _LoggerWriter | None = None
-        self._saved_stdout: Any = None
 
         # 易用性
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -245,38 +203,6 @@ EasyTier 是否可用。
         """
         return value.startswith(_EASYTIER_SCHEMES)
 
-    # ── florolding stdout 捕获 ─────────────────────────────────────
-
-    def _begin_stdout_capture(self) -> None:
-        """
-        把 sys.stdout 重定向到日志记录器，捕获 florolding 库的 print 输出。
-
-        幂等：已捕获时直接返回。
-        """
-        if self._stdout_capture is not None:
-            return
-        stdout = sys.stdout
-        if stdout is None:
-            return
-        self._saved_stdout = stdout
-        self._stdout_capture = _LoggerWriter()
-        sys.stdout = self._stdout_capture
-
-    def _end_stdout_capture(self) -> None:
-        """
-        恢复原始的 sys.stdout。
-
-        幂等：未捕获时直接返回。
-        """
-        if self._stdout_capture is None:
-            return
-        try:
-            self._stdout_capture.flush()
-        finally:
-            sys.stdout = self._saved_stdout
-            self._saved_stdout = None
-            self._stdout_capture = None
-
     # ── 状态查询 ────────────────────────────────────────────────────
 
     @staticmethod
@@ -381,7 +307,6 @@ EasyTier 是否可用。
             raise ConnectorError("当前已有活跃的房间，请先退出")
 
         logger.debug("开始创建联机房间: minecraft_port=%s, easytier=%s", port, self.easytier_available)
-        self._begin_stdout_capture()
         try:
             florolding = Florolding(
                 launcher_info=self._launcher_info,
@@ -416,7 +341,6 @@ EasyTier 是否可用。
         except Exception as exc:
             self._mode = "idle"
             self._error = str(exc)
-            self._end_stdout_capture()
             logger.exception("创建联机房间失败: %s", exc)
             raise ConnectorError(f"创建房间失败: {exc}") from exc
 
@@ -450,13 +374,12 @@ EasyTier 是否可用。
         self._room_code = code
         self._error = None
 
-        self._begin_stdout_capture()
+        self._nodes = self.fetch_nodes()
         try:
             florolding = Florolding(
                 launcher_info=self._launcher_info,
                 log_callback=self._log_callback,
             )
-            self._nodes = self.fetch_nodes()
             florolding.set_nodes(self._nodes)
             logger.debug("开始加入联机房间: room_code=%s, player_name=%s", code, self._player_name)
 
@@ -473,7 +396,6 @@ EasyTier 是否可用。
             self._mode = "idle"
             self._error = str(exc)
             self._stop_async_thread_client()
-            self._end_stdout_capture()
             logger.exception("加入联机房间失败: %s", exc)
             raise ConnectorError(f"加入房间失败: {exc}") from exc
 
@@ -487,8 +409,8 @@ EasyTier 是否可用。
         """
         执行加入房间的握手流程，返回 EasyTier 节点和本地 Minecraft 映射端口。
 
-        florolding 的 ``join_room`` 只返回 EasyTier 节点，不暴露本地映射端口，而启动器
-        需要它向前端展示连接地址，因此这里复刻其握手流程并保留端口。
+        florolding 已提供 ``join_room`` 完成加入与协议协商、``bind_mc_port`` 完成
+        Minecraft 端口转发，这里直接调用二者，仅额外保留端口用于向前端展示。
 
         :param florolding: Florolding 实例
         :param room_code: 房间码
@@ -496,76 +418,13 @@ EasyTier 是否可用。
         :param conn_timeout: 发现房主大厅的超时秒数
         :returns: (easytier_node, 本地 Minecraft 映射端口)
         """
-        machine_idv = machine_id()
-        easytier_config: dict = deepcopy(florolding.easytier_config)
-        easytier_config.update({
-            "network_identity": {
-                "network_name": f"scaffolding-mc-{room_code[2:11]}",
-                "network_secret": room_code[12:21],
-            },
-            "peer": florolding.nodes,
-        })
-
-        node = easytier_pyo3.Node(easytier_config)
-        node.start()
-
-        host_node_info: dict = {}
-        start_time = time.time()
-        while not host_node_info:
-            for info in node.routes():
-                if info["hostname"].lower().startswith("scaffolding-mc-server-") and (
-                    info.get("ipv4_addr", {}).get("address", {}).get("addr")
-                ):
-                    host_node_info = info
-                    break
-            if host_node_info:
-                break
-            time.sleep(1)
-            if time.time() - start_time > conn_timeout:
-                raise TimeoutError("连接超时，无法找到联机大厅")
-
-        server_port = host_node_info["hostname"].replace("scaffolding-mc-server-", "")
-        if not server_port.isnumeric() or not (0 < int(server_port) <= 65535):
-            raise ValueError("联机大厅端口不合规")
-
-        host_virtual_ip = IPv4Address(host_node_info["ipv4_addr"]["address"]["addr"]).exploded
-        bind_server_port = find_free_port()
-        node.apply_config({
-            "port_forward": [
-                {
-                    "bind_addr": f"127.0.0.1:{bind_server_port}",
-                    "dst_addr": f"{host_virtual_ip}:{server_port}",
-                    "proto": "tcp",
-                }
-            ]
-        })
-
-        client = AsyncFloroldingClient(
-            machine_id=machine_idv,
-            easytier_id=node.peer_id(),
-            player_name=player_name,
-            server_port=bind_server_port,
-            vendor=florolding.vendor,
-            log_callback=self._log_callback,
-        )
+        client, node = florolding.join_room(room_code, player_name, conn_timeout)
         self._client = client
-        Thread(target=client.start, daemon=True).start()
-        while not client.writer:
-            time.sleep(1)
 
-        client.sync_c_protocols()
-        mc_port = client.sync_server_port()
         bind_mc_port = find_free_port()
-        node.apply_config({
-            "port_forward": [
-                {
-                    "bind_addr": f"127.0.0.1:{bind_mc_port}",
-                    "dst_addr": f"{host_virtual_ip}:{mc_port}",
-                    "proto": "tcp",
-                }
-            ]
-        })
-
+        if not florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout):
+            node.stop()
+            raise ConnectorError("绑定 Minecraft 端口失败")
         return node, bind_mc_port
 
     def leave(self) -> dict[str, Any]:
@@ -589,7 +448,6 @@ EasyTier 是否可用。
             except Exception:
                 logger.debug("停止 EasyTier 节点失败", exc_info=True)
 
-        self._end_stdout_capture()
         self._mode = "idle"
         self._room_code = None
         self._mc_host = None
