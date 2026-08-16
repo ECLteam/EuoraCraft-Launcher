@@ -22,6 +22,7 @@ def _collect_all_safe(package: str) -> tuple[list, list, list]:
     except Exception:
         return [], [], []
 
+
 _wheel_datas, _wheel_binaries, _wheel_hiddenimports = _collect_all_safe("pytauri_wheel")
 _plugin_datas, _plugin_binaries, _plugin_hiddenimports = _collect_all_safe("pytauri_plugins")
 def _resolve_icon() -> str | None:
