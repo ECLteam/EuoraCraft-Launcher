@@ -129,10 +129,12 @@ def create_application(
     try:
         phase_started = perf_counter()
         logger.debug("正在创建共享 HTTP 客户端")
+        disable_ssl_verify = bool((state.config.get("launcher") or {}).get("disable_ssl_verify", False))
         http = httpx.Client(
             timeout=httpx.Timeout(30, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
+            verify=not disable_ssl_verify,
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
@@ -143,6 +145,7 @@ def create_application(
             state.data_path,
             microsoft_client_id=environment.get_value("MICROSOFT_CLIENT_ID"),
             event_bus=events,
+            disable_ssl_verify=disable_ssl_verify,
         )
         created.append(accounts)
         logger.info(
@@ -169,7 +172,11 @@ def create_application(
         phase_started = perf_counter()
         logger.debug("正在初始化联机服务 ConnectorService")
         from ECL.services.connector import ConnectorService
-        connector = ConnectorService()
+        current_account = accounts.current_account()
+        connector = ConnectorService(
+            player_name=(current_account or {}).get("alias") or "Player",
+            http_client=http,
+        )
         logger.debug(
             "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",
             connector.available,

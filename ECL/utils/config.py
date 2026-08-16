@@ -10,7 +10,7 @@ from ECL.events import EventBus
 from ECL.utils.logging import get_logger
 
 default_config: dict[str, Any] = {
-    "launcher": {"debug": False},
+    "launcher": {"debug": False, "disable_ssl_verify": False},
     "game": {
         "minecraft_paths": [],
         "java_auto": True,

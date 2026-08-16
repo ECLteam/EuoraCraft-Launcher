@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from anyio import to_thread
+
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import InstanceTarget, KickRequest, PortRequest, RoomCodeRequest
 from ECL.services.connector import ConnectorError, ConnectorNotAvailableError
@@ -22,7 +24,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_host_port(self, body: dict[str, Any]) -> ApiResponse:
         try:
             port = PortRequest.model_validate(body).port
-            result = self.connector.host_port(port)
+            result = await to_thread.run_sync(self.connector.host_port, port)
             return success(result)
         except ConnectorNotAvailableError as exc:
             return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
@@ -33,7 +35,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_host_instance(self, body: dict[str, Any]) -> ApiResponse:
         try:
             target = InstanceTarget.model_validate(body)
-            result = self.connector.host_instance(target.game_path, target.version_id)
+            result = await to_thread.run_sync(self.connector.host_instance, target.game_path, target.version_id)
             return success(result)
         except ConnectorNotAvailableError as exc:
             return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
@@ -44,7 +46,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_join(self, body: dict[str, Any]) -> ApiResponse:
         try:
             code = RoomCodeRequest.model_validate(body).code
-            result = self.connector.join(code)
+            result = await to_thread.run_sync(self.connector.join, code)
             return success(result)
         except ConnectorNotAvailableError as exc:
             return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")

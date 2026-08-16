@@ -97,8 +97,9 @@ class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
         on_device_code: Callable[[dict[str, str]], None],
         on_progress: Callable[[str], None],
         cache_path: Path | str | None = None,
+        verify: bool = True,
     ) -> None:
-        super().__init__(client_id, cache_path, on_device_code)
+        super().__init__(client_id, cache_path, on_device_code, verify=verify)
         self._progress_client = _ProgressMinecraftClient(self.minecraft_client, on_progress)
         self.minecraft_client = self._progress_client
 
@@ -149,6 +150,7 @@ class AccountManager:
         microsoft_client_id: str | None = None,
         authlib_manager: AuthlibAccountManager | None = None,
         event_bus: EventBus | None = None,
+        disable_ssl_verify: bool = False,
     ):
         """
         加载持久化账户，并连接两种在线认证提供者。
@@ -158,6 +160,7 @@ class AccountManager:
         :param microsoft_client_id: Microsoft OAuth 客户端 ID
         :param authlib_manager: 可选的 Authlib 账户管理器
         :param event_bus: 当前应用上下文拥有的事件总线
+        :param disable_ssl_verify: 是否关闭 Microsoft 登录服务器的 SSL 证书校验
         """
         self.logger = get_logger("AccountManager")
         self.events = event_bus or EventBus()
@@ -192,6 +195,7 @@ class AccountManager:
                 client_id=effective_client_id,
                 on_device_code=self._on_device_code,
                 on_progress=self._on_microsoft_progress,
+                verify=not disable_ssl_verify,
             )
             self.logger.debug("Microsoft 认证管理器已创建，duration=%.2fs", perf_counter() - phase_started)
         else:
