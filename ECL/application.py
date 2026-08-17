@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import ssl
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -25,6 +26,16 @@ if TYPE_CHECKING:
     from ECL.services.connector import ConnectorService
 
 logger = logging.getLogger("EuoraCraft-Launcher.Application")
+
+
+def _apply_ssl_verify(ssl_context: ssl.SSLContext, verify: bool) -> None:
+    """设置 SSL 上下文的证书校验开关，供共享 HTTP 客户端运行时热切换。"""
+    if verify:
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        ssl_context.check_hostname = True
+    else:
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
 
 
 @dataclass
@@ -130,11 +141,13 @@ def create_application(
         phase_started = perf_counter()
         logger.debug("正在创建共享 HTTP 客户端")
         disable_ssl_verify = bool((state.config.get("launcher") or {}).get("disable_ssl_verify", False))
+        ssl_verify_context = ssl.create_default_context()
+        _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
         http = httpx.Client(
             timeout=httpx.Timeout(30, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
-            verify=not disable_ssl_verify,
+            verify=ssl_verify_context,
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
@@ -224,6 +237,10 @@ def create_application(
             return
         state.config = environment.apply_to_config(config.get_config())
         state.debug = bool((data or {}).get("debug", False))
+        _apply_ssl_verify(
+            ssl_verify_context,
+            bool((data or {}).get("disable_ssl_verify", False)),
+        )
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
