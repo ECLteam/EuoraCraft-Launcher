@@ -44,6 +44,24 @@ def _safe_json(data: bytes) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _join_authors(authors: Any) -> str:
+    """
+    将 fabric/quilt 的 authors 结构（字符串或含 name 的对象）合并为逗号分隔文本。
+
+    :param authors: 元数据中的作者列表
+    :return: 逗号分隔的作者名
+    """
+    if not isinstance(authors, list):
+        return ""
+    names: list[str] = []
+    for author in authors:
+        if isinstance(author, str) and author:
+            names.append(author)
+        elif isinstance(author, dict) and author.get("name"):
+            names.append(str(author["name"]))
+    return ", ".join(names)
+
+
 class ResourceCoordinator:
     """
     统一管理模组、资源包、光影包、数据包和原理图。
@@ -96,22 +114,34 @@ class ResourceCoordinator:
                 names = set(archive.namelist())
                 if "fabric.mod.json" in names:
                     data = _safe_json(archive.read("fabric.mod.json"))
+                    depends = data.get("depends") or {}
                     result.update({
                         "loader": "fabric",
                         "projectId": data.get("id"),
                         "name": data.get("name") or data.get("id") or result["name"],
                         "version": data.get("version"),
-                        "dependencies": list((data.get("depends") or {}).keys()),
+                        "author": _join_authors(data.get("authors")),
+                        "gameVersion": str(depends.get("minecraft")) if depends.get("minecraft") else None,
+                        "dependencies": list(depends.keys()),
                     })
                 elif "quilt.mod.json" in names:
                     data = _safe_json(archive.read("quilt.mod.json"))
                     quilt = data.get("quilt_loader") or {}
+                    metadata = quilt.get("metadata") or {}
+                    contributors = metadata.get("contributors") or {}
+                    depends = quilt.get("depends") or []
+                    minecraft = next(
+                        (item.get("versions") for item in depends if isinstance(item, dict) and item.get("id") == "minecraft"),
+                        None,
+                    )
                     result.update({
                         "loader": "quilt",
                         "projectId": quilt.get("id"),
-                        "name": ((quilt.get("metadata") or {}).get("name") or quilt.get("id") or result["name"]),
+                        "name": metadata.get("name") or quilt.get("id") or result["name"],
                         "version": quilt.get("version"),
-                        "dependencies": [item.get("id") for item in quilt.get("depends") or [] if isinstance(item, dict)],
+                        "author": ", ".join(contributors.keys()) if isinstance(contributors, dict) else "",
+                        "gameVersion": str(minecraft) if minecraft else None,
+                        "dependencies": [item.get("id") for item in depends if isinstance(item, dict)],
                     })
                 else:
                     toml_name = "META-INF/neoforge.mods.toml" if "META-INF/neoforge.mods.toml" in names else "META-INF/mods.toml"
@@ -121,15 +151,22 @@ class ResourceCoordinator:
                         first = mods[0] if mods and isinstance(mods[0], dict) else {}
                         mod_id = str(first.get("modId") or "")
                         dependencies: list[str] = []
+                        minecraft_range: str | None = None
                         dep_map = data.get("dependencies") or {}
                         for dep in dep_map.get(mod_id) or []:
-                            if isinstance(dep, dict) and dep.get("mandatory") and dep.get("modId"):
+                            if not isinstance(dep, dict) or not dep.get("modId"):
+                                continue
+                            if dep.get("modId") == "minecraft":
+                                minecraft_range = str(dep.get("versionRange") or "")
+                            elif dep.get("mandatory"):
                                 dependencies.append(str(dep["modId"]))
                         result.update({
                             "loader": "neoforge" if "neoforge" in toml_name else "forge",
                             "projectId": mod_id or None,
                             "name": first.get("displayName") or mod_id or result["name"],
                             "version": first.get("version"),
+                            "author": str(first.get("authors") or ""),
+                            "gameVersion": minecraft_range,
                             "dependencies": dependencies,
                         })
         except (OSError, ValueError, KeyError, zipfile.BadZipFile):
@@ -399,6 +436,201 @@ class ResourceCoordinator:
             response.raise_for_status()
             return {"source": source, "items": response.json().get("data", [])}
         raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
+
+    @staticmethod
+    def map_search_hits(source: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        将 Modrinth 搜索命中结果映射为前端在线模组卡片所需的结构。
+
+        :param source: 数据来源（modrinth）
+        :param hits: Modrinth ``/search`` 返回的命中列表
+        :return: 前端 ``ModSearchItem`` 兼容的字典列表
+        """
+        result: list[dict[str, Any]] = []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            slug = str(hit.get("slug") or "")
+            project_url = f"https://modrinth.com/mod/{slug}"
+            result.append({
+                "id": hit.get("project_id"),
+                "projectId": hit.get("project_id"),
+                "slug": slug,
+                "title": hit.get("title"),
+                "displayTitle": hit.get("title"),
+                "description": hit.get("description"),
+                "author": hit.get("author"),
+                "iconUrl": hit.get("icon_url"),
+                "downloads": hit.get("downloads"),
+                "follows": hit.get("follows"),
+                "dateModified": hit.get("date_modified"),
+                "source": source,
+                "projectUrl": project_url,
+                "categories": hit.get("categories") or [],
+                "loaders": hit.get("loaders") or [],
+                "gameVersions": hit.get("game_versions") or [],
+                "alternatives": [{
+                    "source": source,
+                    "projectId": hit.get("project_id"),
+                    "slug": slug,
+                    "projectUrl": project_url,
+                }],
+            })
+        return result
+
+    def fetch_project_info(self, source: str, project_id: str) -> dict[str, Any]:
+        """
+        获取 Modrinth 项目详情，映射为前端 ``ModInfo`` 结构。
+
+        :param source: 数据来源（仅支持 modrinth）
+        :param project_id: Modrinth 项目 ID
+        :return: 项目详情字典
+        """
+        if source != "modrinth":
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/project/{project_id}",
+            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        slug = str(data.get("slug") or "")
+        return {
+            "id": data.get("id"),
+            "slug": slug,
+            "title": data.get("title"),
+            "description": data.get("description"),
+            "author": "",
+            "body": data.get("body"),
+            "iconUrl": data.get("icon_url"),
+            "source": "modrinth",
+            "loaders": data.get("loaders") or [],
+            "gameVersions": data.get("game_versions") or [],
+            "projectUrl": f"https://modrinth.com/mod/{slug}",
+        }
+
+    def fetch_project_versions(
+        self,
+        source: str,
+        project_id: str,
+        game_version: str = "",
+        loader: str = "",
+    ) -> list[dict[str, Any]]:
+        """
+        获取 Modrinth 项目版本列表，映射为前端 ``ModVersion`` 结构。
+
+        :param source: 数据来源（仅支持 modrinth）
+        :param project_id: Modrinth 项目 ID
+        :param game_version: 兼容的 Minecraft 版本筛选
+        :param loader: 兼容的加载器筛选
+        :return: 版本字典列表
+        """
+        if source != "modrinth":
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        params: dict[str, Any] = {}
+        if game_version:
+            params["game_versions"] = json.dumps([game_version])
+        if loader:
+            params["loaders"] = json.dumps([loader.casefold()])
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/project/{project_id}/version",
+            params=params,
+            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        versions = response.json()
+        result: list[dict[str, Any]] = []
+        for item in versions if isinstance(versions, list) else []:
+            if not isinstance(item, dict):
+                continue
+            files = item.get("files") or []
+            primary = next(
+                (file for file in files if isinstance(file, dict) and file.get("primary")),
+                files[0] if files else None,
+            )
+            result.append({
+                "id": item.get("id"),
+                "projectId": item.get("project_id"),
+                "name": item.get("name"),
+                "versionNumber": item.get("version_number"),
+                "gameVersions": item.get("game_versions") or [],
+                "loaders": item.get("loaders") or [],
+                "filename": primary.get("filename") if isinstance(primary, dict) else "",
+                "datePublished": item.get("date_published"),
+                "downloads": item.get("downloads"),
+                "releaseType": item.get("release_type"),
+            })
+        return result
+
+    def install_online_resource(
+        self,
+        game_path: Any,
+        version_id: Any,
+        resource_type: str,
+        source: str,
+        project_id: str,
+        version_id_str: str,
+        version_isolation: Any = False,
+    ) -> dict[str, Any]:
+        """
+        按版本 ID 下载在线资源到目标目录，并记录来源到清单。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 目标实例 ID
+        :param resource_type: 资源类型（mod）
+        :param source: 数据来源（modrinth）
+        :param project_id: Modrinth 项目 ID
+        :param version_id_str: Modrinth 版本 ID
+        :param version_isolation: 是否启用版本隔离
+        :return: 安装结果（文件名、来源、是否跳过）
+        """
+        if source != "modrinth":
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        root = self._resource_root(game_path, version_id, resource_type, version_isolation)
+        root.mkdir(parents=True, exist_ok=True)
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/version/{version_id_str}",
+            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        files = data.get("files") or []
+        selected = next(
+            (item for item in files if isinstance(item, dict) and item.get("primary")),
+            files[0] if files else None,
+        )
+        if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
+            raise GameServiceError("该版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
+        destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
+        if destination.exists():
+            raise GameServiceError(f"模组已存在：{selected['filename']}", "RESOURCE_ALREADY_EXISTS")
+        temp = root / f".{destination.name}.ecl-download"
+        try:
+            with httpx.stream("GET", str(selected["url"]), timeout=30, follow_redirects=True) as stream:
+                stream.raise_for_status()
+                with temp.open("wb") as output:
+                    for chunk in stream.iter_bytes(1024 * 1024):
+                        output.write(chunk)
+            hashes = selected.get("hashes") or {}
+            if hashes.get("sha512") and _sha512(temp).casefold() != str(hashes["sha512"]).casefold():
+                raise GameServiceError("下载文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
+            temp.replace(destination)
+            manifest = self._read_resource_manifest(game_path, version_id)
+            records = manifest.setdefault("resources", {})
+            records[f"{resource_type}:{destination.name}"] = {
+                "source": source,
+                "projectId": project_id,
+                "versionId": version_id_str,
+                "sha512": _sha512(destination),
+                "enabled": True,
+            }
+            self._write_resource_manifest(game_path, version_id, manifest)
+            return {"filename": destination.name, "source": source, "skipped": False}
+        finally:
+            temp.unlink(missing_ok=True)
 
     def identify_resource_hash(
         self, sha512: str, curseforge_key: str | None = None

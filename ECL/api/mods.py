@@ -4,7 +4,7 @@ from typing import Any
 
 from anyio import to_thread
 
-from ECL.api.contracts import ApiResponse, failure, success
+from ECL.api.contracts import ApiResponse, success
 
 from .bridge import _FrontendState, _ipc_handler, _open_folder
 
@@ -69,41 +69,89 @@ class ModHandlers(_FrontendState):
         await to_thread.run_sync(_open_folder, str(path))
         return success({"path": str(path)})
 
+    @_ipc_handler("MOD_SEARCH_FAILED")
     async def search_mods(self, body: dict[str, Any]) -> ApiResponse:
         """
-        明确拒绝尚未接入的在线模组搜索，避免前端收到未知命令错误。
+        搜索在线模组（Modrinth），映射为前端在线模组卡片结构。
 
         :param body: 在线搜索条件
-        :return: 稳定的功能不可用响应
+        :return: 在线模组搜索结果
         """
-        return failure("在线模组目录尚未接入当前后端", "ONLINE_MOD_CATALOG_UNAVAILABLE")
+        result = await to_thread.run_sync(
+            self.game.search_online_resources,
+            body.get("query", ""),
+            body.get("game_version", ""),
+            body.get("loader_type", ""),
+            body.get("source", "modrinth"),
+            None,
+            body.get("limit", 20),
+        )
+        source = str(result.get("source") or "modrinth")
+        items = self.game.map_search_hits(source, result.get("items") or [])
+        return success(
+            {
+                "items": items,
+                "sources": {source: {"available": True, "error": "", "total": len(items)}},
+                "total": len(items),
+                "query": body.get("query", ""),
+            }
+        )
 
+    @_ipc_handler("MOD_INFO_FAILED")
     async def get_mod_info(self, body: dict[str, Any]) -> ApiResponse:
         """
-        明确拒绝尚未接入的在线模组详情查询。
+        获取在线模组项目详情。
 
         :param body: 在线模组标识和来源
-        :return: 稳定的功能不可用响应
+        :return: 模组项目详情
         """
-        return failure("在线模组目录尚未接入当前后端", "ONLINE_MOD_CATALOG_UNAVAILABLE")
+        info = await to_thread.run_sync(
+            self.game.fetch_project_info,
+            body.get("source", "modrinth"),
+            body.get("mod_id"),
+        )
+        return success(info)
 
+    @_ipc_handler("MOD_VERSIONS_FAILED")
     async def get_mod_versions(self, body: dict[str, Any]) -> ApiResponse:
         """
-        明确拒绝尚未接入的在线模组版本查询。
+        获取在线模组兼容版本列表。
 
         :param body: 在线模组标识、来源和筛选条件
-        :return: 稳定的功能不可用响应
+        :return: 兼容版本列表
         """
-        return failure("在线模组目录尚未接入当前后端", "ONLINE_MOD_CATALOG_UNAVAILABLE")
+        versions = await to_thread.run_sync(
+            self.game.fetch_project_versions,
+            body.get("source", "modrinth"),
+            body.get("mod_id"),
+            body.get("game_version", ""),
+            body.get("loader_type", ""),
+        )
+        return success(versions)
 
+    @_ipc_handler("MOD_DOWNLOAD_FAILED")
     async def download_mod(self, body: dict[str, Any]) -> ApiResponse:
         """
-        明确拒绝尚未接入的在线模组下载。
+        下载在线模组到目标实例的 ``mods`` 目录。
 
         :param body: 在线模组版本和安装目标
-        :return: 稳定的功能不可用响应
+        :return: 安装结果
         """
-        return failure("在线模组下载尚未接入当前后端", "ONLINE_MOD_CATALOG_UNAVAILABLE")
+        result = await to_thread.run_sync(
+            self.game.install_online_resource,
+            body.get("game_path"),
+            body.get("instance_id"),
+            "mod",
+            body.get("source", "modrinth"),
+            body.get("mod_id"),
+            body.get("file_id"),
+        )
+        return success(
+            {
+                "installed": [result],
+                "modsPath": str(self.game.mods_path(body.get("game_path"))),
+            }
+        )
 
 
 __all__ = ["ModHandlers"]

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from .base import GameServiceError, _GameState
+from .resources import ResourceCoordinator
 
 
 class ModCoordinator(_GameState):
@@ -17,10 +19,10 @@ class ModCoordinator(_GameState):
 
     def list_mods(self, game_path: Any) -> list[dict[str, Any]]:
         """
-        列出目标 Minecraft 根目录中的 Jar 模组。
+        列出目标 Minecraft 根目录中的 Jar 模组，并解析 jar 元数据。
 
         :param game_path: Minecraft 游戏根目录
-        :return: 前端本地模组列表所需的基础信息
+        :return: 前端本地模组列表所需的完整信息
         """
         mods_dir = self._normalize_game_path(game_path) / "mods"
         if not mods_dir.is_dir():
@@ -30,16 +32,20 @@ class ModCoordinator(_GameState):
             if not path.is_file() or not (path.name.endswith(".jar") or path.name.endswith(".jar.disabled")):
                 continue
             enabled = path.name.endswith(".jar")
-            display_name = path.name.removesuffix(".disabled").removesuffix(".jar")
+            metadata = ResourceCoordinator._parse_mod(path)
             result.append(
                 {
                     "filename": path.name,
-                    "name": display_name,
-                    "version": "",
-                    "author": "",
-                    "loader_type": "",
-                    "game_version": "",
+                    "name": metadata.get("name") or path.stem.removesuffix(".disabled"),
+                    "version": metadata.get("version") or "",
+                    "author": metadata.get("author") or "",
+                    "loader_type": metadata.get("loader") or "",
+                    "game_version": metadata.get("gameVersion") or "",
+                    "project_id": metadata.get("projectId") or "",
+                    "dependencies": metadata.get("dependencies") or [],
                     "enabled": enabled,
+                    "size": path.stat().st_size,
+                    "modified_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
                 }
             )
         return result
