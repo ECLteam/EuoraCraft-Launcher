@@ -25,8 +25,9 @@ from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
+from ECL.utils.logging import get_frontend_log_history
 
-_queued_frontend_events = frozenset({"launcher:error", "launcher:popup"})
+_queued_frontend_events = frozenset({"launcher:error", "launcher:popup", "launcher:log"})
 _max_pending_frontend_events = 50
 
 _image_mime_map = {
@@ -508,6 +509,15 @@ class _FrontendState:
         log_method = getattr(self.logger, log_level)
         log_method("[Frontend] %s", message)
         return {"success": True}
+
+    async def logs_get_history(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        返回最近缓存的启动器日志，供前端日志终端打开时补全历史。
+
+        :param body: 空请求数据
+        :return: 包含 ``logs`` 列表的成功响应
+        """
+        return {"success": True, "data": {"logs": get_frontend_log_history()}}
 
     def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
         """汇总启动游戏所需的运行时参数，优先使用调用方显式指定的值。"""

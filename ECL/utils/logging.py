@@ -4,8 +4,14 @@ import gzip
 import logging
 import logging.handlers
 import shutil
+from collections import deque
 from contextlib import suppress
 from pathlib import Path
+from threading import RLock
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ECL.events.event_bus import EventBus
 
 LOGGER_NAME = "EuoraCraft-Launcher"
 
@@ -46,6 +52,40 @@ def _gzip_rotator(source: str, destination: str) -> None:
     with Path(source).open("rb") as source_file, gzip.open(destination, "wb") as destination_file:
         shutil.copyfileobj(source_file, destination_file)
     Path(source).unlink()
+
+
+_FRONTEND_BUFFER: deque[dict[str, Any]] | None = None
+_FRONTEND_BUFFER_LOCK = RLock()
+
+
+class FrontendLogHandler(logging.Handler):
+    """
+    把结构化日志同步转发到事件总线，并保留最近日志供前端补全历史。
+
+    :param events: 承载 ``launcher:log`` 事件的事件总线
+    :param buffer: 存放最近日志的环形缓冲
+    """
+
+    def __init__(self, events: EventBus, buffer: deque[dict[str, Any]]) -> None:
+        super().__init__()
+        self._events = events
+        self._buffer = buffer
+        self.setFormatter(logging.Formatter())
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """序列化一条日志记录到环形缓冲并发布到事件总线。"""
+        entry = {
+            "time": self.formatter.formatTime(record, "%Y-%m-%d %H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "message": record.getMessage(),
+        }
+        with _FRONTEND_BUFFER_LOCK:
+            self._buffer.append(entry)
+        with suppress(Exception):
+            self._events.emit("launcher:log", entry)
 
 
 class LoggingRuntime:
@@ -139,6 +179,25 @@ class LoggingRuntime:
         self.root_logger.setLevel(logging.DEBUG)
         self._console_handler.setLevel(level)
 
+    def install_frontend_handler(self, events: EventBus, history_limit: int = 500) -> None:
+        """
+        挂接一个把日志转发到前端并保留最近历史的处理器。
+
+        幂等：只安装一次，重复调用不会产生多个处理器。
+
+        :param events: 用于中转 ``launcher:log`` 事件的事件总线
+        :param history_limit: 历史日志缓冲的最大条数
+        """
+        global _FRONTEND_BUFFER
+        if _FRONTEND_BUFFER is not None:
+            return
+        with _FRONTEND_BUFFER_LOCK:
+            if _FRONTEND_BUFFER is not None:
+                return
+            buffer: deque[dict[str, Any]] = deque(maxlen=history_limit)
+            self.root_logger.addHandler(FrontendLogHandler(events, buffer))
+            _FRONTEND_BUFFER = buffer
+
     def shutdown(self) -> None:
         """
         刷新并关闭本次运行创建的全部日志处理器。
@@ -172,6 +231,23 @@ def get_logger(name: str | None = None) -> logging.Logger:
     return logger.getChild(name) if name else logger
 
 
+def get_frontend_log_history() -> list[dict[str, Any]]:
+    """
+    返回最近推送给前端的日志记录快照，供终端打开时补全历史。
+
+    :return: 结构化的日志记录列表，未安装处理器时为空列表
+    """
+    with _FRONTEND_BUFFER_LOCK:
+        buffer = _FRONTEND_BUFFER
+        return list(buffer) if buffer is not None else []
+
+
 LoggerManager = LoggingRuntime
 
-__all__ = ["LoggerManager", "LoggingRuntime", "configure_logging", "get_logger"]
+__all__ = [
+    "LoggerManager",
+    "LoggingRuntime",
+    "configure_logging",
+    "get_frontend_log_history",
+    "get_logger",
+]

@@ -18,6 +18,7 @@ COMMAND_NAMES = (
     "user_agreement_save",
     "user_agreement_clear",
     "export_logs",
+    "logs_get_history",
     "debug_reset_launcher_data",
     "debug_clear_plugins",
     "debug_devtools_open",

@@ -102,6 +102,7 @@ class EuoraCraftLauncher:
         self.debug = self.context.state.debug
         if self.debug:
             self.logging.set_level(logging.DEBUG)
+        self.logging.install_frontend_handler(self.context.events)
         self.context.events.subscribe("config:updated", self._on_config_updated)
         self.logger.debug(
             "后端服务已就绪: accounts=%s, game=%s, plugins=%s",

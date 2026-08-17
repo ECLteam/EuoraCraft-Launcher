@@ -140,6 +140,10 @@ class Adapter:
             "game:operation_progress",
             lambda payload: api.emit_to_frontend("game:operation_progress", payload),
         )
+        bus.subscribe(
+            "launcher:log",
+            lambda payload: api.emit_to_frontend("launcher:log", payload),
+        )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
         bus.subscribe(
