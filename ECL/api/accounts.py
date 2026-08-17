@@ -117,6 +117,14 @@ class AccountHandlers(_FrontendState):
         """
         return {"success": True, "data": self.accounts.microsoft_login_config()}
 
+    async def accounts_authlib_login_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取外置登录可用性配置。
+
+        :param body: 经过边界校验的 IPC 请求数据
+        """
+        return {"success": True, "data": self.game.authlib_login_config()}
+
     async def accounts_poll_microsoft_login(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取微软登录状态。

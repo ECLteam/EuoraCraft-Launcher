@@ -276,6 +276,19 @@ class _GameState:
         # GetGames 的查询方法仍要求 game_path；查询阶段使用一个不会写入的占位路径。
         return self._context(Path.cwd() / ".minecraft", source)
 
+    def authlib_login_config(self) -> dict[str, bool]:
+        """
+        检查 authlib-injector 是否可用；不可用时前端应禁用外置登录。
+        """
+        available = False
+        if self.authlib_injector is not None:
+            try:
+                self.authlib_injector.ensure()
+                available = True
+            except Exception:
+                self.logger.warning("authlib-injector 不可用，外置登录将被禁用")
+        return {"available": available}
+
     def close(self) -> None:
         """
         取消后台任务并释放服务资源，保留已启动的游戏实例。

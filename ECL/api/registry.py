@@ -100,6 +100,7 @@ COMMAND_NAMES = (
     "accounts_add_authlib",
     "accounts_select_authlib_profile",
     "accounts_microsoft_login_config",
+    "accounts_authlib_login_config",
     "accounts_start_microsoft_login",
     "accounts_poll_microsoft_login",
     "accounts_cancel_microsoft_login",
