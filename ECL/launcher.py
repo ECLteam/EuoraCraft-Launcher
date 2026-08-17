@@ -22,28 +22,29 @@ class LauncherExitCode(IntEnum):
 
 class EuoraCraftLauncher:
     """
-    承载一次桌面应用运行，并连接日志、后端上下文与前端适配器。
+    编排一次桌面应用的完整运行周期。
 
-    业务依赖由 :func:`create_application` 构造；启动器本身只协调初始化、运行和关闭。
+    串联日志系统、后端应用上下文与前端适配器；业务依赖由
+    :func:`create_application` 构造，本类仅负责初始化、运行与关闭的调度。
     """
 
     def __init__(self) -> None:
         """
-        读取运行目录并初始化最早可用的日志系统。
+        收集运行环境信息并初始化日志系统，同时填充启动器的运行状态字段。
         """
         self.runtime_info = get_runtime_info()
-        self.app_path: Path = self.runtime_info["app_path"]
-        self.resource_path: Path = self.runtime_info["resource_path"]
-        self.data_path = self.app_path / "ECL_data"
-        self.launcher_version = __version__
-        self.launcher_version_type = __version_type__
-        self.is_frozen = self.runtime_info["is_frozen"]
-        self.debug = False
-        self.config: dict[str, Any] = {}
-        self.context: ApplicationContext | None = None
-        self._shutdown_complete = False
-        self.logging = configure_logging(self.data_path)
-        self.logger = self.logging.get_logger("EuoraCraft_Launcher")
+        self.app_path: Path = self.runtime_info["app_path"]  # 启动器数据与运行文件所在目录
+        self.resource_path: Path = self.runtime_info["resource_path"]  # 打包资源或源码资源所在目录
+        self.data_path = self.app_path / "ECL_data"  # 后端持久化数据目录
+        self.launcher_version = __version__  # 启动器版本号
+        self.launcher_version_type = __version_type__  # 启动器发布类型（dev/alpha/beta/release）
+        self.is_frozen = self.runtime_info["is_frozen"]  # 是否运行于打包后的可执行文件
+        self.debug = False  # 是否启用 Debug 日志
+        self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
+        self.context: ApplicationContext | None = None  # 已构造的后端应用上下文
+        self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
+        self.logging = configure_logging(self.data_path)  # 日志系统实例
+        self.logger = self.logging.get_logger("EuoraCraft_Launcher")  # 启动器专用日志器
         self.logger.debug(
             "启动器运行环境: app_path=%s, resource_path=%s, frozen=%s, python=%s",
             self.app_path,
@@ -56,7 +57,7 @@ class EuoraCraftLauncher:
         """
         初始化后端并运行前端事件循环。
 
-        :return: 可直接交给操作系统的稳定退出码
+        :return: 本次运行的结果退出码（LauncherExitCode 枚举值）
         """
         self.logger.info("正在启动 EuoraCraft Launcher V%s %s", self.launcher_version, self.launcher_version_type)
         try:

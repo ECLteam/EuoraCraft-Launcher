@@ -12,9 +12,9 @@ from ECL.utils import get_logger
 
 class _PluginState:
     """
-    保存插件发现、生命周期和扩展点注册共享的状态。
+    保存插件发现、生命周期与扩展点注册所共享的状态。
 
-    该内部基类只用于组合 ``PluginManager``，不会作为第二套公开插件 API。
+    该内部基类以 Mixin 形式经组合被 ``PluginManager`` 继承复用，不作为第二套公开插件 API 暴露。
     """
 
     def __init__(self, event_bus: EventBus | None = None):
@@ -25,7 +25,7 @@ class _PluginState:
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
-        self._command_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="plugin_cmd")
+        self._command_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="plugin_cmd")  # 插件命令执行的线程池
         self._plugins: dict[str, Plugin] = {}  # name → Plugin 实例
         self._status: dict[str, str] = {}  # name → unloaded | loaded | enabled | disabled
         self._routes: list[dict[str, str]] = []  # 所有插件注册的路由
@@ -40,19 +40,19 @@ class _PluginState:
         self._vue_routes: list[dict[str, Any]] = []
         # 已注册的 Vue 组件（去重），component_name → {plugin, template, script, style}
         self._vue_components: dict[str, dict[str, Any]] = {}
-        self._event_handlers_registered = False
-        self._dependency_resolution: DependencyResolution = DependencyResolution()
-        self._permission_manager = PermissionManager()
+        self._event_handlers_registered = False  # 框架自身的事件处理器是否已登记
+        self._dependency_resolution: DependencyResolution = DependencyResolution()  # 插件依赖解析结果
+        self._permission_manager = PermissionManager()  # 插件权限管理器
         # 被禁用的插件名集合，持久化到 plugin_state.json
         self._disabled_plugins: set[str] = set()
-        self._plugin_state_path: Path | None = None
+        self._plugin_state_path: Path | None = None  # plugin_state.json 的路径
         # 候选插件映射，用于在启用被禁用的插件时按需加载
         self._candidate_map: dict[str, dict[str, Any]] = {}
         # 插件实例化/启用失败的详细错误信息，供前端展示
         self._plugin_errors: dict[str, str] = {}
         # 前端是否已就绪；就绪后新启用的插件需要单独补调 on_frontend_ready
         self._frontend_ready = False
-        self._sidebar_collapsed: bool | None = None
+        self._sidebar_collapsed: bool | None = None  # 侧栏是否折叠
 
     def initialize(self, data_path: Path, resource_path: Path | None = None) -> None:
         """

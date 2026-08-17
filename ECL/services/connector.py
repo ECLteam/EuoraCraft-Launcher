@@ -14,6 +14,7 @@ import httpx
 import psutil
 
 from ECL.services.florolding import Florolding, find_free_port, validate_code
+from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 
@@ -30,18 +31,6 @@ _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss:
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
-
-
-class ConnectorError(Exception):
-    """
-联机服务通用错误。
-    """
-
-
-class ConnectorNotAvailableError(ConnectorError):
-    """
-联机服务不可用（依赖缺失）。
-    """
 
 
 class ConnectorService:

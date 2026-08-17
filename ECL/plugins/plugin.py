@@ -98,16 +98,16 @@ class Plugin:
         metadata: dict[str, Any],
         is_system: bool = False,
     ) -> None:
-        self.framework = framework
+        self.framework = framework  # 所属插件管理器
         self.plugin_dir: Path = plugin_dir  # 插件根目录，用于读取 resources/
-        self.name: str = metadata["name"]
-        self.title: str = metadata.get("title", self.name)
-        self.version: str = metadata.get("version", "0.0.0")
-        self.description: str = metadata.get("description", "")
-        self.author: str = metadata.get("author", "")
-        self.metadata: dict[str, Any] = metadata
-        self.is_system = is_system
-        self.logger = get_logger(f"Plugin.{self.name}")
+        self.name: str = metadata["name"]  # 插件唯一名称
+        self.title: str = metadata.get("title", self.name)  # 插件显示标题
+        self.version: str = metadata.get("version", "0.0.0")  # 插件版本号
+        self.description: str = metadata.get("description", "")  # 插件描述
+        self.author: str = metadata.get("author", "")  # 插件作者
+        self.metadata: dict[str, Any] = metadata  # 插件清单元数据
+        self.is_system = is_system  # 是否为系统内置插件
+        self.logger = get_logger(f"Plugin.{self.name}")  # 插件日志记录器
         # 插件注册的命令映射，framework 调用时查表
         self._commands: dict[str, Callable] = {}
         # 插件的设置项定义，供前端设置页渲染
@@ -128,9 +128,7 @@ class Plugin:
         self.framework._permission_manager.check_permission(self.name, Permission(scope, action, resource))
 
     def _apply_decorators(self) -> None:
-        """
-        将类级别的装饰器注册表绑定到当前实例
-        """
+        """将类级别的装饰器注册表绑定到当前实例。"""
         for event, method_name in self._event_handlers:
             handler = getattr(self, method_name)
             self.subscribe(event, handler)
@@ -146,7 +144,7 @@ class Plugin:
     @staticmethod
     def on_event(event: str) -> Callable:
         """
-        装饰器：将方法注册为事件处理器，实例化时自动订阅
+        装饰器，将方法注册为事件处理器，实例化时自动订阅。
         :param event: 事件名称，如 "config:updated"
         """
 
@@ -159,7 +157,7 @@ class Plugin:
     @staticmethod
     def on_command(name: str, description: str = "") -> Callable:
         """
-        装饰器：将方法注册为命令处理器，实例化时自动注册
+        装饰器，将方法注册为命令处理器，实例化时自动注册。
         :param name: 命令名，调用时格式为 "插件名:命令名"
         :param description: 命令描述
         """
@@ -173,7 +171,7 @@ class Plugin:
     @staticmethod
     def on_setting(key: str, default: Any, type_: str = "string", description: str = "") -> Callable:
         """
-        装饰器：声明设置项，实例化时自动注册（被装饰的函数体可为空）
+        装饰器，声明设置项，实例化时自动注册（被装饰的函数体可为空）。
         :param key: 设置键名
         :param default: 默认值
         :param type_: 设置类型 bool | string | number | select
@@ -189,7 +187,7 @@ class Plugin:
     @staticmethod
     def on_route(path: str, title: str, icon: str = "") -> Callable:
         """
-        装饰器：声明侧边栏路由，on_enable 时自动注册
+        装饰器，声明侧边栏路由，on_enable 时自动注册。
         :param path: 路由路径，如 "/my-plugin"
         :param title: 显示名称
         :param icon: 图标名
@@ -204,7 +202,7 @@ class Plugin:
     @staticmethod
     def on_css(file_path: str) -> Callable:
         """
-        装饰器：声明 CSS 文件，on_frontend_ready 时自动注入到前端
+        装饰器，声明 CSS 文件，on_frontend_ready 时自动注入到前端。
         :param file_path: 相对于插件目录的 CSS 文件路径，如 "style.css"
         """
 
@@ -217,7 +215,7 @@ class Plugin:
     @staticmethod
     def on_html(slot_id: str, file_path: str) -> Callable:
         """
-        装饰器：声明 HTML 文件，on_frontend_ready 时自动注入到指定插槽
+        装饰器，声明 HTML 文件，on_frontend_ready 时自动注入到指定插槽。
         :param slot_id: 插槽 ID
         :param file_path: 相对于插件目录的 HTML 文件路径，如 "sidebar.html"
         """
@@ -231,7 +229,7 @@ class Plugin:
     @staticmethod
     def on_script(file_path: str) -> Callable:
         """
-        装饰器：声明 JS 文件，on_frontend_ready 时自动注入到前端
+        装饰器，声明 JS 文件，on_frontend_ready 时自动注入到前端。
         :param file_path: 相对于插件目录的 JS 文件路径，如 "counter.js"
         """
 
@@ -244,7 +242,7 @@ class Plugin:
     @staticmethod
     def on_vue_slot(slot_id: str, component_name: str, file_path: str) -> Callable:
         """
-        装饰器：声明 Vue SFC 组件，on_frontend_ready 时自动注册到指定插槽
+        装饰器，声明 Vue SFC 组件，on_frontend_ready 时自动注册到指定插槽。
         :param slot_id: 插槽 ID
         :param component_name: 全局唯一组件名
         :param file_path: 相对于插件目录的 .vue 文件路径，如 "widget.vue"
@@ -259,7 +257,7 @@ class Plugin:
     @staticmethod
     def on_vue_route(path: str, title: str, component_name: str, file_path: str, icon: str = "") -> Callable:
         """
-        装饰器：声明 Vue SFC 路由页面，on_enable 时自动注册
+        装饰器，声明 Vue SFC 路由页面，on_enable 时自动注册。
         :param path: 路由路径
         :param title: 侧边栏显示名称
         :param component_name: 全局唯一组件名
@@ -274,21 +272,15 @@ class Plugin:
         return wrapper
 
     def on_load(self) -> None:
-        """
-        加载资源，此时不应注册路由/命令
-        """
+        """生命周期钩子：加载资源，此时不应注册路由或命令。"""
 
     def on_enable(self) -> None:
-        """
-        注册路由、命令、设置项。子类覆盖时需调用 super().on_enable()
-        """
+        """生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。"""
         for path, title, icon in self._routes_to_register:
             self.register_route(path, title, icon)
 
     def on_frontend_ready(self) -> None:
-        """
-        前端就绪后注入 CSS/HTML/JS。子类覆盖时需调用 super().on_frontend_ready()
-        """
+        """生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。"""
         for inj_type, args in self._injections_to_apply:
             if inj_type == "css":
                 self.register_css_file(*args)
@@ -302,18 +294,14 @@ class Plugin:
                 self.register_vue_route_file(*args)
 
     def on_disable(self) -> None:
-        """
-        清理运行时状态
-        """
+        """生命周期钩子：清理运行时状态。"""
 
     def on_unload(self) -> None:
-        """
-        释放资源
-        """
+        """生命周期钩子：释放资源。"""
 
     def register_route(self, path: str, title: str, icon: str = "") -> None:
         """
-        注册前端侧边栏路由
+        注册前端侧边栏路由。
         :param path: 路由路径，如 "/crash-reports"
         :param title: 显示名称
         :param icon: 图标名
@@ -323,7 +311,7 @@ class Plugin:
 
     def register_command(self, name: str, handler: Callable, description: str = "") -> None:
         """
-        注册插件命令，前端通过 plugin_call_command 调用
+        注册插件命令，前端通过 plugin_call_command 调用。
         :param name: 命令名，调用时格式为 "插件名:命令名"
         :param handler: 命令处理函数
         :param description: 命令描述
@@ -333,7 +321,7 @@ class Plugin:
 
     def register_setting(self, key: str, default: Any, description: str = "", type_: str = "string") -> None:
         """
-        注册设置项，前端设置页根据此定义渲染控件
+        注册设置项，前端设置页根据此定义渲染控件。
         :param key: 设置键名
         :param default: 默认值
         :param description: 设置描述
@@ -349,7 +337,7 @@ class Plugin:
 
     def inject_css(self, css: str, key: str | None = None) -> None:
         """
-        向宿主前端注入仅作用于当前插件内容的 CSS 样式
+        向宿主前端注入仅作用于当前插件内容的 CSS 样式。
         :param css: CSS 样式字符串
         :param key: 更新已有样式时使用的稳定标识；不传则追加
         """
@@ -358,7 +346,7 @@ class Plugin:
 
     def inject_html(self, slot_id: str, html: str, key: str | None = None) -> None:
         """
-        向宿主前端注入 HTML 片段
+        向宿主前端注入 HTML 片段。
         :param slot_id: 插槽 ID，对应前端 plugin-slot 组件
         :param html: HTML 字符串
         :param key: 更新已有条目时使用的稳定标识；不传则追加
@@ -368,7 +356,7 @@ class Plugin:
 
     def inject_script(self, script: str) -> None:
         """
-        向宿主前端注入 JavaScript 脚本
+        向宿主前端注入 JavaScript 脚本。
         :param script: JS 代码字符串
         """
         self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
@@ -376,7 +364,7 @@ class Plugin:
 
     def inject_typescript(self, script: str) -> None:
         """
-        向宿主前端注入 TypeScript 脚本（前端会通过 sucrase 转译）
+        向宿主前端注入 TypeScript 脚本（由前端经 sucrase 转译）。
         :param script: TS 代码字符串
         """
         self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
@@ -384,7 +372,7 @@ class Plugin:
 
     def register_html_file(self, slot_id: str, file_path: str) -> None:
         """
-        读取插件目录下的 HTML 文件注入到指定插槽
+        读取插件目录下的 HTML 文件注入到指定插槽。
         :param slot_id: 插槽 ID
         :param file_path: 相对于插件目录的文件路径，如 "sidebar.html"
         """
@@ -394,7 +382,7 @@ class Plugin:
 
     def register_css_file(self, file_path: str) -> None:
         """
-        读取插件目录下的 CSS 文件注入到宿主前端
+        读取插件目录下的 CSS 文件注入到宿主前端。
         :param file_path: 相对于插件目录的文件路径，如 "style.css"
         """
         content = self.load_file(file_path)
@@ -403,7 +391,7 @@ class Plugin:
 
     def register_script_file(self, file_path: str) -> None:
         """
-        读取插件目录下的 JS 文件注入到宿主前端
+        读取插件目录下的 JS 文件注入到宿主前端。
         :param file_path: 相对于插件目录的文件路径，如 "counter.js"
         """
         content = self.load_file(file_path)
@@ -412,7 +400,7 @@ class Plugin:
 
     def register_vue_slot_file(self, slot_id: str, component_name: str, file_path: str) -> None:
         """
-        读取插件目录下的 Vue SFC 文件，解析后注册到插槽
+        读取插件目录下的 Vue SFC 文件，解析后注册到插槽。
         :param slot_id: 插槽 ID
         :param component_name: 全局唯一组件名
         :param file_path: 相对于插件目录的 .vue 文件路径，如 "widget.vue"
@@ -427,7 +415,7 @@ class Plugin:
         self, path: str, title: str, component_name: str, file_path: str, icon: str = ""
     ) -> None:
         """
-        读取插件目录下的 Vue SFC 文件，解析后注册为独立路由页面
+        读取插件目录下的 Vue SFC 文件，解析后注册为独立路由页面。
         :param path: 路由路径
         :param title: 侧边栏显示名称
         :param component_name: 全局唯一组件名
@@ -444,7 +432,7 @@ class Plugin:
         self, slot_id: str, component_name: str, template: str, script: str = "", style: str = ""
     ) -> None:
         """
-        注册 Vue 组件到指定插槽，前端收到后动态创建并挂载
+        注册 Vue 组件到指定插槽，前端收到后动态创建并挂载。
         :param slot_id: 插槽 ID
         :param component_name: 全局唯一组件名
         :param template: Vue 模板 HTML
@@ -466,7 +454,7 @@ class Plugin:
         icon: str = "",
     ) -> None:
         """
-        注册 Vue 组件作为独立路由页面
+        注册 Vue 组件作为独立路由页面。
         :param path: 路由路径，如 "/crash-reports"
         :param title: 侧边栏显示名称
         :param component_name: Vue 组件名（全局唯一）
@@ -480,7 +468,7 @@ class Plugin:
 
     def emit(self, event: str, payload: Any = None) -> None:
         """
-        向全局事件总线发射事件，其他插件或宿主可订阅
+        向全局事件总线发射事件，其他插件或宿主可订阅。
         :param event: 事件名称，格式建议 "模块:动作"，如 "crash:detected"
         :param payload: 事件负载数据
         """
@@ -498,7 +486,7 @@ class Plugin:
 
     def load_file(self, relative_path: str, encoding: str = "utf-8") -> str | None:
         """
-        读取插件目录下的文本文件
+        读取插件目录下的文本文件。
         :param relative_path: 相对于插件根目录的文件路径，如 "style.css"
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
@@ -511,15 +499,16 @@ class Plugin:
 
     def resource_path(self, relative_path: str) -> Path:
         """
-        获取插件 resources/ 目录下的文件路径
-        :param relative_path: 相对路径
-        :return: 绝对路径
+        获取插件 resources/ 目录下的文件路径。
+
+        :param relative_path: 相对于插件根目录的路径
+        :return: resources/ 目录下的绝对路径
         """
         return self.plugin_dir / "resources" / relative_path
 
     def load_resource(self, relative_path: str, encoding: str = "utf-8") -> str | None:
         """
-        读取插件 resources/ 目录下的文本文件
+        读取插件 resources/ 目录下的文本文件。
         :param relative_path: 相对路径
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
@@ -532,6 +521,7 @@ class Plugin:
 
     @staticmethod
     def _parse_vue_sfc(content: str) -> dict[str, str]:
+        """解析 .vue 单文件组件内容，拆分为 template/script/style 三部分。"""
         result: dict[str, str] = {"template": "", "script": "", "style": ""}
         for tag in ("template", "script", "style"):
             match = re.search(rf"<{tag}.*?>(.*?)</{tag}>", content, re.DOTALL)

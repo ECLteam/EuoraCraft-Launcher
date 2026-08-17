@@ -45,6 +45,15 @@ def _utc_now() -> datetime:
 
 
 class InfoCardManager:
+    """
+    组装首页信息卡数据，并管理远程公告的拉取、校验与本地缓存。
+
+    公告在配置的刷新间隔内复用内存结果；远程拉取失败时回退到磁盘缓存，本地
+    缓存同样损坏时才返回空公告列表，始终不阻断首页渲染。
+
+    :param data_path: 启动器数据目录，用于持久化公告缓存
+    """
+
     def __init__(
         self,
         data_path: Path | str,
@@ -200,7 +209,6 @@ class InfoCardManager:
     def get_info_card(self) -> dict[str, Any]:
         """
         返回首页轮播模式、提示、公告和欢迎卡片数据。
-
         """
         with self._lock:
             data = deepcopy(DEFAULT_INFO_CARD)

@@ -51,7 +51,8 @@ class Permission:
         """
         从字典解析权限声明，格式错误时返回 None。
 
-        :param data: 需要处理或持久化的数据
+        :param data: 插件声明的权限字典
+        :return: 解析后的权限对象，格式错误时返回 None
         """
         try:
             scope = PermissionScope(data.get("scope"))
@@ -64,10 +65,7 @@ class Permission:
         return cls(scope, action, resource)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        转换为字典表示。
-
-        """
+        """转换为字典表示。"""
         return {
             "scope": self.scope.value,
             "action": self.action.value,
@@ -108,7 +106,7 @@ class PermissionManager:
     """
 
     def __init__(self) -> None:
-        self._plugin_permissions: dict[str, set[Permission]] = {}
+        self._plugin_permissions: dict[str, set[Permission]] = {}  # 插件名 → 已解析的权限集合
 
     def register_plugin_permissions(self, plugin_name: str, permissions: list[dict[str, Any]]) -> list[Permission]:
         """
@@ -145,10 +143,11 @@ class PermissionManager:
 
     def check_permission(self, plugin_name: str, permission: Permission) -> None:
         """
-        校验权限，缺失时抛出 PermissionError。
+        校验插件是否拥有指定权限，缺失时抛出 PermissionError。
 
         :param plugin_name: 插件名称
         :param permission: 需要检查的插件权限
+        :raises PermissionError: 插件缺少对应权限时抛出
         """
         if not self.has_permission(plugin_name, permission):
             raise PermissionError(

@@ -7,7 +7,7 @@ from .storage import PluginStorage
 
 class PluginManager(PluginRegistry, PluginLifecycle, PluginStorage, PluginDiscovery):
     """
-    Public plugin fa?ade composed from focused manager capabilities.
+    面向插件的统一门面，组合若干职责单一的 Mixin 混合类能力。
     """
 
 

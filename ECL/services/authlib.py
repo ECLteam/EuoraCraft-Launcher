@@ -11,20 +11,20 @@ from uuid import uuid4
 import httpx
 
 from ECL.game import YggdrasilClient
-from ECL.utils import atomic_write_bytes, atomic_write_text
-
-
-class AuthlibError(RuntimeError):
-    pass
-
-
-class AuthlibProfileSelectionRequired(AuthlibError):
-    def __init__(self, profiles: list[dict]) -> None:
-        super().__init__("该登录名下有多个角色，请选择本次登录使用的角色")
-        self.profiles = deepcopy(profiles)
+from ECL.utils import AuthlibError, AuthlibProfileSelectionRequired, atomic_write_bytes, atomic_write_text
 
 
 class AuthlibInjector:
+    """
+    管理 authlib-injector 组件的版本、下载与校验。
+
+    组件以 SHA-256 摘要核对缓存 jar；本地文件缺失或失配时才重新拉取最新
+    元数据，保证启动前始终能返回一个可用组件。
+
+    :param data_path: 启动器数据目录
+    :param http_client: 可注入的 HTTP 客户端
+    """
+
     METADATA_URL = "https://authlib-injector.yushi.moe/artifact/latest.json"
 
     def __init__(self, data_path: Path | str, http_client: httpx.Client | None = None) -> None:
@@ -45,7 +45,6 @@ class AuthlibInjector:
     def ensure(self) -> Path:
         """
         返回可用的 authlib-injector；本地缺失时下载最新版。
-
         """
         if self.jar_path.is_file() and self.checksum_path.is_file():
             expected = self.checksum_path.read_text(encoding="ascii").strip()
@@ -74,6 +73,18 @@ class AuthlibInjector:
 
 
 class AuthlibAccountManager:
+    """
+    持久化并维护外置登录（Yggdrasil）账户与访问令牌。
+
+    账户元数据与令牌分别落盘于 ``accounts`` 目录，登录后的多角色选择以
+    ``pending_accounts`` 暂存，直到用户绑定单个角色；令牌失效时自动刷新。
+    本类只负责账户状态，不介入启动流程。
+
+    :param data_path: 数据根目录；缺失时使用默认的 ``~/.ECL``
+    :param client: 可注入的 Yggdrasil 客户端
+    :param http_client: 可注入的 HTTP 客户端
+    """
+
     def __init__(
         self,
         data_path: Path | str | None = None,
@@ -279,7 +290,6 @@ class AuthlibAccountManager:
     def list_accounts(self) -> dict[str, dict]:
         """
         返回全部外置登录账户。
-
         """
         with self._lock:
             return deepcopy(self.accounts)

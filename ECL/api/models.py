@@ -594,8 +594,9 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
 
 def request_schemas() -> dict[str, dict]:
     """
-    Return JSON Schema documents consumed by the frontend integration task.
+    返回前端集成所需的请求模型 JSON Schema 文档。
 
+    :return: 命令名到 JSON Schema 的映射
     """
     return {command: model.model_json_schema() for command, model in REQUEST_MODELS.items()}
 

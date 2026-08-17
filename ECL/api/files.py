@@ -44,6 +44,8 @@ _REMOTE_IMAGE_CACHE_MAX_BYTES = 96 * 1024 * 1024
 
 
 class FileHandlers(_FrontendState):
+    """提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。"""
+
     def _read_remote_image_cache(self, url: str) -> tuple[bytes, str, bool] | None:
         """
         按远程 URL 读取持久化图片缓存，并返回其新鲜度。
@@ -337,6 +339,7 @@ class FileHandlers(_FrontendState):
 
     @staticmethod
     def _normalize_file_path(path: str) -> str:
+        """将 file:// URL 规整为本地文件系统路径。"""
         if path.startswith("file://"):
             parsed = urlsplit(path)
             return unquote(parsed.path)
@@ -406,6 +409,7 @@ class FileHandlers(_FrontendState):
         return {"success": True, "data": {"files": files}}
 
     async def _pick_path(self, pick_folder: bool, title: str, extensions: list[str] | None = None) -> str:
+        """打开系统文件选择对话框，返回用户选择的路径；取消时返回空字符串。"""
         if self._webview is None:
             return ""
 

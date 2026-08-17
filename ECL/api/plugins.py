@@ -7,6 +7,8 @@ from .bridge import _FrontendState
 
 
 class PluginHandlers(_FrontendState):
+    """提供插件生命周期、路由、插槽与命令调用的正式 IPC 边界。"""
+
     async def plugin_list(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取插件列表。

@@ -8,7 +8,10 @@ from .contracts import PluginAction, PluginActionResult, PluginCommandError
 
 
 class PluginRegistry(_PluginState):
+    """负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。"""
+
     def _register_route(self, plugin: Plugin, path: str, title: str, icon: str) -> None:
+        """注册前端路由，同一插件重复注册相同路径时先移除旧条目。"""
         # 同一插件重复注册相同路径时先移除旧条目，避免路由列表出现重复
         self._routes = [r for r in self._routes if not (r["plugin"] == plugin.name and r["path"] == path)]
         self._routes.append({"plugin": plugin.name, "path": path, "title": title, "icon": icon})
@@ -18,7 +21,7 @@ class PluginRegistry(_PluginState):
         """
         获取插件。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         """
         return self._plugins.get(name)
 
@@ -121,41 +124,27 @@ class PluginRegistry(_PluginState):
         return result
 
     def get_routes(self) -> list[dict[str, Any]]:
-        """
-        获取插件路由。
-
-        """
+        """获取插件路由列表。"""
         return list(self._routes)
 
     def get_slots(self) -> dict[str, list[dict[str, str]]]:
-        """
-        返回按插槽分组的插件 HTML 注入内容。
-
-        """
+        """返回按插槽分组的插件 HTML 注入内容。"""
         return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._slots.items()}
 
     def get_vue_slots(self) -> dict[str, list[dict[str, Any]]]:
-        """
-        返回按插槽分组的插件 Vue 组件定义。
-
-        """
+        """返回按插槽分组的插件 Vue 组件定义。"""
         return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._vue_slots.items()}
 
     def get_vue_components(self) -> dict[str, dict[str, Any]]:
-        """
-        返回所有已注册 Vue 组件定义的浅拷贝。
-
-        """
+        """返回所有已注册 Vue 组件定义的浅拷贝。"""
         return dict(self._vue_components)
 
     def get_vue_routes(self) -> list[dict[str, Any]]:
-        """
-        获取 Vue 路由。
-
-        """
+        """获取已注册的 Vue 路由列表。"""
         return list(self._vue_routes)
 
     def _on_html_injected(self, plugin_name: str, slot_id: str, html: str, key: str | None) -> None:
+        """收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。"""
         entries = self._slots.setdefault(slot_id, [])
         entry = {"plugin": plugin_name, "html": html}
         if key is None:
@@ -171,6 +160,7 @@ class PluginRegistry(_PluginState):
     def _on_vue_slot_registered(
         self, plugin_name: str, slot_id: str, component_name: str, template: str, script: str, style: str
     ) -> None:
+        """收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。"""
         entries = self._vue_slots.setdefault(slot_id, [])
         entry = {
             "plugin": plugin_name,
@@ -205,10 +195,10 @@ class PluginRegistry(_PluginState):
         style: str,
     ) -> None:
         """
-        注册 Vue 组件路由，同时记录到 _routes 和 _vue_routes
+        注册 Vue 组件路由，同时记录到 _routes 与 _vue_routes；相同路径的先移除旧条目。
 
         :param plugin: 插件实例
-        :param path: 需要处理的文件或目录路径
+        :param path: 路由路径
         :param title: 前端条目的显示标题
         :param icon: 前端条目的图标标识
         :param component_name: Vue 组件名称
@@ -256,7 +246,7 @@ class PluginRegistry(_PluginState):
         """
         返回插件设置结构及当前持久化值。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         """
         plugin = self._plugins.get(name)
         if plugin is None:
@@ -272,9 +262,10 @@ class PluginRegistry(_PluginState):
         """
         更新一个已声明的插件设置，并返回保存结果。
 
-        :param name: 目标对象名称
-        :param key: 配置项或插槽条目的稳定键
+        :param name: 插件名称
+        :param key: 设置项键名
         :param value: 需要保存的配置值
+        :return: 保存结果
         """
         plugin = self._plugins.get(name)
         if plugin is None or key not in plugin._settings:
@@ -290,9 +281,11 @@ class PluginRegistry(_PluginState):
         """
         在线程池中调用 ``插件名:命令名``，失败或超时时抛出 ``PluginCommandError``。
 
-        :param command: 经过权限检查后执行的命令
+        :param command: 插件命令，格式为 "插件名:命令名"
         :param params: 传递给命令的参数
         :param timeout: 命令最长执行时间，单位为秒
+        :return: 命令处理结果
+        :raises PluginCommandError: 命令不存在、未启用、执行失败或超时时抛出
         """
         if ":" not in command:
             raise PluginCommandError(f"命令格式错误: {command}")

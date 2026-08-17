@@ -477,7 +477,6 @@ class LaunchCoordinator(_GameState):
     def cancel_launch(self) -> bool:
         """
         取消正在执行的启动或文件补全任务。
-
         """
         with self._lock:
             cancel_event = self._launch_cancel_event
@@ -712,7 +711,6 @@ class LaunchCoordinator(_GameState):
     def list_instances(self) -> list[dict[str, Any]]:
         """
         返回由启动器管理的运行中 Minecraft 实例。
-
         """
         raw_instances = self.instances.get_instances_info()
         with self._lock:

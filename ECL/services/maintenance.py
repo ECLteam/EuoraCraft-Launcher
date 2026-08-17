@@ -6,18 +6,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ECL.utils import DebugMaintenanceError
+
 PENDING_MAINTENANCE_FILE = ".pending_debug_maintenance.json"
 
 DEBUG_MAINTENANCE_TARGETS: dict[str, tuple[str, ...]] = {
     "reset_launcher_data": ("setting.json", "accounts", "info_card.json", "notice.json"),
     "clear_plugins": ("plugins", "plugin_config"),
 }
-
-
-class DebugMaintenanceError(ValueError):
-    """
-    调试维护请求无效。
-    """
 
 
 @dataclass(frozen=True, slots=True)

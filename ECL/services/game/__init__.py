@@ -26,7 +26,11 @@ class GameService(
     CatalogCoordinator,
 ):
     """
-    Thin public fa?ade composed from focused game coordinators.
+    面向 IPC 边界公开的统一游戏服务门面。
+
+    通过多重继承聚合各领域协调器，将实例、安装、启动、扫描与资源管理的
+    能力合并为单一的 ``GameService`` 入口，内部共享基类 ``_GameState``
+    提供的运行状态与依赖。
     """
 
 

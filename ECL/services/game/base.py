@@ -27,7 +27,11 @@ from ECL.game import (
 )
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
-from ECL.utils import get_logger
+from ECL.utils import (
+    GameServiceError,
+    VersionScanError,  # noqa: F401  # re-export
+    get_logger,
+)
 
 from .instance_profiles import InstanceProfileStore
 from .operations import GameOperationManager
@@ -41,24 +45,6 @@ DownloaderFactory = Callable[..., Downloader]
 CommandBuilder = Callable[[LaunchConfig], str]
 SearchFactory = Callable[[Path], Any]
 JavaScannerFactory = Callable[..., JavaScanner]
-
-
-class GameServiceError(Exception):
-    """
-    表示可安全转换为稳定 IPC 错误码的游戏操作失败。
-
-    :param message: 面向用户的错误说明
-    :param error_code: 供前端识别的稳定错误码
-    """
-
-    def __init__(self, message: str, error_code: str = "GAME_OPERATION_FAILED"):
-        super().__init__(message)
-        self.error_code = error_code
-
-
-class VersionScanError(GameServiceError):
-    def __init__(self, message: str, error_code: str = "VERSION_SCAN_FAILED"):
-        super().__init__(message, error_code)
 
 
 @dataclass

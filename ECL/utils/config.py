@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ECL.events import EventBus
+from ECL.utils.errors import ConfigError, ConfigValidationError
 from ECL.utils.logging import get_logger
 
 default_config: dict[str, Any] = {
@@ -42,21 +43,11 @@ default_config: dict[str, Any] = {
 }
 
 
-class ConfigError(RuntimeError):
-    """
-    配置错误。
-    """
-
-
-class ConfigValidationError(ConfigError, ValueError):
-    """
-    配置参数错误。
-    """
-
-
 class ConfigStore:
     """
-    JSON-backed launcher configuration owned by the application context.
+    以 JSON 文件为载体的启动器配置存储，归应用上下文所有。
+
+    负责配置的读写、默认值填充与校验，并以事件总线向其他组件广播配置变更。
     """
 
     def __init__(self, data_path: Path, event_bus: EventBus | None = None) -> None:
@@ -69,17 +60,19 @@ class ConfigStore:
     @property
     def default_minecraft_path(self) -> Path:
         """
-        获取默认 Minecraft 目录
+        获取默认 Minecraft 目录。
         :return: 默认 Minecraft 目录
         """
         return (self.data_path.parent / ".minecraft").resolve()
 
     def _create_default_config(self) -> dict[str, Any]:
+        """深拷贝默认配置并填充 Minecraft 路径。"""
         config_data = deepcopy(default_config)
         self._ensure_default_minecraft_path(config_data)
         return config_data
 
     def _ensure_default_minecraft_path(self, config_data: dict[str, Any]) -> bool:
+        """未配置 Minecraft 路径时创建默认目录并回填相关字段，返回是否产生变更。"""
         game_config = config_data.get("game")
         if not isinstance(game_config, dict):
             return False
@@ -96,6 +89,7 @@ class ConfigStore:
         return True
 
     def _initialize_file(self) -> None:
+        """创建数据目录，并用默认配置初始化缺失的配置文件。"""
         self.data_path.mkdir(parents=True, exist_ok=True)
         if self.config_path.exists():
             return
@@ -103,6 +97,7 @@ class ConfigStore:
         self._write_config(self._create_default_config())
 
     def _write_config(self, config_data: dict[str, Any]) -> None:
+        """先写临时文件再原子替换目标配置，失败时抛 ConfigError。"""
         temporary_path = self.config_path.with_suffix(".json.tmp")
         try:
             serialized_config = json.dumps(config_data, ensure_ascii=False, indent=4)
@@ -116,6 +111,7 @@ class ConfigStore:
         self.config_data = deepcopy(config_data)
 
     def _load_config(self) -> dict[str, Any]:
+        """从磁盘加载配置，必要时回写默认路径或恢复损坏的配置。"""
         try:
             self._initialize_file()
             loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -128,6 +124,7 @@ class ConfigStore:
             return self._restore_default_config(exc)
 
     def _restore_default_config(self, cause: Exception) -> dict[str, Any]:
+        """备份损坏配置并恢复为默认配置。"""
         backup_path = self.config_path.with_suffix(".json.bak")
         self.logger.warning("配置文件无效，将恢复默认配置: %s", cause)
         with suppress(OSError):
@@ -177,10 +174,9 @@ class ConfigStore:
         config_data = self.get_config()
         config_data[normalized_section] = deepcopy(data)
         self._write_config(config_data)
-        # self.logger.info(f"配置分区已保存: {section}")
-        # 通知其他组件配置已变更
+        # 广播配置变更事件，通知订阅组件。
         self.events.emit("config:updated", normalized_section, deepcopy(data))
 
 
-# Kept as a source-compatible name while callers move to the explicit store.
+# 为迁移期调用方保留的兼容名称。
 ConfigManager = ConfigStore

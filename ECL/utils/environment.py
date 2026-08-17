@@ -10,10 +10,11 @@ from ECL.utils.logging import get_logger
 
 class Environment:
     """
-    Immutable-path environment reader used by the composition root.
+    面向组合根的环境变量读取器，路径一经创建即固定不变。
     """
 
     def __init__(self, app_path: Path) -> None:
+        """记录应用路径并准备 .env 文件与环境变量缓存。"""
         self.logger = get_logger("EnvManager")
         self.app_path = Path(app_path)
         self.env_path = self.app_path / ".env"
@@ -22,7 +23,6 @@ class Environment:
     def get_env(self) -> dict[str, str | None]:
         """
         获取环境变量。
-
         """
         if self.env_data is not None:
             return dict(self.env_data)
@@ -50,6 +50,7 @@ class Environment:
         return default
 
     def _convert_env_value(self, value: str) -> bool | int | float | str:
+        """将环境变量字符串转换为布尔、整数、浮点数或原字符串。"""
         lower = value.lower()
         if lower == "true":
             return True

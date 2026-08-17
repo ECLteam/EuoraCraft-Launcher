@@ -11,7 +11,7 @@ from threading import RLock
 from typing import Literal, TypedDict
 from uuid import uuid4
 
-from ECL.utils import atomic_write_bytes, atomic_write_text
+from ECL.utils import WardrobeError, atomic_write_bytes, atomic_write_text
 
 logger = logging.getLogger("EuoraCraft-Launcher.Wardrobe")
 
@@ -21,19 +21,6 @@ SkinModel = Literal["classic", "slim"]
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_TEXTURE_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_DIMENSION = 1024
-
-
-class WardrobeError(RuntimeError):
-    """
-    表示可安全返回给前端的衣柜业务错误。
-
-    :param message: 面向用户的错误说明
-    :param error_code: 供 IPC 和前端稳定识别的错误码
-    """
-
-    def __init__(self, message: str, error_code: str) -> None:
-        super().__init__(message)
-        self.error_code = error_code
 
 
 class WardrobeItem(TypedDict):
@@ -80,7 +67,7 @@ class WardrobeStore:
     @staticmethod
     def _png_dimensions(data: bytes) -> tuple[int, int]:
         """
-        从 PNG 签名和 IHDR 块读取尺寸，不让后端参与图片解码。
+        从 PNG 签名和 IHDR 块直接读取尺寸，避免完整图像解码。
 
         :param data: 完整的 PNG 原始字节
         :return: 图片宽度和高度

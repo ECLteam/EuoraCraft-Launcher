@@ -11,6 +11,8 @@ from .contracts import PluginAction, PluginActionResult
 
 
 class PluginLifecycle(_PluginState):
+    """负责插件的启用、禁用、卸载、重载与安装等生命周期管理。"""
+
     def _enable_all(self) -> None:
         """
         按依赖拓扑顺序启用已加载插件；被禁用的插件不参与启用。
@@ -29,7 +31,7 @@ class PluginLifecycle(_PluginState):
         """
         启用插件。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         """
         enabled, reason = self._enable(name)
         return PluginActionResult(
@@ -40,6 +42,7 @@ class PluginLifecycle(_PluginState):
         )
 
     def _enable(self, name: str) -> tuple[bool, str]:
+        """启用单个插件；若因被禁用而未加载则先按候选信息加载。"""
         plugin = self._plugins.get(name)
         # 若插件因被禁用而未加载，先按候选信息加载
         if plugin is None and name in self._disabled_plugins and name in self._candidate_map:
@@ -77,9 +80,9 @@ class PluginLifecycle(_PluginState):
 
     def disable(self, name: str, _persist_state: bool = True) -> PluginActionResult:
         """
-        禁用插件。
+        禁用插件，清理其注册的前端内容与事件处理器。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
         plugin = self._plugins.get(name)
@@ -117,9 +120,9 @@ class PluginLifecycle(_PluginState):
 
     def unload(self, name: str, _persist_state: bool = True) -> PluginActionResult:
         """
-        卸载插件。
+        卸载插件，清理其注册的路由、插槽内容与事件处理器。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
         plugin = self._plugins.get(name)
@@ -158,7 +161,7 @@ class PluginLifecycle(_PluginState):
         """
         重新加载插件。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         """
         plugin = self._plugins.get(name)
         if plugin is None:

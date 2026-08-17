@@ -16,8 +16,8 @@ class RuntimeInfo(TypedDict):
 
 def get_runtime_info() -> RuntimeInfo:
     """
-    获取运行环境信息。
-
+    获取当前运行环境的信息。
+    :return: 是否冻结打包，以及应用与资源目录路径
     """
     is_frozen = bool(getattr(sys, "frozen", False))
     if is_frozen:
@@ -35,9 +35,10 @@ def get_runtime_info() -> RuntimeInfo:
 
 def get_pyproject_data(app_path: Path) -> dict | None:
     """
-    读取 pyproject.toml。
+    读取 pyproject.toml 的解析结果。
 
     :param app_path: 启动器运行目录
+    :return: pyproject.toml 内容；读取失败或格式非法时返回 None
     """
     open_path = Path(app_path / "pyproject.toml")
     try:

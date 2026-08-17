@@ -21,10 +21,7 @@ class DependencyRequirement:
 
     @property
     def version_constraint(self) -> str:
-        """
-        返回该依赖的版本约束表达式。
-
-        """
+        """返回该依赖的版本约束表达式。"""
         return str(self.specifier) or "*"
 
 
@@ -78,9 +75,10 @@ class DependencyResolution:
 
 def parse_version(version: str) -> Version | None:
     """
-    解析版本号，失败时返回 None。
+    解析版本字符串，非法版本返回 None。
 
-    :param version: 需要解析或比较的版本字符串
+    :param version: 待解析的版本字符串
+    :return: 解析后的版本对象，无法解析时返回 None
     """
     try:
         return Version(version)

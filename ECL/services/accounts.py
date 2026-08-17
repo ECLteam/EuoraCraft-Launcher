@@ -15,7 +15,7 @@ from ECL.common import MICROSOFT_CLIENT_ID
 from ECL.events import EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError
-from ECL.utils import get_logger
+from ECL.utils import AccountError, get_logger
 
 MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2
 
@@ -116,19 +116,6 @@ class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
             self._progress_client.login_active = False
 
 
-class AccountError(Exception):
-    """
-    表示可安全转换为稳定 IPC 错误码的账户操作失败。
-
-    :param message: 面向用户的错误说明
-    :param error_code: 供前端识别的稳定错误码
-    """
-
-    def __init__(self, message: str, error_code: str = "ACCOUNT_ERROR"):
-        super().__init__(message)
-        self.error_code = error_code
-
-
 class AccountManager:
     """
     聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
@@ -222,7 +209,6 @@ class AccountManager:
     def microsoft_login_config(self) -> dict[str, bool]:
         """
         返回微软设备代码登录是否具备有效客户端配置。
-
         """
         return {
             "available": self._microsoft_login_available,
@@ -482,7 +468,6 @@ class AccountManager:
     def list_accounts(self) -> dict[str, Any]:
         """
         返回所有账户以及当前账户标识。
-
         """
         with self._lock:
             accounts = self._all_accounts()
@@ -492,14 +477,12 @@ class AccountManager:
     def current_account(self) -> dict[str, Any] | None:
         """
         获取当前账户。
-
         """
         return self.list_accounts()["current"]
 
     def get_launch_credentials(self) -> dict[str, str]:
         """
         返回启动游戏所需的当前账户凭据。
-
         """
         with self._lock:
             current = next(
@@ -891,7 +874,6 @@ class AccountManager:
     def start_microsoft_login(self) -> dict[str, Any]:
         """
         开始微软登录。
-
         """
         if not self._microsoft_login_available:
             raise AccountError(
@@ -944,7 +926,6 @@ class AccountManager:
     def poll_microsoft_login(self) -> dict[str, Any]:
         """
         获取微软登录状态。
-
         """
         with self._lock:
             state = deepcopy(self._login_state)
@@ -968,7 +949,6 @@ class AccountManager:
     def complete_microsoft_login(self) -> dict[str, Any]:
         """
         完成已授权的微软登录并返回保存后的账户。
-
         """
         with self._lock:
             state = deepcopy(self._login_state)
@@ -1000,7 +980,6 @@ class AccountManager:
     def cancel_microsoft_login(self) -> bool:
         """
         取消登录流程；返回本次调用是否实际取消了任务。
-
         """
         with self._lock:
             login_thread = self._login_thread

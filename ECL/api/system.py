@@ -13,6 +13,8 @@ from .bridge import _FrontendState, _ipc_handler
 
 
 class SystemHandlers(_FrontendState):
+    """提供启动器信息、严重错误、用户协议、日志导出与调试维护的正式 IPC 边界。"""
+
     async def launcher_errors_pending(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         返回尚未被前端确认呈现的严重错误。
@@ -172,6 +174,7 @@ class SystemHandlers(_FrontendState):
         return {"success": True, "data": {"path": str(target)}}
 
     def _schedule_debug_maintenance(self, action: str) -> dict[str, Any]:
+        """在调试模式下排队一项启动器数据维护操作。"""
         if not bool(self.launcher.debug):
             return {"success": False, "message": "此操作仅在启动器调试模式下可用", "errorCode": "DEBUG_MODE_REQUIRED"}
         result = schedule_debug_maintenance(self.data_path, action)

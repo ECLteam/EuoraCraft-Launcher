@@ -42,6 +42,7 @@ class ColoredFormatter(logging.Formatter):
 
 
 def _gzip_rotator(source: str, destination: str) -> None:
+    """将源日志文件压缩为 gzip 归档，并在压缩成功后删除源文件。"""
     with Path(source).open("rb") as source_file, gzip.open(destination, "wb") as destination_file:
         shutil.copyfileobj(source_file, destination_file)
     Path(source).unlink()
@@ -107,6 +108,7 @@ class LoggingRuntime:
         level: int,
         formatter: logging.Formatter,
     ) -> logging.handlers.TimedRotatingFileHandler:
+        """创建按天滚动切分并 gzip 压缩的旋转文件处理器。"""
         handler = logging.handlers.TimedRotatingFileHandler(
             self.log_dir / filename,
             when="midnight",

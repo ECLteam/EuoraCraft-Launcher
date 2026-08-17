@@ -7,11 +7,13 @@ from .base import _PluginState
 
 
 class PluginStorage(_PluginState):
+    """负责插件配置与禁用状态文件的读写及持久化。"""
+
     def _load_plugin_config(self, name: str, metadata: dict[str, Any]) -> None:
         """
-        从 plugin_config/{name}.json 读取插件配置值
+        从 plugin_config/{name}.json 读取插件配置值回填到配置字典。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         :param metadata: 插件清单元数据
         """
         config_path = self._plugin_config_dir / f"{name}.json"
@@ -24,9 +26,9 @@ class PluginStorage(_PluginState):
 
     def _save_plugin_config(self, name: str) -> None:
         """
-        保存插件配置值到 plugin_config/{name}.json
+        将该插件的配置值保存到 plugin_config/{name}.json。
 
-        :param name: 目标对象名称
+        :param name: 插件名称
         """
         prefix = f"{name}."
         data = {k[len(prefix) :]: v for k, v in self._config_values.items() if k.startswith(prefix)}

@@ -15,7 +15,9 @@ from ECL.utils import get_logger
 
 class Adapter:
     """
-    PyTauri 前端适配器，负责注册 IPC 命令并启动 Tauri 应用
+    PyTauri 前端适配器，负责注册 IPC 命令并启动 Tauri 应用。
+
+    桥接后端事件总线与前端通道，将后端状态变更持久转发到 Tauri 前端。
     """
 
     def __init__(self, context: ApplicationContext) -> None:
@@ -60,6 +62,7 @@ class Adapter:
         self.logger.info("前端已退出")
 
     def _build_config(self) -> dict[str, Any]:
+        """根据配置拼装传给 Tauri 的应用配置结构。"""
         tauri_config = self.config.get("tauri", {})
         launcher_config = self.config.get("launcher") or {}
         # 开发模式下窗口默认可见，便于调试；生产环境初始隐藏，等待前端加载完成后再显示
@@ -75,7 +78,7 @@ class Adapter:
                         "title": tauri_config.get("title", "EuoraCraft Launcher"),
                         "width": tauri_config.get("width", 900),
                         "height": tauri_config.get("height", 600),
-                        "minWidth": 966,  # 真奇葩，窗口会无缘无故多了几个px出来
+                        "minWidth": 966,  # 补偿 Tauri 窗口在最小宽度下额外产生的空白像素
                         "minHeight": 609,
                         "visible": dev_mode,  # 开发模式可见；生产初始隐藏，前端加载完成后可见
                     }
@@ -84,6 +87,7 @@ class Adapter:
         }
 
     def _register_commands(self) -> None:
+        """将后端命令处理器注册为 Tauri 的 IPC 命令。"""
         api = self.frontend_api_instance
         logger = getattr(self, "logger", get_logger("Adapter"))
         handlers = command_handlers(api)
@@ -92,6 +96,7 @@ class Adapter:
         logger.debug("IPC 命令注册完成: count=%d", len(handlers))
 
     def _register_events(self) -> None:
+        """订阅后端事件总线，将各类事件统一转发到前端。"""
         api = self.frontend_api_instance
         bus = self.events
         logger = getattr(self, "logger", get_logger("Adapter"))
@@ -228,6 +233,7 @@ class Adapter:
         logger.debug("后端到前端的事件转发注册完成")
 
     def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:
+        """转发微软账号登录状态事件，需要聚焦时唤起应用窗口。"""
         if data.get("focus"):
             self.frontend_api_instance.focus_window()
         self.frontend_api_instance.emit_to_frontend("accounts_microsoft_login_status", data)

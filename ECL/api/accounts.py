@@ -23,6 +23,8 @@ from .bridge import _FrontendState, _ipc_handler, _normalize_image_url
 
 
 class AccountHandlers(_FrontendState):
+    """提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。"""
+
     async def accounts_list(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取账户列表。

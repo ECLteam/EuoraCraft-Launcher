@@ -86,6 +86,16 @@ class ScreenshotCoordinator:
     def save_screenshot_as(
         self, game_path: Any, version_id: Any, screenshot_id: Any, output_path: Any, version_isolation: Any = False
     ) -> dict[str, str]:
+        """
+        通过原子替换把截图复制到用户选择的导出路径。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 版本目录名称
+        :param screenshot_id: ``screenshots`` 目录内相对安全的截图文件名
+        :param output_path: 用户选择的导出目标路径
+        :param version_isolation: 是否启用版本目录隔离
+        :return: 导出后文件的绝对路径
+        """
         source = resolve_relative_id(self._screenshot_root(game_path, version_id, version_isolation), screenshot_id)
         destination = Path(str(output_path)).expanduser().resolve(strict=False)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +141,14 @@ class ScreenshotCoordinator:
     def delete_screenshot_to_trash(
         self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False
     ) -> None:
+        """
+        把指定截图移入系统回收站。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 版本目录名称
+        :param screenshot_id: ``screenshots`` 目录内相对安全的截图文件名
+        :param version_isolation: 是否启用版本目录隔离
+        """
         source = resolve_relative_id(self._screenshot_root(game_path, version_id, version_isolation), screenshot_id)
         move_to_trash(source)
 

@@ -7,10 +7,10 @@ _WINDOWS_REPLACE_RETRY_DELAYS = (0.02, 0.05, 0.1, 0.2)
 
 def atomic_write_bytes(path: str | Path, data: bytes) -> None:
     """
-    Atomically replace a file using a temporary sibling.
+    通过同目录临时文件实现原子替换文件内容。
 
-    :param path: 需要处理的文件或目录路径
-    :param data: 需要处理或持久化的数据
+    :param path: 需要写入的文件路径
+    :param data: 待持久化的字节数据
     """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -32,6 +32,7 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
 
 
 def atomic_write_text(path: str | Path, data: str, encoding: str = "utf-8") -> None:
+    """以原子替换方式写入文本文件。"""
     atomic_write_bytes(path, data.encode(encoding))
 
 

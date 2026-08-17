@@ -18,10 +18,12 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_NOT_AVAILABLE")
     async def connector_status(self, body: dict[str, Any]) -> ApiResponse:
+        """查询联机服务的当前状态。"""
         return success(self.connector.get_status())
 
     @_ipc_handler("CONNECTOR_HOST_PORT_FAILED")
     async def connector_host_port(self, body: dict[str, Any]) -> ApiResponse:
+        """在联机服务中对外开放并托管指定端口。"""
         try:
             port = PortRequest.model_validate(body).port
             result = await to_thread.run_sync(self.connector.host_port, port)
@@ -33,6 +35,7 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_HOST_INSTANCE_FAILED")
     async def connector_host_instance(self, body: dict[str, Any]) -> ApiResponse:
+        """在联机服务中托管一个指定的本地游戏实例。"""
         try:
             target = InstanceTarget.model_validate(body)
             result = await to_thread.run_sync(self.connector.host_instance, target.game_path, target.version_id)
@@ -44,6 +47,7 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_JOIN_FAILED")
     async def connector_join(self, body: dict[str, Any]) -> ApiResponse:
+        """通过房间码加入他人托管的联机房间。"""
         try:
             code = RoomCodeRequest.model_validate(body).code
             result = await to_thread.run_sync(self.connector.join, code)
@@ -55,6 +59,7 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_LEAVE_FAILED")
     async def connector_leave(self, body: dict[str, Any]) -> ApiResponse:
+        """从当前联机房间退出。"""
         try:
             result = self.connector.leave()
             return success(result)
@@ -63,6 +68,7 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_KICK_FAILED")
     async def connector_kick(self, body: dict[str, Any]) -> ApiResponse:
+        """从当前房间踢出指定的参与机器。"""
         try:
             machine_id = KickRequest.model_validate(body).machine_id
             result = self.connector.kick(machine_id)
@@ -72,20 +78,25 @@ class ConnectorHandlers(_FrontendState):
 
     @_ipc_handler("CONNECTOR_MATCH_FAILED")
     async def connector_match_instances(self, body: dict[str, Any]) -> ApiResponse:
+        """匹配可用的联机实例，当前返回空占位。"""
         return success({"mods": [], "instances": []})
 
     @_ipc_handler("CONNECTOR_EASYTIER_STATUS_FAILED")
     async def connector_easytier_status(self, body: dict[str, Any]) -> ApiResponse:
+        """查询 EasyTier 组网状态。"""
         return success(self.connector.get_easytier_status())
 
     @_ipc_handler("CONNECTOR_EASYTIER_DOWNLOAD_FAILED")
     async def connector_easytier_download(self, body: dict[str, Any]) -> ApiResponse:
+        """请求 EasyTier 组网组件下载，返回其当前状态。"""
         return success(self.connector.get_easytier_status())
 
     @_ipc_handler("CONNECTOR_SCAN_PORTS_FAILED")
     async def connector_scan_ports(self, body: dict[str, Any]) -> ApiResponse:
+        """扫描本机可用且可用于联机的端口。"""
         return success(self.connector.scan_ports())
 
     @_ipc_handler("CONNECTOR_NAT_TYPE_FAILED")
     async def connector_nat_type(self, body: dict[str, Any]) -> ApiResponse:
+        """查询本机网络的 NAT 类型。"""
         return success(self.connector.get_nat_type())

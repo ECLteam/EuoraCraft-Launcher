@@ -731,7 +731,7 @@ class ResourceCoordinator:
             pass
         key = os.getenv("CURSEFORGE_API_KEY") or curseforge_key
         if key:
-            # CurseForge fingerprints use MurmurHash2 rather than SHA-512; unknown local files remain local here.
+            # CurseForge 指纹使用 MurmurHash2 而非 SHA-512，未能识别的本地文件在此保持为本地。
             pass
         if len(candidates) != 1:
             return {"matched": False, "ambiguous": len(candidates) > 1, "candidates": candidates}
