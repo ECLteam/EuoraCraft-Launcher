@@ -4,7 +4,7 @@ from collections import deque
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-from ECL.game.Core.InstancesManager import InstancesManager
+from ECL.game import InstancesManager
 
 if TYPE_CHECKING:
     from ECL.events.event_bus import EventBus
@@ -126,7 +126,9 @@ class ProcessService:
             return items
 
     def close(self) -> None:
-        """终止全部运行中的实例并清理读取线程。"""
+        """
+        终止全部运行中的实例并清理读取线程。
+        """
         self._manager.shutdown_all()
 
     def _on_log(self, line: str, instance_id: str) -> None:
