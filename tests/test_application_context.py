@@ -33,12 +33,13 @@ def test_application_context_closes_resources_in_reverse_dependency_order() -> N
         game=Closable("game", order),
         connector=SimpleNamespace(),
         plugins=Closable("plugins", order),
+        processes=Closable("processes", order),
     )
 
     context.close()
     context.close()
 
-    assert order == ["plugins", "game", "accounts", "http"]
+    assert order == ["plugins", "processes", "game", "accounts", "http"]
     assert not events._handlers
 
 

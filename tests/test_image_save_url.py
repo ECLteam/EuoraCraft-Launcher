@@ -148,6 +148,7 @@ def _build_api(tmp_path):
         info_card=FakeInfoCard(),
         game=SimpleNamespace(),
         plugins=FakePlugins(),
+        processes=SimpleNamespace(),
     )
     return FrontendApi(context)
 

@@ -18,7 +18,12 @@ from pytauri.ffi import Emitter as _Emitter
 from pytauri.ipc import WebviewWindow
 
 from ECL.api.contracts import ApiResponse, failure
-from ECL.api.models import FrontendLogRequest
+from ECL.api.models import (
+    DebugProcessSpawnRequest,
+    FrontendLogRequest,
+    ProcessInputRequest,
+    ProcessStopRequest,
+)
 from ECL.application import ApplicationContext
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
@@ -27,7 +32,9 @@ from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.logging import get_frontend_log_history
 
-_queued_frontend_events = frozenset({"launcher:error", "launcher:popup", "launcher:log"})
+_queued_frontend_events = frozenset(
+    {"launcher:error", "launcher:popup", "launcher:log", "process:instance_log", "process:instances_changed"}
+)
 _max_pending_frontend_events = 50
 
 _image_mime_map = {
@@ -290,6 +297,7 @@ class _FrontendState:
         self.connector = context.connector
         self.game = context.game
         self.plugins = context.plugins
+        self.processes = context.processes
         self.app_path: Path = self.launcher.app_path
         self.data_path: Path = self.launcher.data_path
         self._webview: WebviewWindow | None = None
@@ -518,6 +526,70 @@ class _FrontendState:
         :return: 包含 ``logs`` 列表的成功响应
         """
         return {"success": True, "data": {"logs": get_frontend_log_history()}}
+
+    async def process_instances(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        返回注册表内登记的子进程实例列表。
+
+        :param body: 必须为空的请求对象
+        :return: 包含 ``instances`` 列表的成功响应
+        """
+        if body:
+            return failure("process_instances 不接受请求参数", "INVALID_REQUEST")
+        return {"success": True, "data": {"instances": self.processes.list()}}
+
+    @_ipc_handler("PROCESS_INPUT_FAILED")
+    async def process_input(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        向指定子进程实例写入一行标准输入。
+
+        :param body: 符合 ``ProcessInputRequest`` 的请求数据
+        :return: 是否成功写入的标准输入标识
+        """
+        try:
+            request = ProcessInputRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return {"success": True, "data": {"sent": self.processes.send_stdin(request.instance_id, request.data)}}
+
+    @_ipc_handler("PROCESS_STOP_FAILED")
+    async def process_stop(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        停止指定子进程实例。
+
+        :param body: 符合 ``ProcessStopRequest`` 的请求数据
+        :return: 进程是否已结束的成功响应
+        """
+        try:
+            request = ProcessStopRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        return {"success": True, "data": {"stopped": self.processes.stop(request.instance_id)}}
+
+    async def debug_process_spawn(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        在调试模式下启动一个子进程实例，供开发自测实例终端。
+
+        :param body: 符合 ``DebugProcessSpawnRequest`` 的请求数据
+        :return: 包含 ``instanceId`` 的成功响应
+        """
+        if not self.launcher.debug:
+            return failure("调试命令仅在调试模式下可用", "INVALID_STATE")
+        try:
+            request = DebugProcessSpawnRequest.model_validate(body)
+        except ValidationError as exc:
+            return self._invalid_request(exc)
+        try:
+            instance_id = self.processes.spawn(
+                request.name,
+                request.type,
+                request.args,
+                cwd=request.cwd,
+                stdin=request.stdin,
+            )
+        except ValueError as exc:
+            return failure(str(exc), "INVALID_REQUEST")
+        return {"success": True, "data": {"instanceId": instance_id}}
 
     def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
         """汇总启动游戏所需的运行时参数，优先使用调用方显式指定的值。"""

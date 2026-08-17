@@ -71,6 +71,11 @@ class Plugin:
 
         @Plugin.on_vue_slot("sidebar-bottom", "my-widget", "widget.vue")
         def _vue_slot_widget(self): ...
+
+    子进程能力：framework 提供 ``self.processes``（``ProcessService``）。插件可用
+    ``spawn(name, type_, args, cwd=None, stdin=False)`` 启动子进程并得到实例标识，
+    用 ``send_stdin(id, data)`` / ``stop(id)`` 交互，实例状态经 ``process:*`` 事件
+    实时推送到前端终端实例视图。
     """
 
     # 每个子类独立持有的装饰器注册表
@@ -99,6 +104,8 @@ class Plugin:
         is_system: bool = False,
     ) -> None:
         self.framework = framework  # 所属插件管理器
+        # 通用子进程注册服务；未提供时为 None。插件可通过它启动子进程、写 stdin、停止与列出实例。
+        self.processes = getattr(framework, "processes", None)
         self.plugin_dir: Path = plugin_dir  # 插件根目录，用于读取 resources/
         self.name: str = metadata["name"]  # 插件唯一名称
         self.title: str = metadata.get("title", self.name)  # 插件显示标题

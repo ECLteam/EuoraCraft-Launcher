@@ -1,0 +1,98 @@
+import sys
+import time
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+
+from ECL.events import EventBus
+from ECL.services.processes import ProcessService
+
+
+def wait_until(cond: Callable[[], bool], timeout: float = 6.0) -> bool:
+    """轮询等待条件成立，超时返回 False，避免用固定 sleep 造成的时序脆弱。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def make_service() -> tuple[ProcessService, EventBus, list[dict[str, Any]]]:
+    """构造使用事件闭环子进程的服务实例。"""
+    events = EventBus()
+    logs: list[dict[str, Any]] = []
+    events.subscribe("process:instance_log", logs.append)
+    return ProcessService(events), events, logs
+
+
+def test_spawn_captures_output_then_exits() -> None:
+    service, _events, logs = make_service()
+    script = (
+        "import time\n"
+        "for i in range(3):\n"
+        "    print(f'line-{i}', flush=True)\n"
+        "time.sleep(1)\n"
+    )
+    iid = service.spawn("demo", "plugin:test", [sys.executable, "-u", "-c", script])
+
+    assert iid
+    assert wait_until(lambda: any(entry["line"] == "line-2" for entry in logs))
+    instances = service.list()
+    assert len(instances) == 1
+    assert instances[0]["id"] == iid
+    assert instances[0]["running"] is True
+    assert instances[0]["lines"] == ["line-0", "line-1", "line-2"]
+    service.close()
+
+
+def test_stdin_writes_through_to_subprocess() -> None:
+    service, _events, logs = make_service()
+    script = "import sys\nline = sys.stdin.readline()\nprint('echo:' + line.strip())\n"
+    iid = service.spawn("io", "plugin:test", [sys.executable, "-u", "-c", script], stdin=True)
+
+    assert service.send_stdin(iid, "hello") is True
+    assert wait_until(lambda: any(entry["line"] == "echo:hello" for entry in logs))
+    service.close()
+
+
+def test_stdin_rejected_without_stdin_pipe() -> None:
+    service, _events, _logs = make_service()
+    script = "import time; time.sleep(1)\n"
+    iid = service.spawn("nopipe", "plugin:test", [sys.executable, "-u", "-c", script], stdin=False)
+
+    assert service.send_stdin(iid, "x") is False
+    assert service.send_stdin("missing", "x") is False
+    service.close()
+
+
+def test_stop_terminates_instance() -> None:
+    service, _events, _logs = make_service()
+    iid = service.spawn("sleeper", "plugin:test", [sys.executable, "-u", "-c", "import time; time.sleep(30)"])
+
+    assert service.stop(iid, wait_timeout=3) is True
+    assert wait_until(lambda: len(service.list()) == 0)
+    service.close()
+
+
+def test_same_name_instances_all_cleaned_up() -> None:
+    service, _events, _logs = make_service()
+    command = [sys.executable, "-u", "-c", "import time; time.sleep(1)"]
+
+    first = service.spawn("dup", "plugin:test", command)
+    second = service.spawn("dup", "plugin:test", command)
+
+    assert first != second
+    assert wait_until(lambda: len(service.list()) == 0)
+    assert "dup" not in service._alive
+    service.close()
+
+
+def test_spawn_validates_arguments() -> None:
+    service, _events, _logs = make_service()
+    with pytest.raises(ValueError):
+        service.spawn("", "plugin:test", [sys.executable])
+    with pytest.raises(ValueError):
+        service.spawn("name", "", None)  # type: ignore[arg-type]
+    service.close()

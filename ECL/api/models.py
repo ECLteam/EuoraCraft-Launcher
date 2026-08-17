@@ -110,6 +110,23 @@ class FrontendLogRequest(RequestModel):
     logger: str | None = Field(default=None, max_length=200)
 
 
+class ProcessInputRequest(RequestModel):
+    instance_id: str = Field(min_length=1)
+    data: str = Field(max_length=100000)
+
+
+class ProcessStopRequest(RequestModel):
+    instance_id: str = Field(min_length=1)
+
+
+class DebugProcessSpawnRequest(RequestModel):
+    name: str = Field(min_length=1, max_length=200)
+    type: str = Field(min_length=1, max_length=200)
+    args: list[str] = Field(min_length=1, max_length=100)
+    cwd: str | None = Field(default=None, max_length=2048)
+    stdin: bool = False
+
+
 class GameCatalogRequest(RequestModel):
     filter_type: str | None = None
     classified: bool = False

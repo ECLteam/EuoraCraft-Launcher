@@ -17,14 +17,16 @@ class _PluginState:
     该内部基类以 Mixin 形式经组合被 ``PluginManager`` 继承复用，不作为第二套公开插件 API 暴露。
     """
 
-    def __init__(self, event_bus: EventBus | None = None):
+    def __init__(self, event_bus: EventBus | None = None, processes: Any = None):
         """
         创建相互隔离的插件状态与命令执行器。
 
         :param event_bus: 当前应用上下文拥有的事件总线
+        :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
+        self.processes = processes  # 插件可经 framework.processes 启动子进程实例
         self._command_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="plugin_cmd")  # 插件命令执行的线程池
         self._plugins: dict[str, Plugin] = {}  # name → Plugin 实例
         self._status: dict[str, str] = {}  # name → unloaded | loaded | enabled | disabled

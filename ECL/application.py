@@ -19,6 +19,7 @@ from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
+from ECL.services.processes import ProcessService
 from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
 
@@ -79,6 +80,7 @@ class ApplicationContext:
     game: GameService
     connector: ConnectorService
     plugins: PluginManager
+    processes: ProcessService
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
@@ -92,7 +94,7 @@ class ApplicationContext:
                 return
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭应用上下文中的共享资源")
-            for resource in (self.plugins, self.game, self.accounts, self.http):
+            for resource in (self.plugins, self.processes, self.game, self.accounts, self.http):
                 try:
                     resource.close()
                 except Exception:
@@ -199,7 +201,13 @@ def create_application(
         created.append(connector)
         logger.debug("联机服务 ConnectorService 已初始化，duration=%.2fs", perf_counter() - phase_started)
 
-        plugins = PluginManager(events)
+        phase_started = perf_counter()
+        logger.debug("正在初始化子进程实例服务")
+        processes = ProcessService(event_bus=events)
+        created.append(processes)
+        logger.debug("子进程实例服务已初始化，duration=%.2fs", perf_counter() - phase_started)
+
+        plugins = PluginManager(events, processes=processes)
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
         logger.debug("插件管理器已初始化，duration=%.2fs", perf_counter() - phase_started)
@@ -224,6 +232,7 @@ def create_application(
         game=game,
         connector=connector,
         plugins=plugins,
+        processes=processes,
     )
 
     def update_runtime_config(section: str, data: Any) -> None:

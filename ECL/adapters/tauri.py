@@ -144,6 +144,14 @@ class Adapter:
             "launcher:log",
             lambda payload: api.emit_to_frontend("launcher:log", payload),
         )
+        bus.subscribe(
+            "process:instance_log",
+            lambda payload: api.emit_to_frontend("process:instance_log", payload),
+        )
+        bus.subscribe(
+            "process:instances_changed",
+            lambda payload: api.emit_to_frontend("process:instances_changed", payload),
+        )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
         bus.subscribe(
