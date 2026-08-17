@@ -85,9 +85,11 @@ class ModHandlers(_FrontendState):
             body.get("source", "modrinth"),
             None,
             body.get("limit", 20),
+            body.get("resource_type", "mod"),
         )
         source = str(result.get("source") or "modrinth")
-        items = self.game.map_search_hits(source, result.get("items") or [])
+        resource_type = str(result.get("resource_type") or "mod")
+        items = self.game.map_search_hits(source, result.get("items") or [], resource_type)
         return success(
             {
                 "items": items,
@@ -109,6 +111,7 @@ class ModHandlers(_FrontendState):
             self.game.fetch_project_info,
             body.get("source", "modrinth"),
             body.get("mod_id"),
+            body.get("resource_type", "mod"),
         )
         return success(info)
 
@@ -120,12 +123,15 @@ class ModHandlers(_FrontendState):
         :param body: 在线模组标识、来源和筛选条件
         :return: 兼容版本列表
         """
+        resource_type = str(body.get("resource_type") or "mod")
+        # 非 mod 类型不按加载器过滤版本（资源包/光影/数据包无 loader 概念）
+        loader = body.get("loader_type", "") if resource_type == "mod" else ""
         versions = await to_thread.run_sync(
             self.game.fetch_project_versions,
             body.get("source", "modrinth"),
             body.get("mod_id"),
             body.get("game_version", ""),
-            body.get("loader_type", ""),
+            loader,
         )
         return success(versions)
 
@@ -141,10 +147,12 @@ class ModHandlers(_FrontendState):
             self.game.install_online_resource,
             body.get("game_path"),
             body.get("instance_id"),
-            "mod",
+            body.get("resource_type", "mod"),
             body.get("source", "modrinth"),
             body.get("mod_id"),
             body.get("file_id"),
+            task_id=body.get("task_id"),
+            world_id=body.get("world_id"),
         )
         return success(
             {

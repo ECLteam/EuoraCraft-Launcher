@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import tomllib
 import zipfile
 from datetime import UTC, datetime
@@ -28,6 +29,14 @@ RESOURCE_DIRECTORIES = {
     "resourcepack": "resourcepacks",
     "shaderpack": "shaderpacks",
     "schematic": "schematics",
+}
+
+# 在线搜索的 resource_type -> Modrinth project_type 映射（存档无在线下载类型）
+_RESOURCE_PROJECT_TYPE = {
+    "mod": "mod",
+    "resourcepack": "resourcepack",
+    "shaderpack": "shader",
+    "datapack": "datapack",
 }
 
 
@@ -409,12 +418,21 @@ class ResourceCoordinator:
         source: str = "modrinth",
         curseforge_key: str | None = None,
         limit: int = 20,
+        resource_type: str = "mod",
     ) -> dict[str, Any]:
         """
         搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
+
+        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定 Modrinth project_type 过滤
         """
         if source == "modrinth":
-            facets = json.dumps([[f"versions:{game_version}"], [f"categories:{loader.casefold()}"]])
+            project_type = _RESOURCE_PROJECT_TYPE.get(resource_type)
+            if project_type is None:
+                raise GameServiceError("未知在线资源类型", "INVALID_RESOURCE_TYPE")
+            if resource_type == "mod":
+                facets = json.dumps([[f"versions:{game_version}"], [f"categories:{loader.casefold()}"]])
+            else:
+                facets = json.dumps([[f"project_type:{project_type}"], [f"versions:{game_version}"]])
             response = httpx.get(
                 "https://api.modrinth.com/v2/search",
                 params={"query": query, "facets": facets, "limit": min(limit, 50)},
@@ -422,7 +440,7 @@ class ResourceCoordinator:
                 timeout=10,
             )
             response.raise_for_status()
-            return {"source": source, "items": response.json().get("hits", [])}
+            return {"source": source, "items": response.json().get("hits", []), "resource_type": resource_type}
         if source == "curseforge":
             key = os.getenv("CURSEFORGE_API_KEY") or curseforge_key
             if not key:
@@ -438,20 +456,26 @@ class ResourceCoordinator:
         raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
 
     @staticmethod
-    def map_search_hits(source: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def map_search_hits(
+        source: str,
+        hits: list[dict[str, Any]],
+        resource_type: str = "mod",
+    ) -> list[dict[str, Any]]:
         """
         将 Modrinth 搜索命中结果映射为前端在线模组卡片所需的结构。
 
         :param source: 数据来源（modrinth）
         :param hits: Modrinth ``/search`` 返回的命中列表
+        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定项目页 URL 路径
         :return: 前端 ``ModSearchItem`` 兼容的字典列表
         """
+        project_type = _RESOURCE_PROJECT_TYPE.get(resource_type, "mod")
         result: list[dict[str, Any]] = []
         for hit in hits:
             if not isinstance(hit, dict):
                 continue
             slug = str(hit.get("slug") or "")
-            project_url = f"https://modrinth.com/mod/{slug}"
+            project_url = f"https://modrinth.com/{project_type}/{slug}"
             result.append({
                 "id": hit.get("project_id"),
                 "projectId": hit.get("project_id"),
@@ -466,6 +490,7 @@ class ResourceCoordinator:
                 "dateModified": hit.get("date_modified"),
                 "source": source,
                 "projectUrl": project_url,
+                "resourceType": resource_type,
                 "categories": hit.get("categories") or [],
                 "loaders": hit.get("loaders") or [],
                 "gameVersions": hit.get("game_versions") or [],
@@ -478,12 +503,18 @@ class ResourceCoordinator:
             })
         return result
 
-    def fetch_project_info(self, source: str, project_id: str) -> dict[str, Any]:
+    def fetch_project_info(
+        self,
+        source: str,
+        project_id: str,
+        resource_type: str = "mod",
+    ) -> dict[str, Any]:
         """
         获取 Modrinth 项目详情，映射为前端 ``ModInfo`` 结构。
 
         :param source: 数据来源（仅支持 modrinth）
         :param project_id: Modrinth 项目 ID
+        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），用于兜底项目页 URL
         :return: 项目详情字典
         """
         if source != "modrinth":
@@ -496,6 +527,7 @@ class ResourceCoordinator:
         response.raise_for_status()
         data = response.json()
         slug = str(data.get("slug") or "")
+        project_type = str(data.get("project_type") or _RESOURCE_PROJECT_TYPE.get(resource_type, "mod"))
         return {
             "id": data.get("id"),
             "slug": slug,
@@ -505,9 +537,10 @@ class ResourceCoordinator:
             "body": data.get("body"),
             "iconUrl": data.get("icon_url"),
             "source": "modrinth",
+            "resourceType": resource_type,
             "loaders": data.get("loaders") or [],
             "gameVersions": data.get("game_versions") or [],
-            "projectUrl": f"https://modrinth.com/mod/{slug}",
+            "projectUrl": f"https://modrinth.com/{project_type}/{slug}",
         }
 
     def fetch_project_versions(
@@ -573,22 +606,26 @@ class ResourceCoordinator:
         project_id: str,
         version_id_str: str,
         version_isolation: Any = False,
+        task_id: str | None = None,
+        world_id: str | None = None,
     ) -> dict[str, Any]:
         """
         按版本 ID 下载在线资源到目标目录，并记录来源到清单。
 
         :param game_path: Minecraft 游戏根目录
         :param version_id: 目标实例 ID
-        :param resource_type: 资源类型（mod）
+        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack）
         :param source: 数据来源（modrinth）
         :param project_id: Modrinth 项目 ID
         :param version_id_str: Modrinth 版本 ID
         :param version_isolation: 是否启用版本隔离
+        :param task_id: 任务队列 ID，非空时上报字节进度与实时速度事件
+        :param world_id: 目标存档 ID（仅数据包安装到指定世界，其他类型忽略）
         :return: 安装结果（文件名、来源、是否跳过）
         """
         if source != "modrinth":
             raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
-        root = self._resource_root(game_path, version_id, resource_type, version_isolation)
+        root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         root.mkdir(parents=True, exist_ok=True)
         response = httpx.get(
             f"https://api.modrinth.com/v2/version/{version_id_str}",
@@ -608,12 +645,36 @@ class ResourceCoordinator:
         if destination.exists():
             raise GameServiceError(f"模组已存在：{selected['filename']}", "RESOURCE_ALREADY_EXISTS")
         temp = root / f".{destination.name}.ecl-download"
+        filename = str(selected["filename"])
         try:
             with httpx.stream("GET", str(selected["url"]), timeout=30, follow_redirects=True) as stream:
                 stream.raise_for_status()
+                total = int(stream.headers.get("content-length") or 0)
                 with temp.open("wb") as output:
+                    downloaded = 0
+                    started = time.monotonic()
+                    last_emit = started
+                    last_bytes = 0
+                    if task_id:
+                        self._emit_install_progress(
+                            task_id, "download", f"正在下载 {filename}",
+                            done=0, total=total, progress_type="bytes", speed=0,
+                        )
                     for chunk in stream.iter_bytes(1024 * 1024):
                         output.write(chunk)
+                        downloaded += len(chunk)
+                        if not task_id:
+                            continue
+                        now = time.monotonic()
+                        if now - last_emit < 0.25 and downloaded < total:
+                            continue
+                        speed = int((downloaded - last_bytes) / max(now - last_emit, 0.001))
+                        self._emit_install_progress(
+                            task_id, "download", f"正在下载 {filename}",
+                            done=downloaded, total=total, progress_type="bytes", speed=speed,
+                        )
+                        last_emit = now
+                        last_bytes = downloaded
             hashes = selected.get("hashes") or {}
             if hashes.get("sha512") and _sha512(temp).casefold() != str(hashes["sha512"]).casefold():
                 raise GameServiceError("下载文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
@@ -628,7 +689,22 @@ class ResourceCoordinator:
                 "enabled": True,
             }
             self._write_resource_manifest(game_path, version_id, manifest)
+            if task_id:
+                self._emit_install_progress(task_id, "done", f"{filename} 已安装完成", done=1, total=1)
             return {"filename": destination.name, "source": source, "skipped": False}
+        except GameServiceError as exc:
+            if task_id:
+                self._emit_install_progress(
+                    task_id, "error", str(exc), done=0, total=1, error_code=exc.error_code,
+                )
+            raise
+        except Exception as exc:
+            if task_id:
+                self._emit_install_progress(
+                    task_id, "error", f"下载 {filename} 失败: {exc}", done=0, total=1,
+                    error_code="RESOURCE_DOWNLOAD_FAILED",
+                )
+            raise
         finally:
             temp.unlink(missing_ok=True)
 
