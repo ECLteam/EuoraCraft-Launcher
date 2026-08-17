@@ -19,6 +19,10 @@ class InstallCoordinator(_GameState):
         *,
         done: int | None = None,
         total: int | None = None,
+        progress_type: str | None = None,
+        total_files: int | None = None,
+        downloaded_files: int | None = None,
+        speed: int | None = None,
         subtask: str | None = None,
         error_code: str | None = None,
     ) -> None:
@@ -31,6 +35,14 @@ class InstallCoordinator(_GameState):
             payload["done"] = done
         if total is not None:
             payload["total"] = total
+        if progress_type:
+            payload["progress_type"] = progress_type
+        if total_files is not None:
+            payload["total_files"] = total_files
+        if downloaded_files is not None:
+            payload["downloaded_files"] = downloaded_files
+        if speed is not None:
+            payload["speed"] = speed
         if subtask:
             payload["subtask"] = subtask
         if error_code:
@@ -166,17 +178,33 @@ class InstallCoordinator(_GameState):
                 self._emit_install_progress(task_id, "done", f"{save_name} 已安装完成", done=1, total=1)
                 return
 
-            downloader = self._downloader_factory(
-                download_list,
-                progress_callback=lambda done, total: self._emit_install_progress(
+            # 进度事件闭包：同时上报字节/文件进度、文件计数与实时速度。
+            # 通过可变容器持有 downloader 引用，避免闭包在赋值前被调用。
+            progress_state: dict[str, Any] = {"downloader": None, "speed": 0}
+
+            def _emit_download_progress(speed: int | None = None) -> None:
+                if speed is not None:
+                    progress_state["speed"] = speed
+                downloader = progress_state["downloader"]
+                self._emit_install_progress(
                     task_id,
                     "download",
                     f"正在下载 {save_name}",
-                    done=done,
-                    total=total,
+                    done=downloader.downloaded_bytes,
+                    total=downloader.total_bytes,
+                    progress_type="bytes" if downloader.use_byte_progress else "files",
+                    total_files=downloader.total_files,
+                    downloaded_files=len(downloader.completed_entries),
+                    speed=progress_state["speed"],
                     subtask="download_files",
-                ),
+                )
+
+            downloader = self._downloader_factory(
+                download_list,
+                progress_callback=lambda done, total: _emit_download_progress(),
+                speed_callback=lambda speed_mb: _emit_download_progress(int(speed_mb * 1024 * 1024)),
             )
+            progress_state["downloader"] = downloader
             with self._lock:
                 self._active_downloads[task_id] = downloader
 
@@ -186,6 +214,9 @@ class InstallCoordinator(_GameState):
                 f"准备下载 {len(download_list)} 个文件",
                 done=0,
                 total=len(download_list),
+                progress_type="files",
+                total_files=len(download_list),
+                downloaded_files=0,
                 subtask="download_files",
             )
             await downloader.run()
