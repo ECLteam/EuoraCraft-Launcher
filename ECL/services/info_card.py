@@ -76,18 +76,17 @@ class InfoCardManager:
         self.data_path.mkdir(parents=True, exist_ok=True)
 
     def _download_notice(self, url: str) -> Any:
-        # 忽略 SSL 证书验证，避免系统证书缺失导致公告获取失败
-        request = self.http.get if self.http is not None else httpx.get
-        response = request(
-            url,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "EuoraCraft-Launcher",
-            },
-            follow_redirects=True,
-            timeout=httpx.Timeout(NOTICE_TIMEOUT_SECONDS, connect=3.0),
-            verify=False,
-        )
+        timeout = httpx.Timeout(NOTICE_TIMEOUT_SECONDS, connect=3.0)
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "EuoraCraft-Launcher",
+        }
+        if self.http is not None:
+            # verify 仅可配置于 Client 构造；注入客户端已在共享连接上按其 SSL 策略创建
+            response = self.http.get(url, headers=headers, follow_redirects=True, timeout=timeout)
+        else:
+            # 无注入客户端时降级为模块级 get，逐次忽略 SSL 校验以免系统证书缺失阻塞公告
+            response = httpx.get(url, headers=headers, follow_redirects=True, timeout=timeout, verify=False)
         response.raise_for_status()
         return response.json()
 

@@ -119,3 +119,19 @@ def test_info_card_does_not_refetch_within_refresh_window(tmp_path) -> None:
     manager.get_info_card()
 
     assert calls == 1
+
+
+def test_info_card_injected_client_does_not_pass_verify_per_request(tmp_path) -> None:
+    payload = _notice_payload(_announcement())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # 断言请求未把 verify 作为请求参数携带（否则 httpx 会在构造时报 TypeError）
+        assert "verify" not in request.extensions
+        return httpx.Response(200, json=payload)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    manager = InfoCardManager(tmp_path, http_client=client, clock=lambda: NOW)
+
+    data = manager._download_notice("https://example.test/notice.json")
+
+    assert data == payload
