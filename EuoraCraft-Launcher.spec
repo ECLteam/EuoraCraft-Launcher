@@ -51,6 +51,30 @@ def _ensure_datasets_exist() -> None:
 
 
 _ensure_datasets_exist()
+
+
+def _collect_msvc_runtime() -> list[tuple[str, str]]:
+    """收集微软 VC++ 运行库并随包分发，使 onefile 产物自包含。
+
+    python312.dll 等解释器 DLL 依赖 vcruntime/msvcp 系列，若目标机运行库
+    版本过旧或缺失，加载 python DLL 时会报“找不到指定的模块”。这里从
+    Python 目录或系统 System32 收集这些 DLL，避免依赖目标机的运行库。
+    """
+    if not IS_WINDOWS:
+        return []
+    names = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"]
+    sysroot = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    bases = [Path(sys.base_prefix), sysroot / "System32"]
+    result: list[tuple[str, str]] = []
+    for name in names:
+        for base in bases:
+            candidate = base / name
+            if candidate.is_file():
+                result.append((str(candidate), "."))
+                break
+    return result
+
+
 datas = [
     (str(SPEC_DIR / "frontend" / "dist"), "frontend/dist"),
     (str(SPEC_DIR / "resources"), "resources"),
@@ -58,7 +82,7 @@ datas = [
     (str(SPEC_DIR / "Tauri.toml"), "."),
 ] + _wheel_datas + _plugin_datas + copy_metadata("pytauri-wheel")
 
-binaries = _wheel_binaries + _plugin_binaries
+binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
 hiddenimports = [
     "importlib_metadata",
     "pytauri",
@@ -210,7 +234,8 @@ else:
         icon=icon,
         debug=False,
         bootloader_ignore_signals=False,
-        strip=True,
+        # Windows 的 PE 不支持 strip，过度的符号裁剪会破坏归档内 DLL 导致运行期加载失败，故仅 Linux 开启
+        strip=not IS_WINDOWS,
         upx=upx_enabled,
         upx_exclude=upx_exclude,
         runtime_tmpdir=None,
