@@ -33,7 +33,14 @@ from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.logging import get_frontend_log_history
 
 _queued_frontend_events = frozenset(
-    {"launcher:error", "launcher:popup", "launcher:log", "process:instance_log", "process:instances_changed"}
+    {
+        "launcher:error",
+        "launcher:popup",
+        "launcher:log",
+        "game:instances_changed",
+        "process:instance_log",
+        "process:instances_changed",
+    }
 )
 _max_pending_frontend_events = 50
 
