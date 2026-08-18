@@ -84,6 +84,7 @@ datas = [
 
 binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
 hiddenimports = [
+    "numpy",
     "importlib_metadata",
     "pytauri",
     "pytauri.ffi",
@@ -105,7 +106,6 @@ hiddenimports = [
     "ECL.game.auth",
 ] + _wheel_hiddenimports + _plugin_hiddenimports + collect_submodules("ECL")
 excludes = [
-    "numpy",
     "scipy",
     "pandas",
     "matplotlib",
