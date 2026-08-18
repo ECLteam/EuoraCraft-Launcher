@@ -9,10 +9,18 @@ jobs:
     name: Run ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/setup-python
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
-          install-command: 'pip install ruff'
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
 
       - name: Run ruff
         run: |
