@@ -598,8 +598,21 @@ def request_schemas() -> dict[str, dict]:
     """
     返回前端集成所需的请求模型 JSON Schema 文档。
 
+    REQUEST_MODELS 的键（IPC 命令名）必须是 `ECL.api.registry.COMMAND_NAMES`
+    中已注册的命令，否则抛错，防止请求模型与正式命令表脱钩。
+    （此处延迟导入 registry 以避免模块级循环依赖：registry -> bridge -> models。）
+
     :return: 命令名到 JSON Schema 的映射
+    :raises RuntimeError: 存在未在 registry 注册的命令名时抛出
     """
+    from ECL.api.registry import COMMAND_NAMES  # 延迟导入，避免循环依赖
+
+    _unregistered = sorted(set(REQUEST_MODELS) - set(COMMAND_NAMES))
+    if _unregistered:
+        raise RuntimeError(
+            "REQUEST_MODELS 包含未在 registry.COMMAND_NAMES 中注册的命令: "
+            + ", ".join(_unregistered)
+        )
     return {command: model.model_json_schema() for command, model in REQUEST_MODELS.items()}
 
 

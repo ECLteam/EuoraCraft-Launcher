@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 from anyio import to_thread
@@ -9,6 +10,30 @@ from ECL.api.models import InstanceTarget, KickRequest, PortRequest, RoomCodeReq
 from ECL.services.connector import ConnectorError, ConnectorNotAvailableError
 
 from .bridge import _FrontendState, _ipc_handler
+
+
+def _connector_guard(error_code: str):
+    """
+    为联机 IPC 处理器统一映射 Connector 异常到稳定失败响应。
+
+    依赖缺失映射为 ``CONNECTOR_NOT_AVAILABLE``，其余业务错误映射为命令专属错误码。
+
+    :param error_code: 除依赖缺失外的兜底错误码
+    """
+
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(self, body, *args, **kwargs):
+            try:
+                return await func(self, body, *args, **kwargs)
+            except ConnectorNotAvailableError as exc:
+                return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
+            except ConnectorError as exc:
+                return failure(str(exc), error_code)
+
+        return wrapper
+
+    return decorator
 
 
 class ConnectorHandlers(_FrontendState):
@@ -22,59 +47,43 @@ class ConnectorHandlers(_FrontendState):
         return success(self.connector.get_status())
 
     @_ipc_handler("CONNECTOR_HOST_PORT_FAILED")
+    @_connector_guard("CONNECTOR_HOST_PORT_FAILED")
     async def connector_host_port(self, body: dict[str, Any]) -> ApiResponse:
         """在联机服务中对外开放并托管指定端口。"""
-        try:
-            port = PortRequest.model_validate(body).port
-            result = await to_thread.run_sync(self.connector.host_port, port)
-            return success(result)
-        except ConnectorNotAvailableError as exc:
-            return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
-        except ConnectorError as exc:
-            return failure(str(exc), "CONNECTOR_HOST_PORT_FAILED")
+        port = PortRequest.model_validate(body).port
+        result = await to_thread.run_sync(self.connector.host_port, port)
+        return success(result)
 
     @_ipc_handler("CONNECTOR_HOST_INSTANCE_FAILED")
+    @_connector_guard("CONNECTOR_HOST_INSTANCE_FAILED")
     async def connector_host_instance(self, body: dict[str, Any]) -> ApiResponse:
         """在联机服务中托管一个指定的本地游戏实例。"""
-        try:
-            target = InstanceTarget.model_validate(body)
-            result = await to_thread.run_sync(self.connector.host_instance, target.game_path, target.version_id)
-            return success(result)
-        except ConnectorNotAvailableError as exc:
-            return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
-        except ConnectorError as exc:
-            return failure(str(exc), "CONNECTOR_HOST_INSTANCE_FAILED")
+        target = InstanceTarget.model_validate(body)
+        result = await to_thread.run_sync(self.connector.host_instance, target.game_path, target.version_id)
+        return success(result)
 
     @_ipc_handler("CONNECTOR_JOIN_FAILED")
+    @_connector_guard("CONNECTOR_JOIN_FAILED")
     async def connector_join(self, body: dict[str, Any]) -> ApiResponse:
         """通过房间码加入他人托管的联机房间。"""
-        try:
-            code = RoomCodeRequest.model_validate(body).code
-            result = await to_thread.run_sync(self.connector.join, code)
-            return success(result)
-        except ConnectorNotAvailableError as exc:
-            return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
-        except ConnectorError as exc:
-            return failure(str(exc), "CONNECTOR_JOIN_FAILED")
+        code = RoomCodeRequest.model_validate(body).code
+        result = await to_thread.run_sync(self.connector.join, code)
+        return success(result)
 
     @_ipc_handler("CONNECTOR_LEAVE_FAILED")
+    @_connector_guard("CONNECTOR_LEAVE_FAILED")
     async def connector_leave(self, body: dict[str, Any]) -> ApiResponse:
         """从当前联机房间退出。"""
-        try:
-            result = self.connector.leave()
-            return success(result)
-        except ConnectorError as exc:
-            return failure(str(exc), "CONNECTOR_LEAVE_FAILED")
+        result = self.connector.leave()
+        return success(result)
 
     @_ipc_handler("CONNECTOR_KICK_FAILED")
+    @_connector_guard("CONNECTOR_KICK_FAILED")
     async def connector_kick(self, body: dict[str, Any]) -> ApiResponse:
         """从当前房间踢出指定的参与机器。"""
-        try:
-            machine_id = KickRequest.model_validate(body).machine_id
-            result = self.connector.kick(machine_id)
-            return success(result)
-        except ConnectorError as exc:
-            return failure(str(exc), "CONNECTOR_KICK_FAILED")
+        machine_id = KickRequest.model_validate(body).machine_id
+        result = self.connector.kick(machine_id)
+        return success(result)
 
     @_ipc_handler("CONNECTOR_MATCH_FAILED")
     async def connector_match_instances(self, body: dict[str, Any]) -> ApiResponse:

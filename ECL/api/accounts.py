@@ -5,7 +5,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from anyio import to_thread
-from pydantic import ValidationError
 from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
@@ -19,7 +18,11 @@ from ECL.api.models import (
 from ECL.services.wardrobe import MAX_TEXTURE_BYTES, WardrobeError
 from ECL.utils import atomic_write_bytes
 
-from .bridge import _FrontendState, _ipc_handler, _normalize_image_url
+from .bridge import _FrontendState, _ipc_handler, _normalize_image_url, _validate_body
+
+_SKIN_DOWNLOAD_CHUNK_BYTES = 64 * 1024
+_SAFE_FILENAME_MAX_CHARS = 80
+_SKIN_DIMENSIONS = (64, 64)
 
 
 class AccountHandlers(_FrontendState):
@@ -218,10 +221,9 @@ class AccountHandlers(_FrontendState):
         :param body: 包含账户稳定标识的 IPC 请求数据
         :return: 可用的皮肤和披风 URL
         """
-        try:
-            request = AccountTextureRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(AccountTextureRequest, body)
+        if invalid is not None:
+            return invalid
         textures = await to_thread.run_sync(self.accounts.texture_urls, request.account_id)
         return {"success": True, "data": textures}
 
@@ -242,10 +244,9 @@ class AccountHandlers(_FrontendState):
         :param body: 包含账户稳定标识的 IPC 请求数据
         :return: 本地衣柜条目与哈希去重标记
         """
-        try:
-            request = AccountTextureRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(AccountTextureRequest, body)
+        if invalid is not None:
+            return invalid
         account_data = await to_thread.run_sync(self.accounts.list_accounts)
         account = next(
             (candidate for candidate in account_data["accounts"] if candidate["id"] == request.account_id),
@@ -283,7 +284,7 @@ class AccountHandlers(_FrontendState):
         data = bytearray()
         with self.http.stream("GET", url) as response:
             response.raise_for_status()
-            for chunk in response.iter_bytes(64 * 1024):
+            for chunk in response.iter_bytes(_SKIN_DOWNLOAD_CHUNK_BYTES):
                 data.extend(chunk)
                 if len(data) > MAX_TEXTURE_BYTES:
                     raise WardrobeError("账户皮肤超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
@@ -297,10 +298,9 @@ class AccountHandlers(_FrontendState):
         :param body: 包含源路径、素材类型和可选模型的 IPC 请求数据
         :return: 导入后的条目与去重标记
         """
-        try:
-            request = WardrobeImportRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeImportRequest, body)
+        if invalid is not None:
+            return invalid
         item, deduplicated = await to_thread.run_sync(
             self.wardrobe.import_file,
             request.path,
@@ -318,10 +318,9 @@ class AccountHandlers(_FrontendState):
         :param body: 包含条目标识及待修改字段的 IPC 请求数据
         :return: 更新后的衣柜条目
         """
-        try:
-            request = WardrobeUpdateRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeUpdateRequest, body)
+        if invalid is not None:
+            return invalid
         item = await to_thread.run_sync(
             self.wardrobe.update_item,
             request.item_id,
@@ -338,10 +337,9 @@ class AccountHandlers(_FrontendState):
 
         :param body: 包含衣柜条目标识的 IPC 请求数据
         """
-        try:
-            request = WardrobeItemRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeItemRequest, body)
+        if invalid is not None:
+            return invalid
         await to_thread.run_sync(self.wardrobe.delete_item, request.item_id)
         return {"success": True}
 
@@ -353,10 +351,9 @@ class AccountHandlers(_FrontendState):
         :param body: 包含衣柜条目标识的 IPC 请求数据
         :return: PNG Data URL 和 MIME 类型
         """
-        try:
-            request = WardrobeItemRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeItemRequest, body)
+        if invalid is not None:
+            return invalid
         _, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
         encoded = base64.b64encode(texture).decode("ascii")
         return {"success": True, "data": {"dataUrl": f"data:image/png;base64,{encoded}", "mime": "image/png"}}
@@ -369,14 +366,13 @@ class AccountHandlers(_FrontendState):
         :param body: 包含衣柜条目标识的 IPC 请求数据
         :return: 用户选择的保存路径；取消时路径为空
         """
-        try:
-            request = WardrobeItemRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeItemRequest, body)
+        if invalid is not None:
+            return invalid
         if self._webview is None:
             raise WardrobeError("窗口尚未就绪", "WEBVIEW_NOT_READY")
         item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
-        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:80] or "skin"
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:_SAFE_FILENAME_MAX_CHARS] or "skin"
         picked = await to_thread.run_sync(
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),
@@ -399,12 +395,11 @@ class AccountHandlers(_FrontendState):
         :param body: 包含衣柜条目和目标账户标识的 IPC 请求数据
         :return: 上传后刷新得到的账户资料
         """
-        try:
-            request = WardrobeApplySkinRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(WardrobeApplySkinRequest, body)
+        if invalid is not None:
+            return invalid
         item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
-        if item["kind"] != "skin" or (item["width"], item["height"]) != (64, 64):
+        if item["kind"] != "skin" or (item["width"], item["height"]) != _SKIN_DIMENSIONS:
             return {
                 "success": False,
                 "message": "只有标准 64×64 皮肤可以上传到 Microsoft",
@@ -426,10 +421,9 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        try:
-            request = AccountTextureRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(AccountTextureRequest, body)
+        if invalid is not None:
+            return invalid
         account = await to_thread.run_sync(self.accounts.reset_skin, request.account_id)
         return {"success": True, "data": account}
 
@@ -440,10 +434,9 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        try:
-            request = MicrosoftCapeRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(MicrosoftCapeRequest, body)
+        if invalid is not None:
+            return invalid
         account = await to_thread.run_sync(self.accounts.set_cape, request.account_id, request.cape_id)
         return {"success": True, "data": account}
 
@@ -454,10 +447,9 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        try:
-            request = AccountTextureRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(AccountTextureRequest, body)
+        if invalid is not None:
+            return invalid
         account = await to_thread.run_sync(self.accounts.reset_cape, request.account_id)
         return {"success": True, "data": account}
 

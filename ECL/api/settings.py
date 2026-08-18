@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from anyio import to_thread
-from pydantic import ValidationError
 
 from ECL.api.contracts import ApiResponse, success
 from ECL.api.models import JavaScanRequest, SettingsQuery, SettingsUpdate
 
-from .bridge import _FrontendState, _ipc_handler
+from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 
 class SettingsHandlers(_FrontendState):
@@ -23,10 +22,9 @@ class SettingsHandlers(_FrontendState):
         :param body: 符合 ``SettingsQuery`` 的请求数据
         :return: 请求范围内的配置数据
         """
-        try:
-            request = SettingsQuery.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(SettingsQuery, body)
+        if invalid is not None:
+            return invalid
         config = self._get_effective_config()
         if request.section is not None:
             return success(config.get(request.section))
@@ -41,10 +39,9 @@ class SettingsHandlers(_FrontendState):
         :param body: 符合 ``SettingsUpdate`` 的请求数据
         :return: 空的成功响应或稳定校验错误
         """
-        try:
-            request = SettingsUpdate.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(SettingsUpdate, body)
+        if invalid is not None:
+            return invalid
         self.config.save_config(request.section, request.data)
         return success()
 
@@ -56,10 +53,9 @@ class SettingsHandlers(_FrontendState):
         :param body: 可选包含 ``paths`` 的请求数据
         :return: 可用于启动 Minecraft 的 Java 安装列表
         """
-        try:
-            request = JavaScanRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(JavaScanRequest, body)
+        if invalid is not None:
+            return invalid
         configured_java = (self._get_effective_config().get("game") or {}).get("java_path")
         requested_paths = request.paths
         if requested_paths is None:

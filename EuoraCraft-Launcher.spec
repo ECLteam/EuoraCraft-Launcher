@@ -80,6 +80,7 @@ datas = [
     (str(SPEC_DIR / "resources"), "resources"),
     (str(SPEC_DIR / "capabilities"), "capabilities"),
     (str(SPEC_DIR / "Tauri.toml"), "."),
+    (str(SPEC_DIR / "pyproject.toml"), "."),
 ] + _wheel_datas + _plugin_datas + copy_metadata("pytauri-wheel")
 
 binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()

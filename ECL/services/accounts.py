@@ -18,6 +18,31 @@ from ECL.services.authlib import AuthlibAccountManager, AuthlibError
 from ECL.utils import AccountError, atomic_write_text, get_logger
 
 MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2
+_DEFAULT_LOGIN_POLL_INTERVAL_SECONDS = 5
+_LOGIN_START_WAIT_SECONDS = 15
+_LOGIN_WAITING_STATUSES = frozenset({"starting", "pending", "progress"})
+_LOGIN_STATUS_MESSAGES = {
+    "error": "Microsoft 登录失败",
+    "cancelled": "Microsoft 登录已取消",
+}
+
+
+def _login_progress_result(status: str, state: dict[str, Any], *, force_pending: bool = False) -> dict[str, Any]:
+    """
+    将等待中的登录状态映射为前端可轮询的进度响应。
+
+    :param status: 当前登录状态（starting/pending/progress）
+    :param state: 登录状态字典
+    :param force_pending: 是否强制返回 ``pending``（不区分 progress）
+    :return: 包含 ``status``、``retry_after`` 与可选 ``stage`` 的响应
+    """
+    result = {
+        "status": "pending" if force_pending or status != "progress" else "progress",
+        "retry_after": state.get("interval", _DEFAULT_LOGIN_POLL_INTERVAL_SECONDS),
+    }
+    if state.get("stage"):
+        result["stage"] = state["stage"]
+    return result
 
 
 class _ProgressMinecraftClient:
@@ -896,7 +921,7 @@ class AccountManager:
                 state = deepcopy(self._login_state)
 
         if state.get("status") == "starting":
-            self._login_event.wait(timeout=15)
+            self._login_event.wait(timeout=_LOGIN_START_WAIT_SECONDS)
             with self._lock:
                 state = deepcopy(self._login_state)
 
@@ -916,7 +941,7 @@ class AccountManager:
             "userCode": state.get("userCode", ""),
             "verificationUri": state.get("verificationUri", ""),
             "message": state.get("message", ""),
-            "interval": state.get("interval", 5),
+            "interval": state.get("interval", _DEFAULT_LOGIN_POLL_INTERVAL_SECONDS),
         }
 
     def poll_microsoft_login(self) -> dict[str, Any]:
@@ -928,19 +953,10 @@ class AccountManager:
         status = state.get("status")
         if status == "ready":
             return {"status": "ready"}
-        if status == "error":
-            return {"status": "error", "message": state.get("message") or "Microsoft 登录失败"}
-        if status == "cancelled":
-            return {"status": "error", "message": "Microsoft 登录已取消"}
-        if status in {"starting", "pending", "progress"}:
-            result = {
-                "status": "progress" if status == "progress" else "pending",
-                "retry_after": state.get("interval", 5),
-            }
-            if state.get("stage"):
-                result["stage"] = state["stage"]
-            return result
-        return {"status": "error", "message": "当前没有进行中的 Microsoft 登录"}
+        if status in _LOGIN_WAITING_STATUSES:
+            return _login_progress_result(status, state)
+        message = state.get("message") or _LOGIN_STATUS_MESSAGES.get(status, "当前没有进行中的 Microsoft 登录")
+        return {"status": "error", "message": message}
 
     def complete_microsoft_login(self) -> dict[str, Any]:
         """
@@ -948,19 +964,14 @@ class AccountManager:
         """
         with self._lock:
             state = deepcopy(self._login_state)
-            if state.get("status") == "error":
+            status = state.get("status")
+            if status == "error":
                 raise AccountError(state.get("message") or "Microsoft 登录失败", "MICROSOFT_LOGIN_FAILED")
-            if state.get("status") == "cancelled":
+            if status == "cancelled":
                 raise AccountError("Microsoft 登录已取消", "MICROSOFT_LOGIN_CANCELLED")
-            if state.get("status") in {"starting", "pending", "progress"}:
-                result = {
-                    "status": "pending",
-                    "retry_after": state.get("interval", 5),
-                }
-                if state.get("stage"):
-                    result["stage"] = state["stage"]
-                return result
-            if state.get("status") != "ready":
+            if status in _LOGIN_WAITING_STATUSES:
+                return _login_progress_result(status, state, force_pending=True)
+            if status != "ready":
                 raise AccountError("当前没有可完成的 Microsoft 登录", "MICROSOFT_LOGIN_NOT_STARTED")
 
             account_id = state["account_id"]

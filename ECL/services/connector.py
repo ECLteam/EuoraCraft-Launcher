@@ -21,6 +21,12 @@ _NODE_LIST_URL = "https://api.qomicex.top/api/nodes"
 _NODE_UA = "ECL"
 _DEFAULT_NODES = ["tcp://public.easytier.cn:11010"]
 _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
+_NODE_FETCH_TIMEOUT_SECONDS = 10.0
+_MAX_AGGREGATE_WORKERS = 8
+_PLAYER_LIST_FETCH_TIMEOUT_SECONDS = 5
+_MAX_STATUS_PACKET_BYTES = 1_048_576
+_MAX_TCP_PORT = 65535
+_STATUS_PROBE_TIMEOUT_SECONDS = 0.5
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
@@ -107,7 +113,7 @@ class ConnectorService:
             response = self._http.get(
                 _NODE_LIST_URL,
                 headers={"User-Agent": _NODE_UA},
-                timeout=10.0,
+                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
             items = response.json()
@@ -129,7 +135,7 @@ class ConnectorService:
                     aggregate_urls.append(url)
 
             if aggregate_urls:
-                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), 8)) as pool:
+                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
                     for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
                         nodes.extend(resolved)
             resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
@@ -150,7 +156,7 @@ class ConnectorService:
             response = self._http.get(
                 url,
                 headers={"User-Agent": _NODE_UA},
-                timeout=10.0,
+                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
             text = response.text.strip()
@@ -208,7 +214,7 @@ class ConnectorService:
                     status, body = asyncio.run_coroutine_threadsafe(
                         self._client.send_request("c:player_profiles_list", b""),
                         loop,
-                    ).result(timeout=5)
+                    ).result(timeout=_PLAYER_LIST_FETCH_TIMEOUT_SECONDS)
                     if status == 0:
                         raw = json.loads(body.decode("utf-8"))
                         return [self._to_frontend_player(p) for p in raw if isinstance(p, dict)]
@@ -526,12 +532,12 @@ class ConnectorService:
             and connection.status == psutil.CONN_LISTEN
             and connection.laddr
             and isinstance(connection.laddr.port, int)
-            and 0 < connection.laddr.port <= 65535
+            and 0 < connection.laddr.port <= _MAX_TCP_PORT
         }
         return sorted(ports)
 
     @staticmethod
-    def _is_minecraft_server(port: int, timeout: float = 0.5) -> bool:
+    def _is_minecraft_server(port: int, timeout: float = _STATUS_PROBE_TIMEOUT_SECONDS) -> bool:
         """
         通过 Minecraft Status 协议确认本地端口的服务类型。
 
@@ -548,7 +554,7 @@ class ConnectorService:
                 connection.sendall(b"\x01\x00")
 
                 packet_length = ConnectorService._read_varint(connection)
-                if packet_length is None or not 1 <= packet_length <= 1_048_576:
+                if packet_length is None or not 1 <= packet_length <= _MAX_STATUS_PACKET_BYTES:
                     return False
                 packet = ConnectorService._read_exact(connection, packet_length)
                 if packet is None:

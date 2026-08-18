@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from anyio import to_thread
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import (
@@ -39,7 +39,7 @@ from ECL.api.models import (
     WorldTransferRequest,
 )
 
-from .bridge import _FrontendState, _ipc_handler
+from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 
 class WorkspaceHandlers(_FrontendState):
@@ -53,10 +53,9 @@ class WorkspaceHandlers(_FrontendState):
         body: dict[str, Any],
         callback: Callable[[Any], Any],
     ) -> ApiResponse:
-        try:
-            request = model.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(model, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(lambda: callback(request)))
 
     @_ipc_handler("INSTANCE_FOLDER_OPEN_FAILED")
@@ -348,10 +347,9 @@ class WorkspaceHandlers(_FrontendState):
 
     @_ipc_handler("SCREENSHOT_FAILED")
     async def game_screenshot_set_background(self, body: dict[str, Any]) -> ApiResponse:
-        try:
-            request = ScreenshotRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(ScreenshotRequest, body)
+        if invalid is not None:
+            return invalid
         candidate = await to_thread.run_sync(
             self.game.set_launcher_background_candidate,
             request.game_path,

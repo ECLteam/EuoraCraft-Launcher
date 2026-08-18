@@ -8,7 +8,6 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 from anyio import to_thread
-from pydantic import ValidationError
 from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
@@ -22,29 +21,57 @@ from ECL.api.models import (
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (
+    _MAX_REMOTE_IMAGE_SIZE,
     _download_remote_image,
     _encode_image_bytes,
-    _ext_to_mime,
     _FrontendState,
     _guess_image_extension,
-    _image_cache_get,
-    _image_cache_key,
-    _image_cache_put,
     _image_mime_map,
     _ipc_handler,
     _mime_to_ext,
     _normalize_image_url,
     _open_folder,
+    _read_image_data_url,
+    _validate_body,
 )
 from .contracts import success
 
 _REMOTE_IMAGE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 _REMOTE_IMAGE_CACHE_MAX_FILES = 128
 _REMOTE_IMAGE_CACHE_MAX_BYTES = 96 * 1024 * 1024
+_MAX_FILE_READ_BYTES = 20 * 1024 * 1024
+
+# 图片选择对话框按用途映射标题与允许的扩展名。
+_IMAGE_SELECTION_OPTIONS: dict[ImagePurpose, tuple[str, list[str]]] = {
+    ImagePurpose.SKIN: ("选择 Minecraft 皮肤", ["png"]),
+    ImagePurpose.CAPE: ("选择 Minecraft 披风", ["png"]),
+    ImagePurpose.INSTANCE_ICON: ("选择实例图标", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
+    ImagePurpose.BACKGROUND: ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
+}
+
+# 文件保存对话框按导出用途映射标题、默认文件名与允许的扩展名。
+_SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
+    FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
+    FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
+    FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
+    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.zip", ["zip"]),
+    FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
+    FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
+}
 
 
 class FileHandlers(_FrontendState):
     """提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。"""
+
+    @staticmethod
+    def _remote_image_cache_dir(data_path: Path) -> Path:
+        """返回远程图片持久化缓存目录。"""
+        return data_path / "cache" / "remote-images"
+
+    @staticmethod
+    def _remote_image_digest(url: str) -> str:
+        """按远程 URL 生成稳定缓存摘要键。"""
+        return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
     def _read_remote_image_cache(self, url: str) -> tuple[bytes, str, bool] | None:
         """
@@ -53,13 +80,13 @@ class FileHandlers(_FrontendState):
         :param url: 已完成协议和主机校验的远程图片地址
         :return: 图片字节、扩展名和是否仍在刷新周期内；未命中返回 ``None``
         """
-        cache_dir = self.data_path / "cache" / "remote-images"
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_dir = self._remote_image_cache_dir(self.data_path)
+        digest = self._remote_image_digest(url)
         for extension in _image_mime_map:
             candidate = cache_dir / f"{digest}{extension}"
             try:
                 stat = candidate.stat()
-                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > 50 * 1024 * 1024:
+                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > _MAX_REMOTE_IMAGE_SIZE:
                     continue
                 return candidate.read_bytes(), extension, time() - stat.st_mtime <= _REMOTE_IMAGE_CACHE_TTL_SECONDS
             except OSError:
@@ -74,8 +101,8 @@ class FileHandlers(_FrontendState):
         :param extension: 已根据响应头识别且在白名单内的图片扩展名
         :param image_bytes: 已经过远程下载大小限制的图片内容
         """
-        cache_dir = self.data_path / "cache" / "remote-images"
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_dir = self._remote_image_cache_dir(self.data_path)
+        digest = self._remote_image_digest(url)
         safe_extension = extension if extension in _image_mime_map else ".jpg"
         target = cache_dir / f"{digest}{safe_extension}"
         atomic_write_bytes(target, image_bytes)
@@ -179,7 +206,7 @@ class FileHandlers(_FrontendState):
         path = Path(self._normalize_file_path(raw_path)).expanduser()
         if not path.is_file():
             return {"success": False, "message": "文件不存在", "errorCode": "FILE_NOT_FOUND"}
-        if path.stat().st_size > 20 * 1024 * 1024:
+        if path.stat().st_size > _MAX_FILE_READ_BYTES:
             return {"success": False, "message": "文件超过 20 MiB 读取限制", "errorCode": "FILE_TOO_LARGE"}
         content = await to_thread.run_sync(path.read_bytes)
         encoded = base64.b64encode(content).decode("ascii") if mode == "base64" else content.decode("utf-8")
@@ -254,6 +281,19 @@ class FileHandlers(_FrontendState):
             "data": {"dataUrl": data_url, "base64": b64, "url": url, "path": local_path},
         }
 
+    @staticmethod
+    def _parse_image_data_url(data_url: str) -> tuple[bytes, str]:
+        """
+        解析 Data URL 为原始图片字节与 MIME 类型。
+
+        :param data_url: 形如 ``data:<mime>;base64,<payload>`` 的图片数据
+        :return: ``(图片字节, MIME 类型)``
+        :raises ValueError: Data URL 格式不合法或 Base64 解码失败
+        """
+        header, b64 = data_url.split(",", 1)
+        mime = header.split(";")[0].split(":", 1)[1] if ":" in header else "image/png"
+        return base64.b64decode(b64), mime
+
     def _persist_background_image(self, data_url: str) -> str:
         """
         将编码后的图片写入数据目录下的背景图缓存目录，返回本地路径。
@@ -261,9 +301,7 @@ class FileHandlers(_FrontendState):
         :param data_url: 需要解码并保存的 Data URL
         """
         try:
-            header, b64 = data_url.split(",", 1)
-            mime = header.split(";")[0].split(":", 1)[1] if ":" in header else "image/png"
-            payload = base64.b64decode(b64)
+            payload, mime = self._parse_image_data_url(data_url)
         except (ValueError, base64.binascii.Error) as exc:
             raise ValueError(f"无法解析图片数据: {exc}") from exc
         ext = _mime_to_ext.get(mime, ".jpg")
@@ -291,9 +329,7 @@ class FileHandlers(_FrontendState):
 
         if isinstance(data_url, str) and data_url.startswith("data:"):
             try:
-                header, b64 = data_url.split(",", 1)
-                image_bytes = base64.b64decode(b64)
-                mime = header.split(";")[0].split(":")[1] if ":" in header else "image/png"
+                image_bytes, mime = self._parse_image_data_url(data_url)
                 ext = _mime_to_ext.get(mime, ".png")
                 default_name = f"background{ext}"
             except (ValueError, base64.binascii.Error) as exc:
@@ -358,29 +394,23 @@ class FileHandlers(_FrontendState):
 
         path = self._normalize_file_path(raw_path)
         file_path = Path(path)
-        cache_key = _image_cache_key(file_path)
-
-        cached = _image_cache_get(cache_key)
-        if cached is not None:
-            return {"success": True, "data": {"dataUrl": cached}}
-
-        def _read() -> dict[str, str] | None:
-            if not file_path.is_file():
-                self.logger.warning("图片文件不存在: %s", file_path)
-                return None
-            ext = file_path.suffix.lower() or ".png"
-            data_url, b64 = _encode_image_bytes(file_path.read_bytes(), ext)
-            mime = _ext_to_mime.get(ext, "image/jpeg")
-            return {"dataUrl": data_url, "b64": b64, "mime": mime}
-
-        result = await to_thread.run_sync(_read)
-        if result is None:
+        if not file_path.is_file():
+            self.logger.warning("图片文件不存在: %s", file_path)
             return {"success": False, "message": "图片文件不存在", "errorCode": "FILE_NOT_FOUND"}
-        _image_cache_put(cache_key, result["dataUrl"])
-        self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, result["mime"], len(result["b64"]))
+
+        try:
+            stat = file_path.stat()
+        except OSError:
+            return {"success": False, "message": "图片文件不存在", "errorCode": "FILE_NOT_FOUND"}
+
+        # 使用 bridge 的 functools LRU 缓存（键含 mtime_ns 与 size，文件变化自动失效）
+        data_url, mime, base64_len = await to_thread.run_sync(
+            _read_image_data_url, file_path, stat.st_mtime_ns, stat.st_size
+        )
+        self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, base64_len)
         return {
             "success": True,
-            "data": {"dataUrl": result["dataUrl"]},
+            "data": {"dataUrl": data_url},
         }
 
     @_ipc_handler("IMAGE_LIST_FILES_ERROR")
@@ -475,22 +505,12 @@ class FileHandlers(_FrontendState):
         :param body: 包含可选图片用途的 IPC 请求数据
         :return: 用户选择的本地绝对路径，取消时路径为空
         """
-        try:
-            request = ImageSelectionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
-        if request.purpose == ImagePurpose.SKIN:
-            title = "选择 Minecraft 皮肤"
-            extensions = ["png"]
-        elif request.purpose == ImagePurpose.CAPE:
-            title = "选择 Minecraft 披风"
-            extensions = ["png"]
-        elif request.purpose == ImagePurpose.INSTANCE_ICON:
-            title = "选择实例图标"
-            extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
-        else:
-            title = "选择背景图片"
-            extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+        request, invalid = _validate_body(ImageSelectionRequest, body)
+        if invalid is not None:
+            return invalid
+        title, extensions = _IMAGE_SELECTION_OPTIONS.get(
+            request.purpose, ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"])
+        )
         path = await self._pick_path(False, title, extensions)
         self.logger.info("图片选择结果: %s", path)
         return {"success": True, "data": {"path": path, "base64": ""}}
@@ -502,10 +522,9 @@ class FileHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        try:
-            request = FileSelectionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(FileSelectionRequest, body)
+        if invalid is not None:
+            return invalid
         if request.purpose == FileSelectionPurpose.CRASH_ANALYSIS:
             path = await self._pick_path(False, "选择 Minecraft 崩溃日志", ["log", "txt", "zip"])
         else:
@@ -518,10 +537,9 @@ class FileHandlers(_FrontendState):
         """
         按实例工作台用途选择多个本地文件。
         """
-        try:
-            request = FileSelectionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(FileSelectionRequest, body)
+        if invalid is not None:
+            return invalid
         if self._webview is None:
             return success({"paths": []})
 
@@ -545,30 +563,12 @@ class FileHandlers(_FrontendState):
         :param body: 符合 ``FileSaveRequest`` 的导出用途
         :return: 用户选择的 ZIP 绝对路径；取消时路径为空
         """
-        try:
-            request = FileSaveRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
-        if request.purpose == FileSavePurpose.CRASH_REPORT:
-            title = "保存 Minecraft 崩溃报告"
-            default_name = "EuoraCraft-crash-report.zip"
-        elif request.purpose == FileSavePurpose.LAUNCHER_LOGS:
-            title = "保存 EuoraCraft 启动器日志"
-            default_name = "EuoraCraft-logs.zip"
-        elif request.purpose == FileSavePurpose.WORLD_EXPORT:
-            title, default_name = "导出 Minecraft 存档", "world.zip"
-        elif request.purpose == FileSavePurpose.INSTANCE_EXPORT:
-            title, default_name = "导出实例整合包", "instance.zip"
-        elif request.purpose == FileSavePurpose.SCREENSHOT:
-            title, default_name = "另存 Minecraft 截图", "screenshot.png"
-        else:
-            title, default_name = "导出资源清单", "resources.json"
-        if request.purpose == FileSavePurpose.RESOURCE_MANIFEST:
-            extensions = ["json", "csv"]
-        elif request.purpose == FileSavePurpose.SCREENSHOT:
-            extensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp"]
-        else:
-            extensions = ["zip"]
+        request, invalid = _validate_body(FileSaveRequest, body)
+        if invalid is not None:
+            return invalid
+        title, default_name, extensions = _SAVE_FILE_OPTIONS.get(
+            request.purpose, ("导出资源清单", "resources.json", ["zip"])
+        )
         selected = await self._pick_save_path(title, default_name, extensions)
         if selected and request.purpose not in {FileSavePurpose.RESOURCE_MANIFEST, FileSavePurpose.SCREENSHOT} and Path(selected).suffix.casefold() != ".zip":
             selected = str(Path(selected).with_suffix(".zip"))

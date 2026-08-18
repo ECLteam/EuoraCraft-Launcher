@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from anyio import to_thread
-from pydantic import ValidationError
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import (
@@ -30,7 +29,7 @@ from ECL.api.models import (
     LoaderCatalogRequest,
 )
 
-from .bridge import _FrontendState, _ipc_handler
+from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 
 class GameHandlers(_FrontendState):
@@ -57,10 +56,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameCatalogRequest`` 的请求数据
         :return: 版本列表或按版本类型分类的目录
         """
-        try:
-            request = GameCatalogRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameCatalogRequest, body)
+        if invalid is not None:
+            return invalid
         source = self._download_source(request.source.value if request.source else None)
         if request.classified:
             catalog = await to_thread.run_sync(self.game.minecraft_versions_classified, source)
@@ -76,10 +74,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``LoaderCatalogRequest`` 的请求数据
         :return: 加载器版本列表
         """
-        try:
-            request = LoaderCatalogRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(LoaderCatalogRequest, body)
+        if invalid is not None:
+            return invalid
         source = self._download_source(request.source.value if request.source else None)
         versions = await to_thread.run_sync(
             self.game.loader_versions,
@@ -97,10 +94,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameScanRequest`` 的请求数据
         :return: 扫描到的实例列表
         """
-        try:
-            request = GameScanRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameScanRequest, body)
+        if invalid is not None:
+            return invalid
         paths = request.paths
         if paths is None:
             game_config = self._get_effective_config().get("game") or {}
@@ -126,10 +122,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstallRequest`` 的请求数据
         :return: 安装任务标识与最终实例名称
         """
-        try:
-            request = InstallRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstallRequest, body)
+        if invalid is not None:
+            return invalid
         payload = request.model_dump(mode="json", exclude={"game_path", "java_path", "source"}, exclude_none=True)
         if request.loader_type is not None and request.loader_version is not None:
             payload[f"{request.loader_type.value}_version"] = request.loader_version
@@ -149,10 +144,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameUninstallRequest`` 的请求数据
         :return: 空的成功响应
         """
-        try:
-            request = GameUninstallRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameUninstallRequest, body)
+        if invalid is not None:
+            return invalid
         await to_thread.run_sync(self.game.delete_instance_to_trash, request.game_path, request.version_id)
         return success()
 
@@ -164,10 +158,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GamePathRequest`` 的请求数据
         :return: 完整游戏目录配置
         """
-        try:
-            request = GamePathRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GamePathRequest, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(self.game.read_ecl_config, request.game_path))
 
     @_ipc_handler("GAME_CONFIG_FAILED")
@@ -178,10 +171,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameConfigUpdate`` 的请求数据
         :return: 空的成功响应
         """
-        try:
-            request = GameConfigUpdate.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameConfigUpdate, body)
+        if invalid is not None:
+            return invalid
         await to_thread.run_sync(self.game.write_ecl_config, request.game_path, request.data)
         return success()
 
@@ -193,10 +185,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameConfigPatch`` 的请求数据
         :return: 更新后的完整游戏目录配置
         """
-        try:
-            request = GameConfigPatch.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameConfigPatch, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(self.game.patch_ecl_config, request.game_path, request.patch))
 
     async def game_instances(self, body: dict[str, Any]) -> ApiResponse:
@@ -218,10 +209,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameVersionRequest`` 的请求数据
         :return: 启动次数、上次运行秒数和总运行秒数
         """
-        try:
-            request = GameVersionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameVersionRequest, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(self.game.get_version_stats, request.game_path, request.version_id))
 
     @_ipc_handler("GAME_CONFIG_FAILED")
@@ -232,10 +222,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameVersionRequest`` 的请求数据
         :return: 该版本的启动设置字典
         """
-        try:
-            request = GameVersionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameVersionRequest, body)
+        if invalid is not None:
+            return invalid
         return success(
             await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id)
         )
@@ -248,10 +237,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameVersionSettingsUpdate`` 的请求数据
         :return: 写入后的完整版本设置
         """
-        try:
-            request = GameVersionSettingsUpdate.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameVersionSettingsUpdate, body)
+        if invalid is not None:
+            return invalid
         return success(
             await to_thread.run_sync(
                 self.game.write_version_settings,
@@ -269,10 +257,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameVersionRequest`` 的实例目标
         :return: 未自动补齐字段的原始实例资料
         """
-        try:
-            request = GameVersionRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameVersionRequest, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(self.game.get_instance_profile, request.game_path, request.version_id))
 
     @_ipc_handler("INSTANCE_PROFILE_FAILED")
@@ -283,10 +270,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstanceProfilePatchRequest`` 的增量资料
         :return: 保存后的原始实例资料
         """
-        try:
-            request = InstanceProfilePatchRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstanceProfilePatchRequest, body)
+        if invalid is not None:
+            return invalid
         patch = request.patch.model_dump(mode="json", exclude_unset=True, by_alias=True)
         return success(
             await to_thread.run_sync(
@@ -305,10 +291,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstanceProfileResetRequest`` 的字段列表
         :return: 保存后的原始实例资料
         """
-        try:
-            request = InstanceProfileResetRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstanceProfileResetRequest, body)
+        if invalid is not None:
+            return invalid
         return success(
             await to_thread.run_sync(
                 self.game.reset_instance_profile,
@@ -326,10 +311,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstanceIconRequest`` 的图标选择
         :return: 保存后的原始实例资料
         """
-        try:
-            request = InstanceIconRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstanceIconRequest, body)
+        if invalid is not None:
+            return invalid
         return success(
             await to_thread.run_sync(
                 self.game.set_instance_icon,
@@ -349,10 +333,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstancePinOrderRequest`` 的有序实例列表
         :return: 空的成功响应
         """
-        try:
-            request = InstancePinOrderRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstancePinOrderRequest, body)
+        if invalid is not None:
+            return invalid
         entries = [entry.model_dump(mode="json") for entry in request.entries]
         await to_thread.run_sync(self.game.set_instance_pin_order, entries)
         return success()
@@ -373,10 +356,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstanceCategoryUpsertRequest`` 的分类数据
         :return: 保存后的分类
         """
-        try:
-            request = InstanceCategoryUpsertRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstanceCategoryUpsertRequest, body)
+        if invalid is not None:
+            return invalid
         return success(
             await to_thread.run_sync(
                 self.game.upsert_instance_category,
@@ -395,10 +377,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``InstanceCategoryDeleteRequest`` 的分类 ID
         :return: 空的成功响应
         """
-        try:
-            request = InstanceCategoryDeleteRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(InstanceCategoryDeleteRequest, body)
+        if invalid is not None:
+            return invalid
         await to_thread.run_sync(self.game.delete_instance_category, request.category_id)
         return success()
 
@@ -410,10 +391,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``LaunchRequest`` 的请求数据
         :return: 新游戏实例的标识、版本和目录
         """
-        try:
-            request = LaunchRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(LaunchRequest, body)
+        if invalid is not None:
+            return invalid
         values = request.model_dump()
         version_id = values.pop("version_id")
         game_path = values.pop("game_path")
@@ -460,10 +440,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``GameInstanceRequest`` 的请求数据
         :return: 空的成功响应
         """
-        try:
-            request = GameInstanceRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(GameInstanceRequest, body)
+        if invalid is not None:
+            return invalid
         await to_thread.run_sync(self.game.stop_instance, request.instance_id)
         return success()
 
@@ -475,10 +454,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``CrashAnalyzeRequest`` 的文件和版本上下文
         :return: 会话报告编号、原因、证据和可用输出信息
         """
-        try:
-            request = CrashAnalyzeRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(CrashAnalyzeRequest, body)
+        if invalid is not None:
+            return invalid
         result = await to_thread.run_sync(
             self.game.analyze_crash_file,
             request.file_path,
@@ -495,10 +473,9 @@ class GameHandlers(_FrontendState):
         :param body: 符合 ``CrashReportRequest`` 的报告编号
         :return: 输出文件名和最多五百行进程输出
         """
-        try:
-            request = CrashReportRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(CrashReportRequest, body)
+        if invalid is not None:
+            return invalid
         return success(await to_thread.run_sync(self.game.get_crash_output, request.report_id))
 
     @_ipc_handler("CRASH_EXPORT_FAILED")
@@ -509,10 +486,9 @@ class GameHandlers(_FrontendState):
         :param body: 报告编号和可选的目标 ZIP 路径
         :return: 实际写入的导出路径
         """
-        try:
-            request = CrashExportRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(CrashExportRequest, body)
+        if invalid is not None:
+            return invalid
         result = await to_thread.run_sync(
             self.game.export_crash_report,
             request.report_id,

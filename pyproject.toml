@@ -71,7 +71,7 @@ include = ["ECL*"]
 version = {attr = "ECL.common.version.__version__"}
 
 [tool.semantic_release]
-version_variables = ["ECL/common/version.py:__version__"]
+version_variables = ["pyproject.toml:tool.euoracraft.version"]
 branch = "main"
 upload_to_pypi = false
 upload_to_release = true
@@ -85,7 +85,8 @@ allowed_tags = ["feat", "fix", "perf", "docs", "style", "refactor", "test", "cho
 type = "github"
 
 [tool.euoracraft]
-version_type = "dev"
+version = "0.1.1"
+version_type = "alpha"
 build_number = 0
 
 [tool.pyinstaller]

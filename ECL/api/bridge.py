@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import sys
-from collections import OrderedDict
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -54,41 +53,40 @@ _image_mime_map = {
     ".webp": "image/webp",
 }
 
-_ext_to_mime = _image_mime_map
 _mime_to_ext = {mime: ext for ext, mime in _image_mime_map.items()}
 _mime_to_ext["image/jpeg"] = ".jpg"
 
 _MAX_REMOTE_IMAGE_SIZE = 50 * 1024 * 1024
 _REMOTE_IMAGE_TIMEOUT = 30.0
+_REMOTE_IMAGE_CHUNK_BYTES = 64 * 1024
 
-# 图片读取结果内存缓存（LRU）：避免重复读盘与 Base64 编码
+# 图片读取结果内存缓存（LRU）：避免重复读盘与 Base64 编码。缓存键包含文件
+# 最后修改时间与大小，文件变化后自然失效，与先前的显式键行为一致。
 _image_cache_max = 32
-_image_cache: "OrderedDict[str, str]" = OrderedDict()
+
+# 游戏运行时参数表：调用方 body 显式值优先，缺失时回退到游戏配置的对应键。
+_RUNTIME_OPTION_FIELDS = (
+    # (结果字段, body 键, 配置取值函数)
+    ("memory", "memory", lambda c: c.get("memory_size", default_config["game"]["memory_size"])),
+    ("width", "width", lambda c: c.get("game_width", default_config["game"]["game_width"])),
+    ("height", "height", lambda c: c.get("game_height", default_config["game"]["game_height"])),
+    ("jvm_args", "jvm_args", lambda c: c.get("jvm_args", [])),
+)
 
 
-def _image_cache_key(file_path: Path) -> str:
-    """生成图片缓存键，包含文件最后修改时间与大小，缺失时使用固定标记。"""
-    try:
-        stat = file_path.stat()
-        return f"{file_path}|{stat.st_mtime_ns}|{stat.st_size}"
-    except OSError:
-        return f"{file_path}|missing"
+@functools.lru_cache(maxsize=_image_cache_max)
+def _read_image_data_url(file_path: Path, mtime_ns: int, size: int) -> tuple[str, str, int]:
+    """
+    读取图片并编码为 Data URL（LRU 缓存），返回 Data URL、MIME 与 Base64 长度。
 
-
-def _image_cache_get(key: str) -> str | None:
-    """读取缓存条目并刷新为最近使用。"""
-    value = _image_cache.get(key)
-    if value is not None:
-        _image_cache.move_to_end(key)
-    return value
-
-
-def _image_cache_put(key: str, value: str) -> None:
-    """写入缓存条目，超出上限时逐出最久未使用的项。"""
-    _image_cache[key] = value
-    _image_cache.move_to_end(key)
-    while len(_image_cache) > _image_cache_max:
-        _image_cache.popitem(last=False)
+    :param file_path: 图片文件路径
+    :param mtime_ns: 文件最后修改时间（纳秒），参与缓存键
+    :param size: 文件大小（字节），参与缓存键
+    :return: ``(data_url, mime, base64_len)`` 三元组
+    """
+    ext = file_path.suffix.lower() or ".png"
+    data_url, b64 = _encode_image_bytes(file_path.read_bytes(), ext)
+    return data_url, _image_mime_map.get(ext, "image/jpeg"), len(b64)
 
 
 _IPC_ERRORS = (
@@ -113,6 +111,22 @@ _MODAL_ERROR_CODES = frozenset(
 )
 
 
+def _is_http_url(url: str, *, scheme_lower: bool = False) -> bool:
+    """
+    校验 URL 是否为带主机的 HTTP(S) 地址。
+
+    :param url: 待校验的完整 URL
+    :param scheme_lower: 是否将协议比较小写化后再判断
+    :return: 合法时返回 ``True``
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    scheme = parsed.scheme.lower() if scheme_lower else parsed.scheme
+    return scheme in ("http", "https") and bool(parsed.hostname)
+
+
 def _normalize_image_url(value: Any) -> str | None:
     """规整远程图片地址，校验 HTTP(S) 协议与主机并去除首尾标点。"""
     if not isinstance(value, str):
@@ -120,13 +134,7 @@ def _normalize_image_url(value: Any) -> str | None:
     url = value.strip().rstrip(",.;:\n\r")
     if not url:
         return None
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return None
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
-        return None
-    return url
+    return url if _is_http_url(url, scheme_lower=True) else None
 
 
 def _extract_filename_from_header(header: str | None) -> str | None:
@@ -180,7 +188,7 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
     ):
         response.raise_for_status()
         data = bytearray()
-        async for chunk in response.aiter_bytes(64 * 1024):
+        async for chunk in response.aiter_bytes(_REMOTE_IMAGE_CHUNK_BYTES):
             data.extend(chunk)
             if len(data) > _MAX_REMOTE_IMAGE_SIZE:
                 raise ValueError("远程图片超过最大大小限制")
@@ -192,7 +200,7 @@ def _encode_image_bytes(
     ext: str,
 ) -> tuple[str, str]:
     """将图片字节按扩展名编码为 Data URL 与 Base64 数据。"""
-    mime = _ext_to_mime.get(ext, "image/jpeg")
+    mime = _image_mime_map.get(ext, "image/jpeg")
     b64 = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}", b64
 
@@ -290,6 +298,20 @@ def _ipc_handler(fallback_code: str = "INTERNAL_ERROR"):
         return wrapper
 
     return decorator
+
+
+def _validate_body(model: Any, body: dict[str, Any]) -> tuple[Any, ApiResponse | None]:
+    """
+    将 IPC 请求体校验为 Pydantic 模型，失败时返回稳定的校验错误响应。
+
+    :param model: 请求模型类型
+    :param body: IPC 请求数据
+    :return: ``(模型实例或 None, 校验失败响应或 None)``
+    """
+    try:
+        return model.model_validate(body), None
+    except ValidationError as exc:
+        return None, _FrontendState._invalid_request(exc)
 
 
 class _FrontendState:
@@ -454,13 +476,7 @@ class _FrontendState:
             return None
         if "://" not in server_url:
             server_url = f"https://{server_url}"
-        try:
-            parsed = urlsplit(server_url)
-        except ValueError:
-            return None
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            return None
-        return server_url
+        return server_url if _is_http_url(server_url) else None
 
     @property
     def _authlib_servers_file(self) -> Path:
@@ -514,10 +530,9 @@ class _FrontendState:
         :param body: 符合 ``FrontendLogRequest`` 的日志数据
         :return: 空的成功响应
         """
-        try:
-            request = FrontendLogRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(FrontendLogRequest, body)
+        if invalid is not None:
+            return invalid
         message = request.message
         if request.detail:
             message = f"{message}\n{request.detail}"
@@ -558,10 +573,9 @@ class _FrontendState:
         :param body: 符合 ``ProcessInputRequest`` 的请求数据
         :return: 是否成功写入的标准输入标识
         """
-        try:
-            request = ProcessInputRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(ProcessInputRequest, body)
+        if invalid is not None:
+            return invalid
         return {"success": True, "data": {"sent": self.processes.send_stdin(request.instance_id, request.data)}}
 
     @_ipc_handler("PROCESS_STOP_FAILED")
@@ -572,10 +586,9 @@ class _FrontendState:
         :param body: 符合 ``ProcessStopRequest`` 的请求数据
         :return: 进程是否已结束的成功响应
         """
-        try:
-            request = ProcessStopRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(ProcessStopRequest, body)
+        if invalid is not None:
+            return invalid
         return {"success": True, "data": {"stopped": self.processes.stop(request.instance_id)}}
 
     async def debug_process_spawn(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -587,10 +600,9 @@ class _FrontendState:
         """
         if not self.launcher.debug:
             return failure("调试命令仅在调试模式下可用", "INVALID_STATE")
-        try:
-            request = DebugProcessSpawnRequest.model_validate(body)
-        except ValidationError as exc:
-            return self._invalid_request(exc)
+        request, invalid = _validate_body(DebugProcessSpawnRequest, body)
+        if invalid is not None:
+            return invalid
         try:
             instance_id = self.processes.spawn(
                 request.name,
@@ -616,20 +628,19 @@ class _FrontendState:
         java_path = body.get("java_path")
         if java_path is None and not game_config.get("java_auto", True):
             java_path = game_config.get("java_path") or None
-        return {
+        options: dict[str, Any] = {
             "game_path": body.get("game_path") or game_config.get("last_install_path") or first_path,
             "source": download_config.get("mirror_source") or "official",
             "java_path": java_path,
-            "memory": body.get("memory") if body.get("memory") is not None
-            else game_config.get("memory_size", default_config["game"]["memory_size"]),
-            "width": body.get("width") if body.get("width") is not None
-            else game_config.get("game_width", default_config["game"]["game_width"]),
-            "height": body.get("height") if body.get("height") is not None
-            else game_config.get("game_height", default_config["game"]["game_height"]),
-            "jvm_args": body.get("jvm_args") if body.get("jvm_args") is not None else game_config.get("jvm_args", []),
-            "game_args": body.get("game_args") or [],
-            "version_isolation": bool(body.get("version_isolation", False)),
         }
+        for field, body_key, config_lookup in _RUNTIME_OPTION_FIELDS:
+            value = body.get(body_key)
+            if value is None:
+                value = config_lookup(game_config)
+            options[field] = value
+        options["game_args"] = body.get("game_args") or []
+        options["version_isolation"] = bool(body.get("version_isolation", False))
+        return options
 
     async def frontend_ready(self, body: dict[str, Any], webview_window: WebviewWindow) -> dict[str, Any]:
         """
