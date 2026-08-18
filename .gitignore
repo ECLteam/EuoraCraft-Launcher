@@ -78,6 +78,5 @@ Desktop.ini
 # Legacy standalone UI checkout
 /EuoraCraftLauncher-UI/
 
-frontend_QML/
-
-.vite/*
+/.vite/
+/.memory/
