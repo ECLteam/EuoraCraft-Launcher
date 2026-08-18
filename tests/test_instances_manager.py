@@ -11,6 +11,7 @@ class FakeProcess:
     def __init__(self, *, times_out: bool = False) -> None:
         self.times_out = times_out
         self.running = True
+        self.terminate_calls = 0
         self.kill_calls = 0
         self.wait_timeouts: list[float | int | None] = []
 
@@ -24,6 +25,10 @@ class FakeProcess:
         self.running = False
         return 0
 
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        self.running = False
+
     def kill(self) -> None:
         self.kill_calls += 1
         self.running = False
@@ -35,30 +40,39 @@ def _manager_with_process(process: FakeProcess) -> InstancesManager:
     return manager
 
 
-def test_request_instance_exit_notifies_before_waiting(monkeypatch) -> None:
+def test_stop_instance_terminates_then_waits() -> None:
     process = FakeProcess()
     manager = _manager_with_process(process)
-    notifications = []
-    monkeypatch.setattr(manager, "_notify_process_exit", lambda target: notifications.append(target) or True)
 
-    exited_normally = manager.request_instance_exit("minecraft", wait_timeout=3.0)
+    exited_normally = manager.stop_instance("minecraft", wait_timeout=3.0)
 
     assert exited_normally is True
-    assert notifications == [process]
+    assert process.terminate_calls == 1
     assert process.wait_timeouts == [3.0]
     assert process.kill_calls == 0
 
 
-def test_request_instance_exit_forces_process_only_after_timeout(monkeypatch) -> None:
+def test_stop_instance_forces_process_only_after_timeout() -> None:
     process = FakeProcess(times_out=True)
     manager = _manager_with_process(process)
-    monkeypatch.setattr(manager, "_notify_process_exit", lambda _target: True)
 
-    exited_normally = manager.request_instance_exit("minecraft", wait_timeout=3.0)
+    exited_normally = manager.stop_instance("minecraft", wait_timeout=3.0)
 
     assert exited_normally is False
+    assert process.terminate_calls == 1
     assert process.wait_timeouts == [3.0, None]
     assert process.kill_calls == 1
+
+
+def test_stop_instance_kills_when_forced() -> None:
+    process = FakeProcess()
+    manager = _manager_with_process(process)
+
+    exited_normally = manager.stop_instance("minecraft", force=True, wait_timeout=None)
+
+    assert exited_normally is True
+    assert process.kill_calls == 1
+    assert process.terminate_calls == 0
 
 
 def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> None:
@@ -84,12 +98,11 @@ def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> N
     manager = InstancesManager()
     exits = []
 
-    instance_id = manager.create_instance(
+    instance_id, _process = manager.create_instance(
         "instant-failure",
         "Minecraft",
         ["java", "broken"],
         exit_callback=lambda code, name: exits.append((code, name)),
     )
 
-    assert exits == [(1, "instant-failure")]
-    assert instance_id not in manager.instances
+    assert exits == [(1, instance_id)]

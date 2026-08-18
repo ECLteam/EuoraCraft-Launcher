@@ -31,8 +31,6 @@ class ProcessService:
         self._lock = RLock()
         self._meta: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque[str]] = {}
-        # 同名实例可能并发存在，退出回调仅携带实例名称；按名称排队标识以定位实例。
-        self._alive: dict[str, deque[str]] = {}
 
     def spawn(
         self,
@@ -55,18 +53,16 @@ class ProcessService:
         """
         if not name or not type_ or not args:
             raise ValueError("实例名称、类型与启动参数不能为空")
-        instance_id = self._manager.create_instance(
+        instance_id, _process = self._manager.create_instance(
             instance_name=name,
             instance_type=type_,
             args=args,
             cwd=cwd,
-            only_stdout=True,
             std_in=stdin,
         )
         with self._lock:
             self._meta[instance_id] = {"name": name, "type": type_, "stdin": stdin}
             self._buffers[instance_id] = deque(maxlen=self.BUFFER_LIMIT)
-            self._alive.setdefault(name, deque()).append(instance_id)
         self._events.emit("process:instances_changed", self.list())
         return instance_id
 
@@ -83,8 +79,7 @@ class ProcessService:
             if meta is None or not meta["stdin"]:
                 return False
         payload = data if data.endswith("\n") else data + "\n"
-        self._manager.send_stdin(instance_id, payload)
-        return True
+        return self._manager.send_stdin(instance_id, payload)
 
     def stop(self, instance_id: str, force: bool = False, wait_timeout: float | None = None) -> bool:
         """
@@ -149,24 +144,18 @@ class ProcessService:
             {"instanceId": instance_id, "name": name, "type": type_, "line": line},
         )
 
-    def _on_exit(self, exit_code: int, instance_name: str) -> None:
+    def _on_exit(self, exit_code: int, instance_id: str) -> None:
         """
         处理子进程退出事件，回收内部登记并推送实例列表变更。
 
-        退出回调只携带实例名称，因此按名称队列取最早登记且仍存活的实例标识。
+        InstancesManager 的退出回调现在携带实例标识，因此直接按标识清理元数据。
 
         :param exit_code: 子进程退出码
-        :param instance_name: 实例名称
+        :param instance_id: 实例标识
         """
         with self._lock:
-            names = self._alive.get(instance_name)
-            if not names:
-                return
-            instance_id = names.popleft()
             self._meta.pop(instance_id, None)
             self._buffers.pop(instance_id, None)
-            if not names:
-                self._alive.pop(instance_name, None)
         self._events.emit("process:instances_changed", self.list())
 
 

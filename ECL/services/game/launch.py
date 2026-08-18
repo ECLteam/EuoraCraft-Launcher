@@ -425,7 +425,7 @@ class LaunchCoordinator(_GameState):
             with self._lock:
                 self._running_games[run_token] = run
             try:
-                instance_id = self.instances.create_instance(
+                instance_id, _process = self.instances.create_instance(
                     instance_name=version_name,
                     instance_type="Minecraft",
                     args=command,
@@ -778,6 +778,6 @@ class LaunchCoordinator(_GameState):
             )
             if matched is not None:
                 matched[1].stopping = True
-        self.instances.request_instance_exit(instance_id, wait_timeout=3.0)
+        self.instances.stop_instance(instance_id, wait_timeout=3.0)
         if matched is not None:
             self._finalize_instance_run(matched[0], action="stopped")

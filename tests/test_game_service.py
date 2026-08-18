@@ -57,16 +57,17 @@ class FakeInstances:
         self._create_count += 1
         instance_id = "minecraft-instance" if self._create_count == 1 else f"minecraft-instance-{self._create_count}"
         self.created = options
+        process = FakeProcess()
         self.items.append(
             {
                 "ID": instance_id,
                 "Name": options["instance_name"],
                 "Type": options["instance_type"],
-                "Instance": FakeProcess(),
+                "Instance": process,
                 "ExitCallback": options["exit_callback"],
             }
         )
-        return instance_id
+        return instance_id, process
 
     def exit_instance(self, instance_id, exit_code=0):
         for item in list(self.items):
@@ -81,6 +82,7 @@ class FakeInstances:
         return list(self.items)
 
     def stop_instance(self, instance_id, **_options):
+        self.exit_requests.append((instance_id, _options))
         for item in self.items:
             if item["ID"] == instance_id:
                 item["Instance"].running = False
@@ -102,9 +104,16 @@ class FakeDownloader:
         self.client = None
         self.concurrency = 0
         self.semaphore = None
+        self.downloaded_bytes = 0
+        self.total_bytes = len(download_list)
+        self.use_byte_progress = False
+        self.total_files = len(download_list)
+        self.completed_entries: set[tuple[str, str]] = set()
 
     async def run(self):
         if self.progress_callback:
+            self.completed_entries.update((url, name) for url, name in self.download_list)
+            self.downloaded_bytes = self.total_bytes
             self.progress_callback(len(self.download_list), len(self.download_list))
 
     def stop(self):
@@ -576,10 +585,10 @@ def test_clean_exit_after_startup_marker_does_not_trigger_crash(tmp_path, monkey
 def test_launch_handles_process_that_exits_before_instance_registration_finishes(tmp_path, monkeypatch) -> None:
     class ImmediateExitInstances(FakeInstances):
         def create_instance(self, **options):
-            instance_id = super().create_instance(**options)
+            instance_id, process = super().create_instance(**options)
             options["exit_callback"](1, options["instance_name"])
-            self.items[0]["Instance"].running = False
-            return instance_id
+            process.running = False
+            return instance_id, process
 
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "broken"

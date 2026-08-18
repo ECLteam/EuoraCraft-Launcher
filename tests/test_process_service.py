@@ -85,7 +85,6 @@ def test_same_name_instances_all_cleaned_up() -> None:
 
     assert first != second
     assert wait_until(lambda: len(service.list()) == 0)
-    assert "dup" not in service._alive
     service.close()
 
 
