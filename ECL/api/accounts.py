@@ -184,11 +184,12 @@ class AccountHandlers(_FrontendState):
         :param body: 包含账户标识与收藏标记的 IPC 请求数据
         :return: 刷新后的完整账户列表
         """
-        return await to_thread.run_sync(
+        result = await to_thread.run_sync(
             self.accounts.set_favorite,
             body.get("account_id"),
             bool(body.get("favorite")),
         )
+        return {"success": True, "data": result}
 
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_set_pinned(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -198,11 +199,12 @@ class AccountHandlers(_FrontendState):
         :param body: 包含账户标识与置顶标记的 IPC 请求数据
         :return: 刷新后的完整账户列表
         """
-        return await to_thread.run_sync(
+        result = await to_thread.run_sync(
             self.accounts.set_pinned,
             body.get("account_id"),
             bool(body.get("pinned")),
         )
+        return {"success": True, "data": result}
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_refresh_profile(self, body: dict[str, Any]) -> dict[str, Any]:
         """
