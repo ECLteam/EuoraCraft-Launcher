@@ -15,7 +15,7 @@ from ECL.common import MICROSOFT_CLIENT_ID
 from ECL.events import EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError
-from ECL.utils import AccountError, get_logger
+from ECL.utils import AccountError, atomic_write_text, get_logger
 
 MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2
 
@@ -247,13 +247,9 @@ class AccountManager:
             "current_account_id": self._current_account_id,
             "account_prefs": self._account_prefs,
         }
-        temporary_path = self.state_path.with_suffix(".json.tmp")
         try:
-            serialized = json.dumps(state, ensure_ascii=False, indent=2)
-            temporary_path.write_text(serialized, encoding="utf-8")
-            temporary_path.replace(self.state_path)
+            atomic_write_text(self.state_path, json.dumps(state, ensure_ascii=False, indent=2))
         except (OSError, TypeError, ValueError) as exc:
-            temporary_path.unlink(missing_ok=True)
             raise AccountError("保存账号数据失败", "ACCOUNT_SAVE_FAILED") from exc
 
     @staticmethod

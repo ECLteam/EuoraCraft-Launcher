@@ -8,6 +8,7 @@ from typing import Any
 
 from ECL.events import EventBus
 from ECL.utils.errors import ConfigError, ConfigValidationError
+from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
 
 default_config: dict[str, Any] = {
@@ -97,16 +98,11 @@ class ConfigStore:
         self._write_config(self._create_default_config())
 
     def _write_config(self, config_data: dict[str, Any]) -> None:
-        """先写临时文件再原子替换目标配置，失败时抛 ConfigError。"""
-        temporary_path = self.config_path.with_suffix(".json.tmp")
+        """以原子替换方式写入配置，失败时抛 ConfigError。"""
         try:
             serialized_config = json.dumps(config_data, ensure_ascii=False, indent=4)
-            self.data_path.mkdir(parents=True, exist_ok=True)
-            temporary_path.write_text(serialized_config, encoding="utf-8")
-            temporary_path.replace(self.config_path)
+            atomic_write_text(self.config_path, serialized_config)
         except (OSError, TypeError, ValueError) as exc:
-            with suppress(OSError):
-                temporary_path.unlink(missing_ok=True)
             raise ConfigError(f"写入配置文件失败: {self.config_path}") from exc
         self.config_data = deepcopy(config_data)
 

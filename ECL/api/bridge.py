@@ -30,6 +30,7 @@ from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
+from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
 
 _queued_frontend_events = frozenset(
@@ -619,9 +620,12 @@ class _FrontendState:
             "game_path": body.get("game_path") or game_config.get("last_install_path") or first_path,
             "source": download_config.get("mirror_source") or "official",
             "java_path": java_path,
-            "memory": body.get("memory") if body.get("memory") is not None else game_config.get("memory_size", 4096),
-            "width": body.get("width") if body.get("width") is not None else game_config.get("game_width", 854),
-            "height": body.get("height") if body.get("height") is not None else game_config.get("game_height", 480),
+            "memory": body.get("memory") if body.get("memory") is not None
+            else game_config.get("memory_size", default_config["game"]["memory_size"]),
+            "width": body.get("width") if body.get("width") is not None
+            else game_config.get("game_width", default_config["game"]["game_width"]),
+            "height": body.get("height") if body.get("height") is not None
+            else game_config.get("game_height", default_config["game"]["game_height"]),
             "jvm_args": body.get("jvm_args") if body.get("jvm_args") is not None else game_config.get("jvm_args", []),
             "game_args": body.get("game_args") or [],
             "version_isolation": bool(body.get("version_isolation", False)),

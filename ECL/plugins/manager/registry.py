@@ -7,6 +7,68 @@ from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult, PluginCommandError
 
 
+def _plugin_entry(
+    name: str,
+    metadata: Any,
+    status: str,
+    error: Any = None,
+    *,
+    permissions: list[dict[str, Any]] | None = None,
+    services: list[str] | None = None,
+    settings: list[str] | None = None,
+    is_system: bool = False,
+) -> dict[str, Any]:
+    """
+    构建前端插件列表条目，统一已加载/依赖跳过/禁用/实例化失败四类来源的字典结构。
+
+    :param name: 插件名称
+    :param metadata: 插件实例或 plugin.json 元数据字典；None 表示无可用元数据
+    :param status: 插件状态
+    :param error: 加载或实例化错误信息
+    :param permissions: 权限字典列表
+    :param services: 已注册命令名列表
+    :param settings: 已注册设置项列表
+    :param is_system: 是否为系统内置插件
+    :return: 前端插件列表条目
+    """
+    if isinstance(metadata, Plugin):
+        title = metadata.title
+        version = metadata.version
+        description = metadata.description
+        author = metadata.author
+        dependencies = metadata.metadata.get("dependencies", {})
+        services = list(metadata._commands.keys())
+        settings = list(metadata._settings.keys())
+        is_system = getattr(metadata, "is_system", False)
+    elif isinstance(metadata, dict):
+        title = metadata.get("title", name)
+        version = metadata.get("version", "")
+        description = metadata.get("description", "")
+        author = metadata.get("author", "")
+        dependencies = metadata.get("dependencies", {})
+    else:
+        title = name
+        version = ""
+        description = ""
+        author = ""
+        dependencies = {}
+    return {
+        "name": name,
+        "title": title,
+        "version": version,
+        "description": description,
+        "author": author,
+        "icon": "",
+        "status": status,
+        "error": error,
+        "dependencies": dependencies,
+        "permissions": permissions or [],
+        "services": services or [],
+        "settings": settings or [],
+        "is_system": is_system,
+    }
+
+
 class PluginRegistry(_PluginState):
     """负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。"""
 
@@ -43,83 +105,50 @@ class PluginRegistry(_PluginState):
         result = []
         for name, plugin in self._plugins.items():
             result.append(
-                {
-                    "name": name,
-                    "title": plugin.title,
-                    "version": plugin.version,
-                    "description": plugin.description,
-                    "author": plugin.author,
-                    "icon": "",
-                    "status": self._status.get(name, "unloaded"),
-                    "error": self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name),
-                    "dependencies": plugin.metadata.get("dependencies", {}),
-                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                    "services": list(plugin._commands.keys()),
-                    "settings": list(plugin._settings.keys()),
-                    "is_system": getattr(plugin, "is_system", False),
-                }
+                _plugin_entry(
+                    name,
+                    plugin,
+                    self._status.get(name, "unloaded"),
+                    self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name),
+                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                )
             )
         # 补充因依赖错误未被加载的插件条目，便于前端展示
         loaded_names = set(self._plugins.keys())
         for name in sorted(self._dependency_resolution.skipped - loaded_names - self._disabled_plugins):
             result.append(
-                {
-                    "name": name,
-                    "title": name,
-                    "version": "",
-                    "description": "",
-                    "author": "",
-                    "icon": "",
-                    "status": "unloaded",
-                    "error": self._dependency_resolution.errors.get(name),
-                    "dependencies": {},
-                    "permissions": [],
-                    "services": [],
-                    "settings": [],
-                    "is_system": False,
-                }
+                _plugin_entry(
+                    name,
+                    None,
+                    "unloaded",
+                    self._dependency_resolution.errors.get(name),
+                )
             )
         # 补充被禁用且未实例化的插件条目，仍从 plugin.json 读取元数据供前端展示
         for name in sorted(self._disabled_plugins - loaded_names):
             candidate = self._candidate_map.get(name, {})
-            metadata = candidate.get("metadata", {})
             result.append(
-                {
-                    "name": name,
-                    "title": metadata.get("title", name),
-                    "version": metadata.get("version", ""),
-                    "description": metadata.get("description", ""),
-                    "author": metadata.get("author", ""),
-                    "icon": "",
-                    "status": "disabled",
-                    "error": None,
-                    "dependencies": metadata.get("dependencies", {}),
-                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                    "services": [],
-                    "settings": [],
-                    "is_system": candidate.get("is_system", False),
-                }
+                _plugin_entry(
+                    name,
+                    candidate.get("metadata", {}),
+                    "disabled",
+                    None,
+                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                    is_system=candidate.get("is_system", False),
+                )
             )
         # 补充实例化失败的插件条目
         for name in sorted(set(self._plugin_errors.keys()) - loaded_names):
             candidate = self._candidate_map.get(name, {})
-            metadata = candidate.get("metadata", {})
             result.append(
-                {
-                    "name": name,
-                    "title": metadata.get("title", name),
-                    "version": metadata.get("version", ""),
-                    "description": metadata.get("description", ""),
-                    "author": metadata.get("author", ""),
-                    "icon": "",
-                    "status": self._status.get(name, "error"),
-                    "error": self._plugin_errors.get(name),
-                    "dependencies": metadata.get("dependencies", {}),
-                    "permissions": [p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                    "services": [],
-                    "settings": [],
-                    "is_system": candidate.get("is_system", False),
-                }
+                _plugin_entry(
+                    name,
+                    candidate.get("metadata", {}),
+                    self._status.get(name, "error"),
+                    self._plugin_errors.get(name),
+                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
+                    is_system=candidate.get("is_system", False),
+                )
             )
         return result
 

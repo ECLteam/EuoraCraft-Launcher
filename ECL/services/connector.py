@@ -17,17 +17,10 @@ from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
-
-# ── 节点服务 ──────────────────────────────────────────────────────────
-
 _NODE_LIST_URL = "https://api.qomicex.top/api/nodes"
 _NODE_UA = "ECL"
 _DEFAULT_NODES = ["tcp://public.easytier.cn:11010"]
 _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
-
-
-# ── 类型别名 ──────────────────────────────────────────────────────────
-
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
@@ -75,19 +68,17 @@ class ConnectorService:
         # 易用性
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    # ── 可用性 ──────────────────────────────────────────────────────
-
     @property
     def available(self) -> bool:
         """
-联机服务是否可用（依赖齐全）。
+        联机服务是否可用（依赖齐全）。
         """
         return True
 
     @property
     def easytier_available(self) -> bool:
         """
-EasyTier 是否可用。
+        EasyTier 是否可用。
         """
         return True
 
@@ -192,8 +183,6 @@ EasyTier 是否可用。
         """
         return value.startswith(_EASYTIER_SCHEMES)
 
-    # ── 状态查询 ────────────────────────────────────────────────────
-
     @staticmethod
     def _to_frontend_player(player: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -280,8 +269,6 @@ EasyTier 是否可用。
             "publicIp": None,
             "publicPort": None,
         }
-
-    # ── 房间创建 ────────────────────────────────────────────────────
 
     def host_port(self, port: int) -> dict[str, Any]:
         """
@@ -484,8 +471,6 @@ EasyTier 是否可用。
         self._players = [p for p in self._players if p.get("machineId") != machine_id]
         return {"status": "kicked"}
 
-    # ── 端口扫描 ────────────────────────────────────────────────────
-
     def scan_ports(self) -> dict[str, Any]:
         """
         扫描本机 Java 进程开放的 Minecraft 服务端口。
@@ -504,8 +489,6 @@ EasyTier 是否可用。
                 return {"port": port}
         logger.debug("未发现本地 Minecraft 服务端口")
         return {"port": None}
-
-    # ── 辅助方法 ────────────────────────────────────────────────────
 
     @staticmethod
     def _minecraft_listener_ports() -> list[int]:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from ECL.utils import get_logger
+from ECL.utils import atomic_write_text, get_logger
 
 NOTICE_URL = "https://api.eclteam.top/raw/ECLteam/ECL-Api/main/notice.json"
 NOTICE_SCHEMA_VERSION = 1
@@ -165,15 +164,7 @@ class InfoCardManager:
         return [announcement for _, _, announcement in normalized]
 
     def _write_notice_cache(self, data: Any) -> None:
-        temporary_path = self.notice_cache_path.with_suffix(".json.tmp")
-        try:
-            serialized = json.dumps(data, ensure_ascii=False, indent=2)
-            temporary_path.write_text(serialized, encoding="utf-8")
-            temporary_path.replace(self.notice_cache_path)
-        except (OSError, TypeError, ValueError):
-            with suppress(OSError):
-                temporary_path.unlink(missing_ok=True)
-            raise
+        atomic_write_text(self.notice_cache_path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def _read_cached_announcements(self, now: datetime) -> list[dict[str, str]]:
         data = json.loads(self.notice_cache_path.read_text(encoding="utf-8"))

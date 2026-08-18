@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 import nbtlib
+from pydantic import BaseModel, ConfigDict, Field
 
 from ECL.utils import atomic_write_text
 
@@ -38,6 +39,54 @@ _RESOURCE_PROJECT_TYPE = {
     "shaderpack": "shader",
     "datapack": "datapack",
 }
+
+
+class _ModrinthSearchHit(BaseModel):
+    """Modrinth 搜索命中 → 前端 ``ModSearchItem`` 的字段映射模型。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: Any = Field(default=None, validation_alias="project_id")
+    project_id: Any = Field(default=None, validation_alias="project_id", serialization_alias="projectId")
+    slug: Any = ""
+    title: Any = None
+    display_title: Any = Field(default=None, validation_alias="title", serialization_alias="displayTitle")
+    description: Any = None
+    author: Any = None
+    icon_url: Any = Field(default=None, validation_alias="icon_url", serialization_alias="iconUrl")
+    downloads: Any = None
+    follows: Any = None
+    date_modified: Any = Field(default=None, validation_alias="date_modified", serialization_alias="dateModified")
+    source: str = ""
+    project_url: str = Field(default="", serialization_alias="projectUrl")
+    resource_type: str = Field(default="", serialization_alias="resourceType")
+    categories: Any = Field(default_factory=list)
+    loaders: Any = Field(default_factory=list)
+    game_versions: Any = Field(
+        default_factory=list, validation_alias="game_versions", serialization_alias="gameVersions"
+    )
+    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class _ModrinthProjectInfo(BaseModel):
+    """Modrinth 项目详情 → 前端 ``ModInfo`` 的字段映射模型。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: Any = Field(default=None)
+    slug: Any = ""
+    title: Any = None
+    description: Any = None
+    author: str = ""
+    body: Any = None
+    icon_url: Any = Field(default=None, validation_alias="icon_url", serialization_alias="iconUrl")
+    source: str = "modrinth"
+    resource_type: str = Field(default="", serialization_alias="resourceType")
+    loaders: Any = Field(default_factory=list)
+    game_versions: Any = Field(
+        default_factory=list, validation_alias="game_versions", serialization_alias="gameVersions"
+    )
+    project_url: str = Field(default="", serialization_alias="projectUrl")
 
 
 def _sha512(path: Path) -> str:
@@ -476,31 +525,18 @@ class ResourceCoordinator:
                 continue
             slug = str(hit.get("slug") or "")
             project_url = f"https://modrinth.com/{project_type}/{slug}"
-            result.append({
-                "id": hit.get("project_id"),
-                "projectId": hit.get("project_id"),
-                "slug": slug,
-                "title": hit.get("title"),
-                "displayTitle": hit.get("title"),
-                "description": hit.get("description"),
-                "author": hit.get("author"),
-                "iconUrl": hit.get("icon_url"),
-                "downloads": hit.get("downloads"),
-                "follows": hit.get("follows"),
-                "dateModified": hit.get("date_modified"),
+            dto = _ModrinthSearchHit.model_validate(hit)
+            dto.slug = slug
+            dto.source = source
+            dto.project_url = project_url
+            dto.resource_type = resource_type
+            dto.alternatives = [{
                 "source": source,
+                "projectId": dto.project_id,
+                "slug": slug,
                 "projectUrl": project_url,
-                "resourceType": resource_type,
-                "categories": hit.get("categories") or [],
-                "loaders": hit.get("loaders") or [],
-                "gameVersions": hit.get("game_versions") or [],
-                "alternatives": [{
-                    "source": source,
-                    "projectId": hit.get("project_id"),
-                    "slug": slug,
-                    "projectUrl": project_url,
-                }],
-            })
+            }]
+            result.append(dto.model_dump(by_alias=True))
         return result
 
     def fetch_project_info(
@@ -528,20 +564,11 @@ class ResourceCoordinator:
         data = response.json()
         slug = str(data.get("slug") or "")
         project_type = str(data.get("project_type") or _RESOURCE_PROJECT_TYPE.get(resource_type, "mod"))
-        return {
-            "id": data.get("id"),
-            "slug": slug,
-            "title": data.get("title"),
-            "description": data.get("description"),
-            "author": "",
-            "body": data.get("body"),
-            "iconUrl": data.get("icon_url"),
-            "source": "modrinth",
-            "resourceType": resource_type,
-            "loaders": data.get("loaders") or [],
-            "gameVersions": data.get("game_versions") or [],
-            "projectUrl": f"https://modrinth.com/{project_type}/{slug}",
-        }
+        dto = _ModrinthProjectInfo.model_validate(data)
+        dto.slug = slug
+        dto.resource_type = resource_type
+        dto.project_url = f"https://modrinth.com/{project_type}/{slug}"
+        return dto.model_dump(by_alias=True)
 
     def fetch_project_versions(
         self,
@@ -597,6 +624,76 @@ class ResourceCoordinator:
             })
         return result
 
+    def _fetch_online_version(self, version_id_str: str) -> dict[str, Any]:
+        """获取 Modrinth 版本详情并返回主下载文件，无可用文件时抛出错误。"""
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/version/{version_id_str}",
+            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        files = response.json().get("files") or []
+        selected = next(
+            (item for item in files if isinstance(item, dict) and item.get("primary")),
+            files[0] if files else None,
+        )
+        if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
+            raise GameServiceError("该版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
+        return selected
+
+    def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
+        """流式下载在线资源到临时文件，并按需上报字节进度与实时速度。"""
+        with httpx.stream("GET", url, timeout=30, follow_redirects=True) as stream:
+            stream.raise_for_status()
+            total = int(stream.headers.get("content-length") or 0)
+            with temp.open("wb") as output:
+                downloaded = 0
+                started = time.monotonic()
+                last_emit = started
+                last_bytes = 0
+                if task_id:
+                    self._emit_install_progress(
+                        task_id, "download", f"正在下载 {filename}",
+                        done=0, total=total, progress_type="bytes", speed=0,
+                    )
+                for chunk in stream.iter_bytes(1024 * 1024):
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    if not task_id:
+                        continue
+                    now = time.monotonic()
+                    if now - last_emit < 0.25 and downloaded < total:
+                        continue
+                    speed = int((downloaded - last_bytes) / max(now - last_emit, 0.001))
+                    self._emit_install_progress(
+                        task_id, "download", f"正在下载 {filename}",
+                        done=downloaded, total=total, progress_type="bytes", speed=speed,
+                    )
+                    last_emit = now
+                    last_bytes = downloaded
+
+    def _record_installed_resource(
+        self,
+        game_path: Any,
+        version_id: Any,
+        resource_type: str,
+        destination: Path,
+        source: str,
+        project_id: str,
+        version_id_str: str,
+    ) -> None:
+        """在资源清单中记录已安装的在线资源来源信息。"""
+        manifest = self._read_resource_manifest(game_path, version_id)
+        records = manifest.setdefault("resources", {})
+        records[f"{resource_type}:{destination.name}"] = {
+            "source": source,
+            "projectId": project_id,
+            "versionId": version_id_str,
+            "sha512": _sha512(destination),
+            "enabled": True,
+        }
+        self._write_resource_manifest(game_path, version_id, manifest)
+
     def install_online_resource(
         self,
         game_path: Any,
@@ -627,68 +724,21 @@ class ResourceCoordinator:
             raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         root.mkdir(parents=True, exist_ok=True)
-        response = httpx.get(
-            f"https://api.modrinth.com/v2/version/{version_id_str}",
-            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()
-        files = data.get("files") or []
-        selected = next(
-            (item for item in files if isinstance(item, dict) and item.get("primary")),
-            files[0] if files else None,
-        )
-        if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
-            raise GameServiceError("该版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
+        selected = self._fetch_online_version(version_id_str)
         destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
         if destination.exists():
             raise GameServiceError(f"模组已存在：{selected['filename']}", "RESOURCE_ALREADY_EXISTS")
         temp = root / f".{destination.name}.ecl-download"
         filename = str(selected["filename"])
         try:
-            with httpx.stream("GET", str(selected["url"]), timeout=30, follow_redirects=True) as stream:
-                stream.raise_for_status()
-                total = int(stream.headers.get("content-length") or 0)
-                with temp.open("wb") as output:
-                    downloaded = 0
-                    started = time.monotonic()
-                    last_emit = started
-                    last_bytes = 0
-                    if task_id:
-                        self._emit_install_progress(
-                            task_id, "download", f"正在下载 {filename}",
-                            done=0, total=total, progress_type="bytes", speed=0,
-                        )
-                    for chunk in stream.iter_bytes(1024 * 1024):
-                        output.write(chunk)
-                        downloaded += len(chunk)
-                        if not task_id:
-                            continue
-                        now = time.monotonic()
-                        if now - last_emit < 0.25 and downloaded < total:
-                            continue
-                        speed = int((downloaded - last_bytes) / max(now - last_emit, 0.001))
-                        self._emit_install_progress(
-                            task_id, "download", f"正在下载 {filename}",
-                            done=downloaded, total=total, progress_type="bytes", speed=speed,
-                        )
-                        last_emit = now
-                        last_bytes = downloaded
+            self._download_online_file(str(selected["url"]), temp, filename, task_id)
             hashes = selected.get("hashes") or {}
             if hashes.get("sha512") and _sha512(temp).casefold() != str(hashes["sha512"]).casefold():
                 raise GameServiceError("下载文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
             temp.replace(destination)
-            manifest = self._read_resource_manifest(game_path, version_id)
-            records = manifest.setdefault("resources", {})
-            records[f"{resource_type}:{destination.name}"] = {
-                "source": source,
-                "projectId": project_id,
-                "versionId": version_id_str,
-                "sha512": _sha512(destination),
-                "enabled": True,
-            }
-            self._write_resource_manifest(game_path, version_id, manifest)
+            self._record_installed_resource(
+                game_path, version_id, resource_type, destination, source, project_id, version_id_str
+            )
             if task_id:
                 self._emit_install_progress(task_id, "done", f"{filename} 已安装完成", done=1, total=1)
             return {"filename": destination.name, "source": source, "skipped": False}

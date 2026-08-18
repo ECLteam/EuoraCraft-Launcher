@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ECL.utils import DebugMaintenanceError
+from ECL.utils import DebugMaintenanceError, atomic_write_text
 
 PENDING_MAINTENANCE_FILE = ".pending_debug_maintenance.json"
 
@@ -80,9 +80,7 @@ def schedule_debug_maintenance(data_path: Path | str, action: str) -> ScheduledM
     if action not in actions:
         actions.append(action)
     marker_data = {"actions": actions, "scheduled_at": datetime.now(UTC).isoformat()}
-    temporary_path = marker_path.with_suffix(".json.tmp")
-    temporary_path.write_text(json.dumps(marker_data, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary_path.replace(marker_path)
+    atomic_write_text(marker_path, json.dumps(marker_data, ensure_ascii=False, indent=2))
     return ScheduledMaintenance(action, DEBUG_MAINTENANCE_TARGETS[action], root / "backups")
 
 

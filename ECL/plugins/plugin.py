@@ -10,6 +10,48 @@ if TYPE_CHECKING:
     from ECL.plugins.framework import PluginManager
 
 
+def _register_event(cls, name: str, args: tuple) -> None:
+    """注册事件处理器条目：事件名 + 方法名。"""
+    cls._event_handlers.append((args[0], name))
+
+
+def _register_command(cls, name: str, args: tuple) -> None:
+    """注册命令条目：命令名 + 方法名 + 描述。"""
+    cls._command_handlers.append((args[0], name, args[1]))
+
+
+def _register_setting(cls, name: str, args: tuple) -> None:
+    """注册设置项定义条目。"""
+    cls._setting_definitions.append((args[0], args[1], args[2], args[3]))
+
+
+def _register_route(cls, name: str, args: tuple) -> None:
+    """注册侧边栏路由条目：路径 + 标题 + 图标。"""
+    cls._route_definitions.append((args[0], args[1], args[2]))
+
+
+def _register_frontend_injection(kind: str) -> Callable[[type, str, tuple], None]:
+    """生成前端注入类装饰器的注册函数，条目直接复用装饰器参数元组。"""
+
+    def registrar(cls, name: str, args: tuple) -> None:
+        cls._frontend_injections.append((kind, args))
+
+    return registrar
+
+
+_DECORATOR_REGISTRARS: dict[str, Callable[[type, str, tuple], None]] = {
+    "event": _register_event,
+    "command": _register_command,
+    "setting": _register_setting,
+    "route": _register_route,
+    "css": _register_frontend_injection("css"),
+    "html": _register_frontend_injection("html"),
+    "script": _register_frontend_injection("script"),
+    "vue_slot": _register_frontend_injection("vue_slot"),
+    "vue_route": _register_frontend_injection("vue_route"),
+}
+
+
 def _register_decorated(cls) -> None:
     """
     扫描类的 __dict__，将装饰器在函数对象上留下的标记转换为注册表条目。
@@ -19,24 +61,9 @@ def _register_decorated(cls) -> None:
         if meta is None:
             continue
         kind, args = meta
-        if kind == "event":
-            cls._event_handlers.append((args[0], name))
-        elif kind == "command":
-            cls._command_handlers.append((args[0], name, args[1]))
-        elif kind == "setting":
-            cls._setting_definitions.append((args[0], args[1], args[2], args[3]))
-        elif kind == "route":
-            cls._route_definitions.append((args[0], args[1], args[2]))
-        elif kind == "css":
-            cls._frontend_injections.append(("css", (args[0],)))
-        elif kind == "html":
-            cls._frontend_injections.append(("html", (args[0], args[1])))
-        elif kind == "script":
-            cls._frontend_injections.append(("script", (args[0],)))
-        elif kind == "vue_slot":
-            cls._frontend_injections.append(("vue_slot", (args[0], args[1], args[2])))
-        elif kind == "vue_route":
-            cls._frontend_injections.append(("vue_route", (args[0], args[1], args[2], args[3], args[4])))
+        registrar = _DECORATOR_REGISTRARS.get(kind)
+        if registrar is not None:
+            registrar(cls, name, args)
 
 
 class Plugin:

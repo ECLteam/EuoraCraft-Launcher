@@ -2,9 +2,28 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
+
+from ECL.utils.config import default_config
+
+
+def _validate_safe_path(value: Any) -> Any:
+    """拒绝包含 NUL 字符的路径字符串。"""
+    if isinstance(value, str) and "\0" in value:
+        raise ValueError("路径包含非法字符")
+    return value
+
+
+def _validate_non_empty_path(value: Any, message: str) -> Any:
+    """拒绝空白或包含 NUL 字符的路径字符串。"""
+    if isinstance(value, str) and (not value.strip() or "\0" in value):
+        raise ValueError(message)
+    return value
+
+
+SafePath = Annotated[Path, BeforeValidator(_validate_safe_path)]
 
 
 class RequestModel(BaseModel):
@@ -140,15 +159,8 @@ class LoaderCatalogRequest(RequestModel):
 
 
 class GameScanRequest(RequestModel):
-    paths: list[Path] | None = None
+    paths: list[SafePath] | None = None
     force: bool = False
-
-    @field_validator("paths", mode="before")
-    @classmethod
-    def validate_paths(cls, value):
-        if value is not None and any(isinstance(path, str) and "\0" in path for path in value):
-            raise ValueError("路径包含非法字符")
-        return value
 
 
 class JavaScanRequest(RequestModel):
@@ -156,14 +168,7 @@ class JavaScanRequest(RequestModel):
 
 
 class GamePathRequest(RequestModel):
-    game_path: Path
-
-    @field_validator("game_path", mode="before")
-    @classmethod
-    def validate_game_path(cls, value):
-        if isinstance(value, str) and "\0" in value:
-            raise ValueError("路径包含非法字符")
-        return value
+    game_path: SafePath
 
 
 class GameConfigUpdate(GamePathRequest):
@@ -252,14 +257,12 @@ class GameInstanceRequest(RequestModel):
 
 
 class CrashAnalyzeRequest(GameVersionRequest):
-    file_path: Path
+    file_path: SafePath
 
     @field_validator("file_path", mode="before")
     @classmethod
     def validate_file_path(cls, value):
-        if isinstance(value, str) and (not value.strip() or "\0" in value):
-            raise ValueError("崩溃日志路径无效")
-        return value
+        return _validate_non_empty_path(value, "崩溃日志路径无效")
 
 
 class CrashReportRequest(RequestModel):
@@ -267,14 +270,12 @@ class CrashReportRequest(RequestModel):
 
 
 class CrashExportRequest(CrashReportRequest):
-    output_path: Path | None = None
+    output_path: SafePath | None = None
 
     @field_validator("output_path", mode="before")
     @classmethod
     def validate_output_path(cls, value):
-        if isinstance(value, str) and (not value.strip() or "\0" in value):
-            raise ValueError("导出路径无效")
-        return value
+        return _validate_non_empty_path(value, "导出路径无效")
 
 
 class InstallRequest(RequestModel):
@@ -282,17 +283,10 @@ class InstallRequest(RequestModel):
     version_name: str | None = None
     loader_type: LoaderType | None = None
     loader_version: str | None = None
-    game_path: Path
-    java_path: Path | None = None
+    game_path: SafePath
+    java_path: SafePath | None = None
     source: DownloadSource | None = None
     task_id: str | None = None
-
-    @field_validator("game_path", "java_path", mode="before")
-    @classmethod
-    def validate_paths(cls, value):
-        if isinstance(value, str) and "\0" in value:
-            raise ValueError("路径包含非法字符")
-        return value
 
 
 class WorldQuickTarget(RequestModel):
@@ -307,23 +301,16 @@ class ServerQuickTarget(RequestModel):
 
 class LaunchRequest(RequestModel):
     version_id: str = Field(min_length=1)
-    game_path: Path
-    java_path: Path | None = None
+    game_path: SafePath
+    java_path: SafePath | None = None
     source: DownloadSource | None = None
-    memory: int = Field(default=4096, ge=256, le=131072)
-    width: int = Field(default=854, ge=320, le=16384)
-    height: int = Field(default=480, ge=240, le=16384)
+    memory: int = Field(default=default_config["game"]["memory_size"], ge=256, le=131072)
+    width: int = Field(default=default_config["game"]["game_width"], ge=320, le=16384)
+    height: int = Field(default=default_config["game"]["game_height"], ge=240, le=16384)
     jvm_args: list[str] = Field(default_factory=list)
     game_args: list[str] = Field(default_factory=list)
     version_isolation: bool = False
     quick_target: Annotated[WorldQuickTarget | ServerQuickTarget, Field(discriminator="type")] | None = None
-
-    @field_validator("game_path", "java_path", mode="before")
-    @classmethod
-    def validate_paths(cls, value):
-        if isinstance(value, str) and "\0" in value:
-            raise ValueError("路径包含非法字符")
-        return value
 
 
 class InstanceTarget(RequestModel):
@@ -476,7 +463,7 @@ class ResourceUpdateRequest(ResourceQuery):
 
 
 class WardrobeImportRequest(RequestModel):
-    path: Path
+    path: SafePath
     kind: WardrobeKind
     name: str | None = Field(default=None, max_length=80)
     model: SkinModel | None = None
@@ -484,9 +471,7 @@ class WardrobeImportRequest(RequestModel):
     @field_validator("path", mode="before")
     @classmethod
     def validate_path(cls, value):
-        if isinstance(value, str) and (not value.strip() or "\0" in value):
-            raise ValueError("纹理路径无效")
-        return value
+        return _validate_non_empty_path(value, "纹理路径无效")
 
     @model_validator(mode="after")
     def validate_model(self):
