@@ -116,42 +116,21 @@ class Adapter:
         )
         bus.subscribe("launcher:error", api.emit_error_to_frontend)
         bus.subscribe("launcher:popup", api.emit_popup_to_frontend)
-        bus.subscribe(
+        for event_name in (
             "launcher:notify",
-            lambda payload: api.emit_to_frontend("launcher:notify", payload),
-        )
-        bus.subscribe(
             "game:install_progress",
-            lambda payload: api.emit_to_frontend("game:install_progress", payload),
-        )
-        bus.subscribe(
             "game:launch_progress",
-            lambda payload: api.emit_to_frontend("game:launch_progress", payload),
-        )
-        bus.subscribe(
             "game:versions_changed",
-            lambda payload: api.emit_to_frontend("game:versions_changed", payload),
-        )
-        bus.subscribe(
             "game:instances_changed",
-            lambda payload: api.emit_to_frontend("game:instances_changed", payload),
-        )
-        bus.subscribe(
             "game:operation_progress",
-            lambda payload: api.emit_to_frontend("game:operation_progress", payload),
-        )
-        bus.subscribe(
             "launcher:log",
-            lambda payload: api.emit_to_frontend("launcher:log", payload),
-        )
-        bus.subscribe(
             "process:instance_log",
-            lambda payload: api.emit_to_frontend("process:instance_log", payload),
-        )
-        bus.subscribe(
             "process:instances_changed",
-            lambda payload: api.emit_to_frontend("process:instances_changed", payload),
-        )
+        ):
+            bus.subscribe(
+                event_name,
+                lambda payload, event_name=event_name: api.emit_to_frontend(event_name, payload),
+            )
 
         # 插件状态发生变化时，前端只接收统一的 status_changed 事件
         bus.subscribe(

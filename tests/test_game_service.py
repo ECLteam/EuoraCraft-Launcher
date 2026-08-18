@@ -120,11 +120,6 @@ class FakeDownloader:
         return None
 
 
-def _reset_event_bus() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-
-
 def _build_service(**options) -> GameService:
     return GameService(
         FakeAccounts(),
@@ -289,7 +284,6 @@ def test_automatic_java_selection_uses_nearest_compatible_higher_version(tmp_pat
 
 
 def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatch) -> None:
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("game:install_progress", events.append)
@@ -336,7 +330,6 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
 
 
 def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> None:
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("game:install_progress", events.append)
@@ -858,7 +851,6 @@ def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -
     injector_path = tmp_path / "authlib-injector.jar"
     injector_path.write_bytes(b"jar")
     captured_configs = []
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("game:launch_progress", events.append)
@@ -911,7 +903,6 @@ def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) 
                 "access_token": "access-token",
             }
 
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("game:launch_progress", events.append)
@@ -1004,7 +995,6 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
 
 
 def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None:
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("game:launch_progress", events.append)

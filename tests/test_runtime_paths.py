@@ -3,15 +3,7 @@ import sys
 from unittest.mock import Mock, call
 
 from ECL.common import get_runtime_info
-from ECL.events import EventBus
 from ECL.plugins import PluginFramework
-
-
-def _reset_plugin_runtime() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
 
 
 def test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkeypatch) -> None:
@@ -29,7 +21,6 @@ def test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkey
 
 
 def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
-    _reset_plugin_runtime()
     data_path = tmp_path / "ECL_data"
     resource_path = tmp_path / "_MEI12345"
     framework = PluginFramework()
@@ -52,7 +43,6 @@ def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
 
 
 def test_plugin_install_targets_data_path(tmp_path) -> None:
-    _reset_plugin_runtime()
     data_path = tmp_path / "ECL_data"
     framework = PluginFramework()
     framework._collect_candidates = Mock(return_value=[])

@@ -240,6 +240,28 @@ def _make_unexpected_error_response(state: Any, operation: str) -> ApiResponse:
     )
 
 
+async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitable: Any) -> Any:
+    """
+    统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
+
+    :param state: 拥有日志与应用事件总线的前端 API 门面
+    :param operation: 当前操作的名称，用于日志与错误编号
+    :param fallback_code: 已知错误映射失败时的兜底错误码
+    :param awaitable: 已构建的协程对象
+    :return: ``ApiResponse``
+    """
+    try:
+        return await awaitable
+    except _IPC_ERRORS as exc:
+        if isinstance(exc, httpx.HTTPError):
+            state.logger.warning("%s 远程请求失败: %s", operation, exc)
+        else:
+            state.logger.exception("%s 执行失败", operation)
+        return _make_error_response(exc, fallback_code, state.events)
+    except Exception:
+        return _make_unexpected_error_response(state, operation)
+
+
 def guard_ipc_handler(state: Any, operation: str, handler: Any) -> Any:
     """
     为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
@@ -252,16 +274,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any) -> Any:
 
     @functools.wraps(handler)
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
-        try:
-            return await handler(*args, **kwargs)
-        except _IPC_ERRORS as exc:
-            if isinstance(exc, httpx.HTTPError):
-                state.logger.warning("%s 远程请求失败: %s", operation, exc)
-            else:
-                state.logger.exception("%s 执行失败", operation)
-            return _make_error_response(exc, "INTERNAL_ERROR", state.events)
-        except Exception:
-            return _make_unexpected_error_response(state, operation)
+        return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs))
 
     return guarded
 
@@ -271,16 +284,7 @@ def _ipc_handler(fallback_code: str = "INTERNAL_ERROR"):
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs):
-            try:
-                return await func(self, *args, **kwargs)
-            except _IPC_ERRORS as exc:
-                if isinstance(exc, httpx.HTTPError):
-                    self.logger.warning("%s 远程请求失败: %s", func.__name__, exc)
-                else:
-                    self.logger.exception("%s 执行失败", func.__name__)
-                return _make_error_response(exc, fallback_code, self.events)
-            except Exception:
-                return _make_unexpected_error_response(self, func.__name__)
+            return await _guarded_call(self, func.__name__, fallback_code, func(self, *args, **kwargs))
 
         return wrapper
 

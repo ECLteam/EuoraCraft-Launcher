@@ -12,9 +12,6 @@ def reset_config_manager():
     ConfigManager._instance = None
     ConfigManager._initialized = False
     yield
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-
 
 def test_config_save_uses_exceptions_instead_of_ambiguous_boolean(tmp_path) -> None:
     manager = ConfigManager(tmp_path / "ECL_data")

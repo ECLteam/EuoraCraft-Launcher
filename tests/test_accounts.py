@@ -191,13 +191,7 @@ class DuplicateMicrosoftManager(FakeMicrosoftManager):
         return account_id
 
 
-def _reset_event_bus() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-
-
 def test_offline_accounts_persist_and_emit_changes(tmp_path) -> None:
-    _reset_event_bus()
     events = []
     event_bus = EventBus()
     event_bus.subscribe("accounts:changed", events.append)
@@ -395,7 +389,6 @@ def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) ->
 
 
 def test_microsoft_device_login_flow(tmp_path) -> None:
-    _reset_event_bus()
     login_events = []
     event_bus = EventBus()
     event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
@@ -462,7 +455,6 @@ def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> N
 
 
 def test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None:
-    _reset_event_bus()
     microsoft_manager = DuplicateMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
 
@@ -479,7 +471,6 @@ def test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None:
 
 
 def test_existing_microsoft_duplicates_are_merged_on_startup(tmp_path) -> None:
-    _reset_event_bus()
     microsoft_manager = DuplicateMicrosoftManager()
     microsoft_manager.login_count = 2
     for account_id in ("microsoft-account-1", "microsoft-account-2"):
@@ -501,7 +492,6 @@ def test_existing_microsoft_duplicates_are_merged_on_startup(tmp_path) -> None:
 
 
 def test_remove_and_switch_accounts(tmp_path) -> None:
-    _reset_event_bus()
     manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     first = manager.add_offline("Steve")
     second = manager.add_offline("Alex")
@@ -514,7 +504,6 @@ def test_remove_and_switch_accounts(tmp_path) -> None:
 
 
 def test_complete_microsoft_login_keeps_pending_state(tmp_path) -> None:
-    _reset_event_bus()
     manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     manager._login_state = {"status": "pending", "interval": 3}
 
@@ -525,7 +514,6 @@ def test_complete_microsoft_login_keeps_pending_state(tmp_path) -> None:
 
 
 def test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None:
-    _reset_event_bus()
     login_events = []
     event_bus = EventBus()
     event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
@@ -546,7 +534,6 @@ def test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None:
 
 
 def test_close_cancels_login_and_releases_manager(tmp_path) -> None:
-    _reset_event_bus()
     microsoft_manager = BlockingMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
 
@@ -559,7 +546,6 @@ def test_close_cancels_login_and_releases_manager(tmp_path) -> None:
 
 
 def test_microsoft_account_includes_capes(tmp_path) -> None:
-    _reset_event_bus()
     microsoft_manager = FakeMicrosoftManager()
     microsoft_manager.accounts["microsoft-account"] = {
         "AccountId": "microsoft-account",
@@ -590,7 +576,6 @@ def test_microsoft_account_includes_capes(tmp_path) -> None:
 
 
 def _manager_with_microsoft_account(tmp_path) -> tuple[AccountManager, FakeMicrosoftManager]:
-    _reset_event_bus()
     microsoft_manager = FakeMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
     microsoft_manager.add_microsoft_account()
@@ -636,7 +621,6 @@ def test_set_and_reset_cape(tmp_path) -> None:
 
 
 def test_skin_operations_require_microsoft_account(tmp_path) -> None:
-    _reset_event_bus()
     manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     manager.add_offline("Steve")
 

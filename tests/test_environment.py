@@ -1,38 +1,27 @@
 from ECL.utils import EnvManager
 
 
-def _reset_env_manager() -> None:
-    EnvManager._instance = None
-    EnvManager._initialized = False
-
-
 def test_env_manager_reads_microsoft_client_id_from_dotenv(tmp_path, monkeypatch) -> None:
-    _reset_env_manager()
     monkeypatch.delenv("MICROSOFT_CLIENT_ID", raising=False)
     (tmp_path / ".env").write_text("MICROSOFT_CLIENT_ID=dotenv-client-id\n", encoding="utf-8")
 
     manager = EnvManager(tmp_path)
 
     assert manager.get_value("MICROSOFT_CLIENT_ID") == "dotenv-client-id"
-    _reset_env_manager()
 
 
 def test_system_microsoft_client_id_overrides_dotenv(tmp_path, monkeypatch) -> None:
-    _reset_env_manager()
     (tmp_path / ".env").write_text("MICROSOFT_CLIENT_ID=dotenv-client-id\n", encoding="utf-8")
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "system-client-id")
 
     manager = EnvManager(tmp_path)
 
     assert manager.get_value("MICROSOFT_CLIENT_ID") == "system-client-id"
-    _reset_env_manager()
 
 
 def test_env_manager_reads_system_variables_without_dotenv(tmp_path, monkeypatch) -> None:
-    _reset_env_manager()
     monkeypatch.setenv("MICROSOFT_CLIENT_ID", "system-only-client-id")
 
     manager = EnvManager(tmp_path)
 
     assert manager.get_value("MICROSOFT_CLIENT_ID") == "system-only-client-id"
-    _reset_env_manager()

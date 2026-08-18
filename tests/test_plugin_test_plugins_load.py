@@ -3,16 +3,7 @@
 import shutil
 from pathlib import Path
 
-from ECL.events import EventBus
 from ECL.plugins import PluginFramework
-
-
-def _reset_runtime() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
-
 
 # 需要验证的测试插件名称列表
 _TEST_PLUGIN_NAMES = [
@@ -38,7 +29,6 @@ def _copy_plugins(source_dir: Path, target_dir: Path) -> None:
 
 def test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) -> None:
     """测试插件加载结果符合预期：7 个正常启用，test_permissions 因故意测试越权命令而权限拒绝。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     source_plugins = Path(__file__).parent.parent / "ECL_data" / "plugins"

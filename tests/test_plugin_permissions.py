@@ -11,13 +11,6 @@ from ECL.plugins import Plugin, PluginFramework
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionManager, PermissionScope
 
 
-def _reset_runtime() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
-
-
 def test_permission_from_dict_and_matches() -> None:
     p = Permission.from_dict({"scope": "events", "action": "emit", "resource": "demo:hello"})
     assert p is not None
@@ -112,7 +105,6 @@ def test_normal_plugin_with_permission_can_operate(tmp_path) -> None:
 
 
 def test_plugin_can_subscribe_to_another_plugin_event(tmp_path) -> None:
-    _reset_runtime()
     event_bus = EventBus()
     manager = PermissionManager()
     manager.register_plugin_permissions(
@@ -139,7 +131,6 @@ def _write_plugin(plugin_dir: Path, metadata: dict, source: str) -> None:
 
 
 def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -165,7 +156,6 @@ def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
 
 
 def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -199,7 +189,6 @@ def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
 
 
 def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -225,7 +214,6 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
 
 
 def test_sidebar_state_is_emitted_after_frontend_is_ready() -> None:
-    _reset_runtime()
     event_bus = EventBus()
     framework = PluginFramework(event_bus)
     states = []
@@ -242,7 +230,6 @@ def test_sidebar_state_is_emitted_after_frontend_is_ready() -> None:
 
 
 def test_system_plugin_ignores_permission_declaration(tmp_path) -> None:
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     system_plugin_dir = resource_path / "resources" / "system_plugins" / "sysdemo"

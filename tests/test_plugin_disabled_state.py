@@ -3,15 +3,7 @@
 import json
 from pathlib import Path
 
-from ECL.events import EventBus
 from ECL.plugins import PluginFramework
-
-
-def _reset_runtime() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
 
 
 def _write_plugin(plugin_dir: Path, metadata: dict, source: str) -> None:
@@ -22,7 +14,6 @@ def _write_plugin(plugin_dir: Path, metadata: dict, source: str) -> None:
 
 def test_disabled_plugin_is_skipped_on_initialize(tmp_path) -> None:
     """被禁用的插件不应被实例化，状态应为 disabled。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -63,7 +54,6 @@ def test_disabled_plugin_is_skipped_on_initialize(tmp_path) -> None:
 
 def test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None:
     """被禁用且未实例化的插件，list_plugins 仍应从 plugin.json 读取元数据。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -106,7 +96,6 @@ def test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None:
 
 def test_disable_persists_to_state_file(tmp_path) -> None:
     """从前端禁用插件后，状态应写入 plugin_state.json。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -138,7 +127,6 @@ def test_disable_persists_to_state_file(tmp_path) -> None:
 
 def test_enable_removes_from_state_file(tmp_path) -> None:
     """启用已禁用插件后，应从 plugin_state.json 中移除。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -173,7 +161,6 @@ def test_enable_removes_from_state_file(tmp_path) -> None:
 
 def test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -> None:
     """on_frontend_ready 重复调用只生效一次；前端就绪后重新启用的插件单独补调。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -219,7 +206,6 @@ def test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -
 
 def test_register_route_is_idempotent(tmp_path) -> None:
     """同一插件重复注册相同路径时，路由列表中只保留一条。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
@@ -252,7 +238,6 @@ def test_register_route_is_idempotent(tmp_path) -> None:
 
 def test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None:
     """框架关闭时不应把已加载插件全部写入 plugin_state.json。"""
-    _reset_runtime()
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(

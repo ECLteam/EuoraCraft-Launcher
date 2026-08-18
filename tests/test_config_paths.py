@@ -11,9 +11,6 @@ def reset_config_manager():
     ConfigManager._instance = None
     ConfigManager._initialized = False
     yield
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-
 
 def test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"

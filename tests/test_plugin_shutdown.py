@@ -5,19 +5,7 @@ from ECL.events import EventBus
 from ECL.plugins import PluginFramework
 
 
-def _reset_runtime() -> None:
-    EventBus._instance = None
-    EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
-
-
-def test_plugin_framework_close_disables_and_unloads_every_plugin() -> None:
-    _reset_runtime()
-
-
 def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
-    _reset_runtime()
     event_bus = EventBus()
     framework = PluginFramework(event_bus)
     framework.logger = Mock()
@@ -32,7 +20,6 @@ def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     plugin.on_disable.assert_called_once_with()
     plugin.on_unload.assert_called_once_with()
     framework.logger.warning.assert_not_called()
-    _reset_runtime()
     framework = PluginFramework(event_bus)
     first = Mock()
     second = Mock()
@@ -54,7 +41,6 @@ def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     assert framework._status == {}
     assert "plugin:html_injected" not in event_bus._handlers
     assert "plugin:vue_slot_registered" not in event_bus._handlers
-    _reset_runtime()
 
 
 def test_launcher_shutdown_closes_plugins_before_backend_services() -> None:
