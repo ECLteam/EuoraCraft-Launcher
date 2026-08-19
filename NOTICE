@@ -1,0 +1,29 @@
+EuoraCraft-Launcher NOTICE
+====================
+
+本项目（EuoraCraft-Launcher）包含不同组成部分，各自适用不同的许可证。
+除非另有明确说明，以下声明适用所有内容。
+
+1. 软件源代码（代码、脚本及配置文件）
+   适用许可证：GNU General Public License, version 3 (GPL-3.0)
+   详细条款请参阅项目根目录下的 LICENSE 文件。
+
+   您对源代码的任何修改或再分发，必须遵循 GPL-3.0 的要求，包括：
+   - 提供完整的对应源代码；
+   - 保留所有版权和许可声明；
+   - 确保衍生作品能够被重新链接（如适用）。
+
+2. 原创图像资源（以 resources/img/logo.ico 为代表的所有原创美术作品）
+   适用许可证：Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+   完整许可证文本请参见：https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+   您对上述图像的使用必须遵守 CC BY-NC 4.0 的要求，包括：
+   - **署名**：必须注明原作者（ECLteam）；
+   - **非商业性**：不得将这些图像用于任何商业目的或商业性派生用途；
+   - **相同方式共享**：本许可证不要求派生作品使用相同许可证，但必须同样是非商业性的。
+
+   如需将图像用于商业用途，请另行联系作者获取授权。
+
+---
+
+使用本项目前，请阅读并遵守以上各自许可证条款。如有冲突，以各组成部分的许可证为准。
