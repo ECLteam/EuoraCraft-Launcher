@@ -12,25 +12,52 @@ if TYPE_CHECKING:
 
 class ProcessService:
     """
-    面向插件的通用子进程实例注册表，负责生命周期、输出缓冲与标准输入交互。
+    面向插件与游戏实例的通用子进程实例注册表，负责生命周期、输出缓冲与标准输入交互。
 
     内部复用 :class:`InstancesManager` 启动子进程并逐行读取输出；本类按实例标识
     维护元数据与最近输出环形缓冲，并通过事件总线推送 ``process:instance_log``
-    与 ``process:instances_changed`` 事件供前端实例视图消费。
+    与 ``process:instances_changed`` 事件供前端实例视图消费。运行中的 Minecraft
+    实例通过订阅 ``game:instances_changed`` 事件自动登记，使实例终端同样展示游戏输出。
 
     :param event_bus: 承载子进程事件的事件总线
+    :param instances_manager: 与游戏服务共享的进程管理器，缺省时自行创建
     """
 
     BUFFER_LIMIT = 300
 
-    def __init__(self, event_bus: EventBus) -> None:
+    def __init__(self, event_bus: EventBus, instances_manager: InstancesManager | None = None) -> None:
         self._events = event_bus
-        self._manager = InstancesManager()
+        self._manager = instances_manager or InstancesManager()
         self._manager.set_log_callback(self._on_log)
         self._manager.set_exit_callback(self._on_exit)
         self._lock = RLock()
         self._meta: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque[str]] = {}
+        self._off_game_changed = event_bus.subscribe("game:instances_changed", self._on_game_changed)
+
+    def _on_game_changed(self, payload: dict[str, Any]) -> None:
+        """
+        登记或清理运行中的 Minecraft 实例，使实例终端也能展示游戏输出。
+
+        :param payload: ``game:instances_changed`` 事件负载
+        """
+        action = payload.get("action")
+        instance_id = payload.get("instanceId")
+        if not instance_id:
+            return
+        if action == "started":
+            with self._lock:
+                self._meta[instance_id] = {
+                    "name": payload.get("versionId") or "Minecraft",
+                    "type": "Minecraft",
+                    "stdin": False,
+                }
+                self._buffers[instance_id] = deque(maxlen=self.BUFFER_LIMIT)
+        else:
+            with self._lock:
+                self._meta.pop(instance_id, None)
+                self._buffers.pop(instance_id, None)
+        self._events.emit("process:instances_changed", self.list())
 
     def spawn(
         self,
@@ -122,9 +149,15 @@ class ProcessService:
 
     def close(self) -> None:
         """
-        终止全部运行中的实例并清理读取线程。
+        终止全部运行中的插件实例并清理读取线程。
+
+        共享进程管理器中的 Minecraft 实例由游戏服务负责保留，这里只回收插件子进程。
         """
-        self._manager.shutdown_all()
+        self._off_game_changed()
+        with self._lock:
+            plugin_ids = [iid for iid, meta in self._meta.items() if meta.get("type") != "Minecraft"]
+        for iid in plugin_ids:
+            self._manager.stop_instance(iid, force=True, wait_timeout=1.0)
 
     def _on_log(self, line: str, instance_id: str) -> None:
         """

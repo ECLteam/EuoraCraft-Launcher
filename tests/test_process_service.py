@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from ECL.events import EventBus
+from ECL.game import InstancesManager
 from ECL.services.processes import ProcessService
 
 
@@ -95,3 +96,40 @@ def test_spawn_validates_arguments() -> None:
     with pytest.raises(ValueError):
         service.spawn("name", "", None)  # type: ignore[arg-type]
     service.close()
+
+
+def test_game_instance_registered_via_event_captures_output() -> None:
+    events = EventBus()
+    logs: list[dict[str, Any]] = []
+    events.subscribe("process:instance_log", logs.append)
+    manager = InstancesManager()
+    service = ProcessService(events, instances_manager=manager)
+    script = "import time\nprint('game-boot', flush=True)\ntime.sleep(1)\n"
+    iid, _proc = manager.create_instance(
+        instance_name="1.20.1",
+        instance_type="Minecraft",
+        args=[sys.executable, "-u", "-c", script],
+    )
+    events.emit("game:instances_changed", {"action": "started", "instanceId": iid, "versionId": "1.20.1"})
+
+    assert wait_until(lambda: any(entry["line"] == "game-boot" for entry in logs))
+    instances = service.list()
+    assert any(item["id"] == iid and item["type"] == "Minecraft" and item["stdin"] is False for item in instances)
+    service.close()
+
+
+def test_close_keeps_running_game_instance() -> None:
+    events = EventBus()
+    manager = InstancesManager()
+    service = ProcessService(events, instances_manager=manager)
+    iid, _proc = manager.create_instance(
+        instance_name="1.20.1",
+        instance_type="Minecraft",
+        args=[sys.executable, "-u", "-c", "import time; time.sleep(30)"],
+    )
+    events.emit("game:instances_changed", {"action": "started", "instanceId": iid, "versionId": "1.20.1"})
+    assert wait_until(lambda: any(item["id"] == iid for item in service.list()))
+
+    service.close()
+    assert manager.get_instances_info(), "共享管理器中的游戏实例不应被 ProcessService 关闭"
+    service.stop(iid, force=True, wait_timeout=3)

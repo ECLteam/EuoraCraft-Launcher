@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import httpx
+from anyio import to_thread
 from pydantic import ValidationError
 from pytauri import EventTarget
 from pytauri.ffi import Emitter as _Emitter
@@ -614,7 +615,7 @@ class _FrontendState:
     @_ipc_handler("PROCESS_STOP_FAILED")
     async def process_stop(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        停止指定子进程实例。
+        停止指定子进程实例；Minecraft 实例转发到游戏服务以正确结算统计。
 
         :param body: 符合 ``ProcessStopRequest`` 的请求数据
         :return: 进程是否已结束的成功响应
@@ -622,6 +623,13 @@ class _FrontendState:
         request, invalid = _validate_body(ProcessStopRequest, body)
         if invalid is not None:
             return invalid
+        instance_type = next(
+            (item.get("type") for item in self.processes.list() if item.get("id") == request.instance_id),
+            None,
+        )
+        if instance_type == "Minecraft":
+            await to_thread.run_sync(self.game.stop_instance, request.instance_id)
+            return {"success": True, "data": {"stopped": True}}
         return {"success": True, "data": {"stopped": self.processes.stop(request.instance_id)}}
 
     async def debug_process_spawn(self, body: dict[str, Any]) -> dict[str, Any]:
