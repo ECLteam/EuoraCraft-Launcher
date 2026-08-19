@@ -614,6 +614,21 @@ def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
     assert webview_window.focused is True
 
 
+class _ClosedWebviewWindow:
+    def run_on_main_thread(self, handler) -> None:
+        raise RuntimeError("runtime error: failed to send message to the webview")
+
+
+def test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api._webview = _ClosedWebviewWindow()
+
+    api.emit_to_frontend("launcher:notify", {"message": "test"})
+
+    assert api._webview is None
+    api.emit_to_frontend("launcher:notify", {"message": "test"})  # 不应抛出异常
+
+
 def test_microsoft_authorization_event_focuses_before_forwarding() -> None:
     calls = []
     api = SimpleNamespace(

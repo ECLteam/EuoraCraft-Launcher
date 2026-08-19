@@ -419,8 +419,9 @@ class _FrontendState:
             # 主线程，否则事件会被排队在一个已经完成 frontend_ready 的会话中。
             webview.run_on_main_thread(emit_on_main_thread)
         except (OSError, TypeError, ValueError, RuntimeError):
-            self.logger.exception("调度前端事件失败: %s", event)
-            self._queue_frontend_event(event, payload)
+            # 前端窗口已关闭时停止发送，避免关闭期间反复报错
+            self._webview = None
+            self.logger.warning("前端已关闭，停止推送事件: %s", event)
 
     def emit_popup_to_frontend(self, payload: dict[str, Any]) -> None:
         """
