@@ -60,6 +60,70 @@ class _RefreshFailingClient:
         raise httpx.ConnectError("")
 
 
+class _InvalidGrantClient:
+    async def post(self, *args, **kwargs):
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+
+class _OtherErrorClient:
+    async def post(self, *args, **kwargs):
+        return httpx.Response(400, json={"error": "invalid_scope"})
+
+
+class _RateLimitedClient:
+    async def get(self, *args, **kwargs):
+        return httpx.Response(429, json={"error": "Too Many Requests"})
+
+
+async def test_get_profile_429_raises_friendly_message() -> None:
+    from ECL.game.Core.MicrosoftAuth import MinecraftAuthError, MinecraftClient
+
+    client = MinecraftClient(client=_RateLimitedClient())
+
+    try:
+        await client.get_profile("test-token")
+    except MinecraftAuthError as error:
+        assert "请求过快" in str(error)
+    else:
+        raise AssertionError("429 应抛出 MinecraftAuthError")
+
+
+async def test_refresh_network_error_preserves_refresh_token() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+
+    result = await auth._refresh_token()
+
+    assert result is None
+    assert auth._cache.get("refresh_token") == "test-refresh-token"
+
+
+async def test_refresh_invalid_grant_clears_cache() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+
+    result = await auth._refresh_token()
+
+    assert result is None
+    assert auth._cache.get("refresh_token") is None
+
+
+async def test_refresh_other_error_preserves_refresh_token() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    auth = MicrosoftAuth(client_id="test-client", client=_OtherErrorClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+
+    result = await auth._refresh_token()
+
+    assert result is None
+    assert auth._cache.get("refresh_token") == "test-refresh-token"
+
+
 async def test_get_token_without_device_flow_raises_on_refresh_failure() -> None:
     from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
 

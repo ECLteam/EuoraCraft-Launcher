@@ -710,6 +710,22 @@ def test_guarded_call_without_timeout_runs_to_completion(tmp_path) -> None:
     assert result == {"success": True}
 
 
+def test_guarded_call_treats_auth_exception_as_known_error(tmp_path) -> None:
+    from ECL.game import AuthException
+
+    api = _build_api(tmp_path)
+
+    async def failing() -> dict[str, Any]:
+        raise AuthException("Microsoft 令牌刷新失败，请检查网络后重试或重新登录该账户")
+
+    result = asyncio.run(_guarded_call(api, "test_auth", "SKIN_UPDATE_FAILED", failing()))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "SKIN_UPDATE_FAILED"
+    assert result["presentation"] != "modal"
+    assert "Microsoft 令牌刷新失败" in result["message"]
+
+
 def test_critical_persistence_error_returns_modal_metadata_and_emits_event(tmp_path, monkeypatch) -> None:
     api = _build_api(tmp_path)
     emitted = []

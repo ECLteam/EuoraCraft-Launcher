@@ -25,6 +25,7 @@ from ECL.api.models import (
     ProcessStopRequest,
 )
 from ECL.application import ApplicationContext
+from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
@@ -95,6 +96,8 @@ _IPC_ERRORS = (
     WardrobeError,
     GameServiceError,
     DebugMaintenanceError,
+    AuthException,
+    NetException,
     httpx.HTTPError,
     OSError,
     ValueError,
