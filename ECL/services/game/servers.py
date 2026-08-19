@@ -7,10 +7,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-import nbtlib
 from mcstatus import JavaServer
 
 from ECL.utils import atomic_write_text
+from ECL.utils.nbt import Compound, File, List, String, load
 
 from .base import GameServiceError
 
@@ -46,13 +46,13 @@ class ServerCoordinator:
     @staticmethod
     def _load_servers(path: Path) -> tuple[Any, Any]:
         if not path.is_file():
-            document = nbtlib.File({"servers": nbtlib.List[nbtlib.Compound]()}, gzipped=True)
+            document = File({"servers": List[Compound]()}, gzipped=True)
             return document, document["servers"]
         try:
-            document = nbtlib.load(path)
+            document = load(path)
             servers = document.get("servers")
             if servers is None:
-                servers = nbtlib.List[nbtlib.Compound]()
+                servers = List[Compound]()
                 document["servers"] = servers
             return document, servers
         except Exception as exc:
@@ -109,7 +109,7 @@ class ServerCoordinator:
         path = self._servers_path(game_path, version_id, version_isolation)
         document, servers = self._load_servers(path)
         if server_id is None:
-            server = nbtlib.Compound()
+            server = Compound()
             servers.append(server)
             index = len(servers) - 1
         else:
@@ -119,8 +119,8 @@ class ServerCoordinator:
             except (ValueError, IndexError) as exc:
                 raise GameServiceError("服务器不存在", "SERVER_NOT_FOUND") from exc
         old_address = str(server.get("ip", ""))
-        server["name"] = nbtlib.String(name)
-        server["ip"] = nbtlib.String(address)
+        server["name"] = String(name)
+        server["ip"] = String(address)
         self._save_servers(document, path)
         meta = self._read_server_meta(game_path, version_id)
         favorites = {str(item).casefold(): str(item) for item in meta.get("favorites") or []}
@@ -156,7 +156,7 @@ class ServerCoordinator:
             raise GameServiceError("服务器顺序无效", "INVALID_SERVER_ORDER") from exc
         if sorted(indices) != list(range(len(servers))):
             raise GameServiceError("服务器顺序必须包含全部服务器", "INVALID_SERVER_ORDER")
-        reordered = nbtlib.List[nbtlib.Compound]([servers[index] for index in indices])
+        reordered = List[Compound]([servers[index] for index in indices])
         document["servers"] = reordered
         self._save_servers(document, path)
         return self.list_servers(game_path, version_id, version_isolation)

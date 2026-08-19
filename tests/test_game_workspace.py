@@ -4,7 +4,6 @@ import json
 import zipfile
 from pathlib import Path
 
-import nbtlib
 import pytest
 
 from ECL.services.game.base import GameServiceError
@@ -15,6 +14,7 @@ from ECL.services.game.workspace import (
     safe_extract_zip,
 )
 from ECL.services.game.worlds import WorldCoordinator
+from ECL.utils.nbt import Byte, Compound, File, Int, Long, String, load
 
 
 def test_resolve_instance_target_matches_current_isolation_semantics(tmp_path: Path) -> None:
@@ -57,19 +57,19 @@ def test_safe_extract_zip_rejects_excessive_file_count(tmp_path: Path) -> None:
 
 def _write_level_dat(path: Path) -> None:
     path.mkdir(parents=True)
-    document = nbtlib.File(
+    document = File(
         {
-            "Data": nbtlib.Compound(
+            "Data": Compound(
                 {
-                    "LevelName": nbtlib.String("测试世界"),
-                    "GameType": nbtlib.Int(0),
-                    "Difficulty": nbtlib.Byte(2),
-                    "DifficultyLocked": nbtlib.Byte(0),
-                    "allowCommands": nbtlib.Byte(0),
-                    "RandomSeed": nbtlib.Long(123456),
-                    "LastPlayed": nbtlib.Long(1_700_000_000_000),
-                    "Version": nbtlib.Compound({"Name": nbtlib.String("1.21.8")}),
-                    "EclUnknownField": nbtlib.String("keep-me"),
+                    "LevelName": String("测试世界"),
+                    "GameType": Int(0),
+                    "Difficulty": Byte(2),
+                    "DifficultyLocked": Byte(0),
+                    "allowCommands": Byte(0),
+                    "RandomSeed": Long(123456),
+                    "LastPlayed": Long(1_700_000_000_000),
+                    "Version": Compound({"Name": String("1.21.8")}),
+                    "EclUnknownField": String("keep-me"),
                 }
             )
         },
@@ -98,7 +98,7 @@ def test_world_patch_preserves_unknown_nbt_and_creates_backup(tmp_path: Path) ->
         {"difficulty": 3, "allowCommands": True, "difficultyLocked": True},
     )
 
-    loaded = nbtlib.load(version / "saves" / "world" / "level.dat")
+    loaded = load(version / "saves" / "world" / "level.dat")
     assert str(loaded["Data"]["EclUnknownField"]) == "keep-me"
     assert int(loaded["Data"]["Difficulty"]) == 3
     assert result["allowCommands"] is True

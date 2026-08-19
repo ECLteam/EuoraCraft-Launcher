@@ -672,11 +672,13 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
     assert result["presentation"] == "modal"
     assert result["errorId"]
     assert "secret detail" not in result["message"]
+    assert result["detail"] == "secret detail"
     assert emitted == [
         {
             "error_id": result["errorId"],
             "title": result["title"],
             "message": result["message"],
+            "detail": "secret detail",
         }
     ]
 

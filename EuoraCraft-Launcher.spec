@@ -84,7 +84,6 @@ datas = [
 
 binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
 hiddenimports = [
-    "numpy",
     "importlib_metadata",
     "pytauri",
     "pytauri.ffi",
@@ -97,8 +96,6 @@ hiddenimports = [
     "httpx",
     "httpcore",
     "h11",
-    "lxml",
-    "msal",
     "psutil",
     "pydantic",
     "pyperclip",

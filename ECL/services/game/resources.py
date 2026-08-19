@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import nbtlib
 from pydantic import BaseModel, ConfigDict, Field
 
 from ECL.utils import atomic_write_text
+from ECL.utils.nbt import Compound, List, String, load
 
 from .base import GameServiceError
 from .operations import OperationContext
@@ -426,15 +426,15 @@ class ResourceCoordinator:
         elif resource_type == "datapack":
             world = resolve_relative_id(target.data_path / "saves", world_id)
             level_path = world / "level.dat"
-            document = nbtlib.load(level_path)
+            document = load(level_path)
             data = document.get("Data", document)
-            packs = data.setdefault("DataPacks", nbtlib.Compound())
+            packs = data.setdefault("DataPacks", Compound())
             name = f"file/{path.name}"
             enabled_values = [str(value) for value in packs.get("Enabled", []) if str(value) != name]
             disabled_values = [str(value) for value in packs.get("Disabled", []) if str(value) != name]
             (enabled_values if enabled else disabled_values).append(name)
-            packs["Enabled"] = nbtlib.List[nbtlib.String](enabled_values)
-            packs["Disabled"] = nbtlib.List[nbtlib.String](disabled_values)
+            packs["Enabled"] = List[String](enabled_values)
+            packs["Disabled"] = List[String](disabled_values)
             temp = level_path.with_name(".level.dat.ecl-tmp")
             try:
                 document.save(temp, gzipped=True)
@@ -727,7 +727,7 @@ class ResourceCoordinator:
 
     def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
         """流式下载在线资源到临时文件，并按需上报字节进度与实时速度。"""
-        with httpx.stream("GET", url, timeout=30, follow_redirects=True) as stream:
+        with httpx.stream("GET", url, timeout=15, follow_redirects=True) as stream:
             stream.raise_for_status()
             total = int(stream.headers.get("content-length") or 0)
             with temp.open("wb") as output:
@@ -938,7 +938,7 @@ class ResourceCoordinator:
             destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
             temp = root / f".{destination.name}.ecl-download"
             try:
-                with httpx.stream("GET", str(selected["url"]), timeout=30, follow_redirects=True) as response:
+                with httpx.stream("GET", str(selected["url"]), timeout=15, follow_redirects=True) as response:
                     response.raise_for_status()
                     with temp.open("wb") as stream:
                         for chunk in response.iter_bytes(1024 * 1024):

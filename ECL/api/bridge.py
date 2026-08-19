@@ -57,7 +57,7 @@ _mime_to_ext = {mime: ext for ext, mime in _image_mime_map.items()}
 _mime_to_ext["image/jpeg"] = ".jpg"
 
 _MAX_REMOTE_IMAGE_SIZE = 50 * 1024 * 1024
-_REMOTE_IMAGE_TIMEOUT = 30.0
+_REMOTE_IMAGE_TIMEOUT = 15.0
 _REMOTE_IMAGE_CHUNK_BYTES = 64 * 1024
 
 # 图片读取结果内存缓存（LRU）：避免重复读盘与 Base64 编码。缓存键包含文件
@@ -246,19 +246,24 @@ def _make_error_response(exc: Exception, fallback_code: str, events: Any | None 
     return failure(raw_message, error_code)
 
 
-def _make_unexpected_error_response(state: Any, operation: str) -> ApiResponse:
-    """为未预期异常构造严重错误响应，记录堆栈并上报错误事件。"""
+def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) -> ApiResponse:
+    """为未预期异常构造严重错误响应，记录堆栈并上报错误事件。
+
+    异常原文以 detail 字段随弹窗呈现，便于用户直接看到后端失败原因。
+    """
     error_id = uuid4().hex
     message = "启动器执行操作时发生内部错误，请导出日志以便排查"
     title = "启动器发生内部错误"
+    raw_message = str(exc).strip() or type(exc).__name__
     state.logger.exception("%s 发生未预期异常，错误编号: %s", operation, error_id)
-    state.events.emit("launcher:error", {"error_id": error_id, "title": title, "message": message})
+    state.events.emit("launcher:error", {"error_id": error_id, "title": title, "message": message, "detail": raw_message})
     return failure(
         message,
         "INTERNAL_ERROR",
         presentation="modal",
         error_id=error_id,
         title=title,
+        detail=raw_message,
     )
 
 
@@ -280,8 +285,8 @@ async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitabl
         else:
             state.logger.exception("%s 执行失败", operation)
         return _make_error_response(exc, fallback_code, state.events)
-    except Exception:
-        return _make_unexpected_error_response(state, operation)
+    except Exception as exc:
+        return _make_unexpected_error_response(state, operation, exc)
 
 
 def guard_ipc_handler(state: Any, operation: str, handler: Any) -> Any:

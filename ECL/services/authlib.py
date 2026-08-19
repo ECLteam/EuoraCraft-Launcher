@@ -33,7 +33,7 @@ class AuthlibInjector:
         self.jar_path = self.path / "authlib-injector.jar"
         self.checksum_path = self.path / "authlib-injector.sha256"
         self.http = http_client or httpx.Client(
-            timeout=httpx.Timeout(60, connect=10),
+            timeout=httpx.Timeout(15, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
         )

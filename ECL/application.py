@@ -153,7 +153,7 @@ def create_application(
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
         http = httpx.Client(
-            timeout=httpx.Timeout(30, connect=10),
+            timeout=httpx.Timeout(15, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             verify=ssl_verify_context,

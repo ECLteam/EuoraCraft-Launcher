@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
-import nbtlib
 from PIL import Image, UnidentifiedImageError
 
 from ECL.utils import atomic_write_text
+from ECL.utils.nbt import Byte, load
 
 from .base import GameServiceError
 from .operations import OperationContext
@@ -45,7 +45,7 @@ class WorldCoordinator:
         if not level_path.is_file():
             raise GameServiceError("存档缺少 level.dat", "WORLD_LEVEL_DAT_MISSING")
         try:
-            root = nbtlib.load(level_path)
+            root = load(level_path)
             data = root.get("Data", root)
         except Exception as exc:
             raise GameServiceError(f"读取世界数据失败：{exc}", "WORLD_NBT_INVALID") from exc
@@ -134,17 +134,17 @@ class WorldCoordinator:
         self.create_world_backup(game_path, version_id, world_id, version_isolation, automatic=True)
         level_path = world_path / "level.dat"
         try:
-            document = nbtlib.load(level_path)
+            document = load(level_path)
             data = document.get("Data", document)
             if "difficulty" in patch:
                 difficulty = int(patch["difficulty"])
                 if difficulty not in range(4):
                     raise GameServiceError("难度值无效", "INVALID_WORLD_DIFFICULTY")
-                data["Difficulty"] = nbtlib.Byte(difficulty)
+                data["Difficulty"] = Byte(difficulty)
             if "allowCommands" in patch:
-                data["allowCommands"] = nbtlib.Byte(1 if patch["allowCommands"] else 0)
+                data["allowCommands"] = Byte(1 if patch["allowCommands"] else 0)
             if "difficultyLocked" in patch:
-                data["DifficultyLocked"] = nbtlib.Byte(1 if patch["difficultyLocked"] else 0)
+                data["DifficultyLocked"] = Byte(1 if patch["difficultyLocked"] else 0)
             self._atomic_save_nbt(document, level_path)
         except GameServiceError:
             raise
