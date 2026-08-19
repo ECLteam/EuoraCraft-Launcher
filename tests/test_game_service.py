@@ -19,7 +19,7 @@ class FakeAccounts:
     def current_account(self):
         return {"id": "offline", "type": "offline"}
 
-    def get_launch_credentials(self):
+    async def get_launch_credentials(self):
         return {
             "player_name": "Steve",
             "uuid": "0123456789abcdef0123456789abcdef",
@@ -823,7 +823,7 @@ def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -
         def current_account(self):
             return {"id": "authlib", "type": "authlib"}
 
-        def get_launch_credentials(self):
+        async def get_launch_credentials(self):
             return {
                 "player_name": "Player",
                 "uuid": "0123456789abcdef0123456789abcdef",
@@ -895,7 +895,7 @@ def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) 
         def current_account(self):
             return {"id": "microsoft", "type": "microsoft"}
 
-        def get_launch_credentials(self):
+        async def get_launch_credentials(self):
             return {
                 "player_name": "Player",
                 "uuid": "0123456789abcdef0123456789abcdef",

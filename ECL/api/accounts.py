@@ -51,8 +51,26 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        account_data = self.accounts.add_offline(body.get("username"), body.get("uuid"))
+        account_data = self.accounts.add_offline(body.get("username"), body.get("uuid"), body.get("skin"))
         return {"success": True, "data": account_data}
+
+    async def accounts_default_skins(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取可供离线账户选择的默认皮肤列表。
+
+        :param body: 经过边界校验的 IPC 请求数据
+        """
+        return {"success": True, "data": self.accounts.default_skins()}
+
+    @_ipc_handler("ACCOUNT_OPERATION_FAILED")
+    async def accounts_set_offline_skin(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        设置离线账户的默认皮肤。
+
+        :param body: 经过边界校验的 IPC 请求数据
+        """
+        accounts = self.accounts.set_offline_skin(body.get("account_id"), body.get("skin"))
+        return {"success": True, "data": accounts}
 
     @_ipc_handler("AUTHLIB_LOGIN_FAILED")
     async def accounts_add_authlib(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -111,7 +129,7 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        login_data = await to_thread.run_sync(self.accounts.start_microsoft_login)
+        login_data = await self.accounts.start_microsoft_login()
         return {"success": True, "data": login_data}
 
     async def accounts_microsoft_login_config(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -212,7 +230,7 @@ class AccountHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        refresh_result = await to_thread.run_sync(self.accounts.refresh_account, body.get("account_id"))
+        refresh_result = await self.accounts.refresh_account(body.get("account_id"))
         return {"success": True, "data": refresh_result}
 
     @_ipc_handler("ACCOUNT_TEXTURE_FAILED")
@@ -407,8 +425,7 @@ class AccountHandlers(_FrontendState):
                 "message": "只有标准 64×64 皮肤可以上传到 Microsoft",
                 "errorCode": "WARDROBE_UNSUPPORTED_UPLOAD",
             }
-        account = await to_thread.run_sync(
-            self.accounts.upload_skin,
+        account = await self.accounts.upload_skin(
             request.account_id,
             item["model"] or "classic",
             texture,
@@ -426,7 +443,7 @@ class AccountHandlers(_FrontendState):
         request, invalid = _validate_body(AccountTextureRequest, body)
         if invalid is not None:
             return invalid
-        account = await to_thread.run_sync(self.accounts.reset_skin, request.account_id)
+        account = await self.accounts.reset_skin(request.account_id)
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
@@ -439,7 +456,7 @@ class AccountHandlers(_FrontendState):
         request, invalid = _validate_body(MicrosoftCapeRequest, body)
         if invalid is not None:
             return invalid
-        account = await to_thread.run_sync(self.accounts.set_cape, request.account_id, request.cape_id)
+        account = await self.accounts.set_cape(request.account_id, request.cape_id)
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED")
@@ -452,7 +469,7 @@ class AccountHandlers(_FrontendState):
         request, invalid = _validate_body(AccountTextureRequest, body)
         if invalid is not None:
             return invalid
-        account = await to_thread.run_sync(self.accounts.reset_cape, request.account_id)
+        account = await self.accounts.reset_cape(request.account_id)
         return {"success": True, "data": account}
 
     async def authlib_servers(self, body: dict[str, Any]) -> dict[str, Any]:

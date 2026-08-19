@@ -57,9 +57,20 @@ class FakeAccounts:
         assert account_id == "microsoft-account"
         return {"skinUrl": "https://textures.example.com/skin.png", "skinModel": "slim"}
 
-    def add_offline(self, username, custom_uuid=None):
+    def add_offline(self, username, custom_uuid=None, skin=None):
         self.last_offline_input = (username, custom_uuid)
+        self.last_offline_skin = skin
         return {"id": "offline-id", "alias": username, "type": "offline", "uuid": "offline-uuid"}
+
+    def default_skins(self):
+        return [{"id": "alice", "name": "Alice", "skinUrl": "data:image/png;base64,AAAA"}]
+
+    def set_offline_skin(self, account_id, skin):
+        self.last_offline_skin = skin
+        return {
+            "accounts": [{"id": account_id, "alias": "Steve", "type": "offline", "skin": skin}],
+            "current": {"id": account_id},
+        }
 
     def add_authlib(self, server_url, username, password):
         self.last_authlib_input = (server_url, username, password)
@@ -84,7 +95,7 @@ class FakeAccounts:
             "isCurrent": True,
         }
 
-    def upload_skin(self, account_id, model, texture):
+    async def upload_skin(self, account_id, model, texture):
         self.uploaded_skin = (account_id, model, texture)
         return {"id": account_id, "alias": "Player", "type": "microsoft"}
 
@@ -490,6 +501,35 @@ def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
     )
 
 
+def test_offline_account_forwards_optional_skin(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.accounts_add_offline({"username": "Steve", "skin": "Alice"}))
+
+    assert result["success"] is True
+    assert api.accounts.last_offline_skin == "Alice"
+
+
+def test_offline_default_skins_handler(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.accounts_default_skins({}))
+
+    assert result == {
+        "success": True,
+        "data": [{"id": "alice", "name": "Alice", "skinUrl": "data:image/png;base64,AAAA"}],
+    }
+
+
+def test_offline_set_skin_handler(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.accounts_set_offline_skin({"account_id": "offline-id", "skin": "alice"}))
+
+    assert result["success"] is True
+    assert api.accounts.last_offline_skin == "alice"
+
+
 def test_authlib_login_uses_account_manager_and_remembers_server(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
     api = _build_api(tmp_path)
@@ -657,8 +697,11 @@ def test_critical_persistence_error_returns_modal_metadata_and_emits_event(tmp_p
     assert result["success"] is False
     assert result["errorCode"] == "ACCOUNT_SAVE_FAILED"
     assert result["presentation"] == "modal"
+    assert result["message"] == "账号数据保存失败，请重试。若问题持续，请导出日志以便排查。"
+    assert result["detail"] == "保存账号数据失败"
     assert emitted[0]["error_id"] == result["errorId"]
-    assert emitted[0]["message"] == "保存账号数据失败"
+    assert emitted[0]["message"] == result["message"]
+    assert emitted[0]["detail"] == "保存账号数据失败"
 
 
 def test_frontend_ready_pushes_cacheable_development_warning(tmp_path, monkeypatch) -> None:

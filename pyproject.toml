@@ -78,6 +78,9 @@ allowed_tags = ["feat", "fix", "perf", "docs", "style", "refactor", "test", "cho
 [tool.semantic_release.remote]
 type = "github"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.euoracraft]
 version_type = "dev"
 build_number = 0

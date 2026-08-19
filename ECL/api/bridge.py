@@ -110,6 +110,18 @@ _MODAL_ERROR_CODES = frozenset(
     }
 )
 
+# 弹窗展现面向用户的友好文案，原始技术细节另有 detail 字段承载，避免直接暴露给用户。
+_MODAL_ERROR_MESSAGES = {
+    "ACCOUNT_SAVE_FAILED": "账号数据保存失败，请重试。若问题持续，请导出日志以便排查。",
+    "ECL_CONFIG_WRITE_FAILED": "配置保存失败，请重试。若问题持续，请导出日志以便排查。",
+    "MOD_COPY_FAILED": "模组文件复制失败，请重试。若问题持续，请导出日志以便排查。",
+    "VERSION_UNINSTALL_FAILED": "版本卸载失败，请检查文件是否被占用后再重试。",
+    "WARDROBE_FILE_READ_FAILED": "衣柜数据读取失败，请重试。若问题持续，请导出日志以便排查。",
+    "WARDROBE_METADATA_INVALID": "衣柜数据格式异常，请重试。若问题持续，请导出日志以便排查。",
+}
+
+_FILE_ERROR_MESSAGE = "启动器执行本地文件操作时遇到问题，请关闭后重试。若问题持续，请导出日志以便排查。"
+
 
 def _is_http_url(url: str, *, scheme_lower: bool = False) -> bool:
     """
@@ -221,16 +233,17 @@ def _open_folder(path: str) -> None:
 def _make_error_response(exc: Exception, fallback_code: str, events: Any | None = None) -> ApiResponse:
     """根据异常与错误码构造失败响应，严重错误附带弹窗元数据并上报事件。"""
     error_code = getattr(exc, "error_code", fallback_code)
-    message = str(exc).strip() or type(exc).__name__
+    raw_message = str(exc).strip() or type(exc).__name__
     is_unexpected_file_error = isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError)
     if error_code in _MODAL_ERROR_CODES or is_unexpected_file_error:
         error_id = uuid4().hex
         title = "启动器无法完成本地数据操作"
-        payload = {"error_id": error_id, "title": title, "message": message}
+        message = _FILE_ERROR_MESSAGE if is_unexpected_file_error else _MODAL_ERROR_MESSAGES.get(error_code, _FILE_ERROR_MESSAGE)
+        payload = {"error_id": error_id, "title": title, "message": message, "detail": raw_message}
         if events is not None:
             events.emit("launcher:error", payload)
-        return failure(message, error_code, presentation="modal", error_id=error_id, title=title)
-    return failure(message, error_code)
+        return failure(message, error_code, presentation="modal", error_id=error_id, title=title, detail=raw_message)
+    return failure(raw_message, error_code)
 
 
 def _make_unexpected_error_response(state: Any, operation: str) -> ApiResponse:
@@ -325,7 +338,6 @@ class _FrontendState:
         self.config = context.config
         self.accounts = context.accounts
         self.wardrobe = context.wardrobe
-        # HTTP 客户端由 ApplicationContext 统一关闭，API 处理器只能借用。
         self.http = context.http
         self.info_card = context.info_card
         self.connector = context.connector
@@ -336,11 +348,11 @@ class _FrontendState:
         self.data_path: Path = self.launcher.data_path
         self._webview: WebviewWindow | None = None
         self._pending_frontend_events: list[tuple[str, Any]] = []
-        # 严重错误在收到前端确认前保留一份内存副本。Tauri 事件用于即时呈现，IPC
-        # 拉取用于恢复工作线程事件丢失；两条链路由同一 error_id 在前端去重。
         self._pending_error_presentations: dict[str, dict[str, Any]] = {}
         self._frontend_event_lock = RLock()
         self.is_dev_mode_tips = False
+        self.is_dev_mode_no_client_id_tips = False
+        self.is_dev_mode_no_curseforge_key_tips =False
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
@@ -668,7 +680,8 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
-        if not self.game.curseforge_available():
+        if (not self.game.curseforge_available()) and (self.is_dev_mode_no_curseforge_key_tips is False):
+            self.is_dev_mode_no_curseforge_key_tips = True
             self.emit_popup_to_frontend(
                 {
                     "id": "curseforge-key-required",
@@ -683,7 +696,8 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
-        if not self.accounts.microsoft_login_config().get("available"):
+        if (not self.accounts.microsoft_login_config().get("available")) and (self.is_dev_mode_no_client_id_tips is False):
+            self.is_dev_mode_no_client_id_tips = True
             self.emit_popup_to_frontend(
                 {
                     "id": "microsoft-client-id-required",
@@ -698,5 +712,5 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
-        self.logger.info("前端加载完成，已显示主窗口")
+        self.logger.info("前端加载完成")
         return {"success": True}

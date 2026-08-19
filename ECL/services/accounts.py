@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
-from threading import Event, RLock, Thread
+from threading import RLock
 from time import perf_counter
 from typing import Any
 from uuid import UUID
@@ -25,6 +28,20 @@ _LOGIN_STATUS_MESSAGES = {
     "error": "Microsoft 登录失败",
     "cancelled": "Microsoft 登录已取消",
 }
+
+
+def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]]:
+    """读取默认皮肤资源，返回 ``skin_id -> (显示名, 贴图 data URL)``。"""
+    if resource_path is None:
+        return {}
+    skins_dir = resource_path / "resources" / "Skins"
+    if not skins_dir.is_dir():
+        return {}
+    skins: dict[str, tuple[str, str]] = {}
+    for entry in sorted(skins_dir.glob("*.png")):
+        encoded = base64.b64encode(entry.read_bytes()).decode("ascii")
+        skins[entry.stem.lower()] = (entry.stem, f"data:image/png;base64,{encoded}")
+    return skins
 
 
 def _login_progress_result(status: str, state: dict[str, Any], *, force_pending: bool = False) -> dict[str, Any]:
@@ -59,7 +76,7 @@ class _ProgressMinecraftClient:
         # 只有设备代码登录期间才发送阶段事件，日常皮肤操作不应污染登录状态。
         self.login_active = False
 
-    def get_minecraft_token(self, token: str):
+    async def get_minecraft_token(self, token: str):
         """
         获取 Minecraft 访问令牌并报告授权阶段。
 
@@ -68,12 +85,12 @@ class _ProgressMinecraftClient:
         """
         if self.login_active:
             self.on_progress("authorization_confirmed")
-        result = self.client.get_minecraft_token(token)
+        result = await self.client.get_minecraft_token(token)
         if self.login_active:
             self.on_progress("minecraft_token")
         return result
 
-    def get_profile(self, token: str):
+    async def get_profile(self, token: str):
         """
         获取 Minecraft 档案并报告保存阶段。
 
@@ -82,28 +99,25 @@ class _ProgressMinecraftClient:
         """
         if self.login_active:
             self.on_progress("profile")
-        result = self.client.get_profile(token)
+        result = await self.client.get_profile(token)
         if self.login_active:
             self.on_progress("saving")
         return result
 
-    def upload_skin(self, token: str, variant: str, image: bytes):
-        return self.client.upload_skin(token, variant, image)
+    async def upload_skin(self, token: str, variant: str, image: bytes):
+        return await self.client.upload_skin(token, variant, image)
 
-    def reset_skin(self, token: str):
-        return self.client.reset_skin(token)
+    async def reset_skin(self, token: str):
+        return await self.client.reset_skin(token)
 
-    def set_cape(self, token: str, cape_id: str):
-        return self.client.set_cape(token, cape_id)
+    async def set_cape(self, token: str, cape_id: str):
+        return await self.client.set_cape(token, cape_id)
 
-    def reset_cape(self, token: str):
-        return self.client.reset_cape(token)
+    async def reset_cape(self, token: str):
+        return await self.client.reset_cape(token)
 
-    def set_profile_name(self, token: str, name: str):
-        return self.client.set_profile_name(token, name)
-
-    def close(self) -> None:
-        self.client.close()
+    async def set_profile_name(self, token: str, name: str):
+        return await self.client.set_profile_name(token, name)
 
 
 class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
@@ -128,7 +142,7 @@ class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
         self._progress_client = _ProgressMinecraftClient(self.minecraft_client, on_progress)
         self.minecraft_client = self._progress_client
 
-    def add_microsoft_account(self) -> str:
+    async def add_microsoft_account(self) -> str:
         """
         完成 Microsoft 登录并保存可用于启动游戏的账户。
 
@@ -136,7 +150,7 @@ class LauncherMicrosoftAccountManager(MicrosoftAuthManager):
         """
         self._progress_client.login_active = True
         try:
-            return super().add_microsoft_account()
+            return await super().add_microsoft_account()
         finally:
             self._progress_client.login_active = False
 
@@ -145,7 +159,7 @@ class AccountManager:
     """
     聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
 
-    Microsoft 设备码登录的线程状态也由本类统一拥有，确保同一时间只有一个登录流程。
+    Microsoft 设备码登录的任务状态也由本类统一拥有，确保同一时间只有一个登录流程。
     Authlib 协议和头像渲染保留独立实现文件，因为它们具有独立的协议与图像处理边界。
 
     :param data_path: 启动器数据目录
@@ -163,6 +177,7 @@ class AccountManager:
         authlib_manager: AuthlibAccountManager | None = None,
         event_bus: EventBus | None = None,
         disable_ssl_verify: bool = False,
+        resource_path: Path | str | None = None,
     ):
         """
         加载持久化账户，并连接两种在线认证提供者。
@@ -173,18 +188,19 @@ class AccountManager:
         :param authlib_manager: 可选的 Authlib 账户管理器
         :param event_bus: 当前应用上下文拥有的事件总线
         :param disable_ssl_verify: 是否关闭 Microsoft 登录服务器的 SSL 证书校验
+        :param resource_path: 只读资源目录，用于定位 ``resources/Skins`` 默认皮肤
         """
         self.logger = get_logger("AccountManager")
         self.events = event_bus or EventBus()
         self.data_path = Path(data_path) / "accounts"
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.state_path = self.data_path / "accounts.json"
-        # 持久化状态和登录线程会被 IPC 轮询并发访问，统一使用一把可重入锁保护。
+        # 持久化状态和登录任务会被 IPC 轮询并发访问，统一使用一把可重入锁保护。
         self._lock = RLock()
-        # 登录事件表示设备码流程已经推进；取消事件用于请求后台线程尽快终止。
-        self._login_event = Event()
-        self._login_cancel_event = Event()
-        self._login_thread: Thread | None = None
+        # 登录事件表示设备码流程已经推进；取消事件用于请求登录任务尽快终止。
+        self._login_event: asyncio.Event = asyncio.Event()
+        self._login_cancel_event: asyncio.Event = asyncio.Event()
+        self._login_task: asyncio.Task | None = None
         # 登录流只在需要向前端展示设备码时存在，状态字典则始终可供轮询。
         self._login_flow: dict[str, Any] | None = None
         self._login_state: dict[str, Any] = {"status": "idle"}
@@ -193,6 +209,8 @@ class AccountManager:
         self._current_account_id: str | None = None
         # 账户偏好（收藏/置顶）独立存储，覆盖离线、微软与外置账户。
         self._account_prefs: dict[str, dict[str, bool]] = {}
+        self.resource_path = Path(resource_path).resolve() if resource_path else None
+        self._default_skins: dict[str, tuple[str, str]] | None = None
         phase_started = perf_counter()
         self._load_state()
         self.logger.debug("账户聚合状态读取完成，duration=%.2fs", perf_counter() - phase_started)
@@ -398,8 +416,39 @@ class AccountManager:
             self.logger.info("已合并 %s 个重复 Microsoft 账户", len(replacements))
         return resolve_account_id(preferred_id)
 
+    def default_skins(self) -> list[dict[str, Any]]:
+        """返回可供离线账户选择的默认皮肤列表。"""
+        return [
+            {"id": skin_id, "name": name, "skinUrl": url}
+            for skin_id, (name, url) in self._default_skin_map().items()
+        ]
+
+    def _default_skin_map(self) -> dict[str, tuple[str, str]]:
+        if self._default_skins is None:
+            self._default_skins = _load_default_skins(self.resource_path)
+        return self._default_skins
+
+    def _default_skin_url(self, skin_id: Any) -> str | None:
+        info = self._default_skin_map().get(str(skin_id or "").lower())
+        return info[1] if info else None
+
+    def _normalize_offline_skin(self, skin: Any) -> str | None:
+        if skin is None or not str(skin).strip():
+            return None
+        skin_id = str(skin).strip().lower()
+        if skin_id not in self._default_skin_map():
+            raise AccountError("离线账户皮肤无效", "INVALID_OFFLINE_SKIN")
+        return skin_id
+
+    def _offline_account(self, account: dict[str, Any]) -> dict[str, Any]:
+        copied = deepcopy(account)
+        skin_url = self._default_skin_url(copied.get("skin"))
+        if skin_url is not None:
+            copied["skinUrl"] = skin_url
+        return copied
+
     def _all_accounts(self) -> list[dict[str, Any]]:
-        offline_accounts = [deepcopy(account) for account in self._offline_accounts.values()]
+        offline_accounts = [self._offline_account(account) for account in self._offline_accounts.values()]
         microsoft_accounts = [
             self._microsoft_account(account_id, info)
             for account_id, info in self.microsoft_manager.get_microsoft_accounts().items()
@@ -501,7 +550,7 @@ class AccountManager:
         """
         return self.list_accounts()["current"]
 
-    def get_launch_credentials(self) -> dict[str, str]:
+    async def get_launch_credentials(self) -> dict[str, str]:
         """
         返回启动游戏所需的当前账户凭据。
         """
@@ -525,7 +574,7 @@ class AccountManager:
                 "access_token": "None",
             }
         if current.get("type") == "microsoft":
-            token = self.microsoft_manager.get_minecraft_token(current["id"])
+            token = await self.microsoft_manager.get_minecraft_token(current["id"])
             return {
                 "player_name": player_name,
                 "uuid": account_uuid,
@@ -562,16 +611,18 @@ class AccountManager:
         except ValueError as exc:
             raise AccountError("自定义 UUID 格式无效", "INVALID_OFFLINE_UUID") from exc
 
-    def add_offline(self, username: Any, custom_uuid: Any = None) -> dict[str, Any]:
+    def add_offline(self, username: Any, custom_uuid: Any = None, skin: Any = None) -> dict[str, Any]:
         """
         添加离线账户。
 
         :param username: 登录或离线账户用户名
         :param custom_uuid: 可选的离线账户 UUID
+        :param skin: 可选的默认皮肤标识
         """
         normalized = self._validate_username(username)
         account_uuid = self._resolve_offline_uuid(normalized, custom_uuid)
         account_id = f"offline:{account_uuid}"
+        skin_id = self._normalize_offline_skin(skin)
         with self._lock:
             account = {
                 "id": account_id,
@@ -580,11 +631,34 @@ class AccountManager:
                 "uuid": account_uuid,
                 "isCurrent": True,
             }
+            if skin_id is not None:
+                account["skin"] = skin_id
             self._offline_accounts[account_id] = account
             self._current_account_id = account_id
             self._save_state()
         self._emit_changed()
         return deepcopy(account)
+
+    def set_offline_skin(self, account_id: Any, skin: Any) -> list[dict[str, Any]]:
+        """
+        设置离线账户的默认皮肤并持久化，返回刷新后的账户列表。
+
+        :param account_id: 离线账户的稳定标识
+        :param skin: 默认皮肤标识，空值表示不设置
+        """
+        if not isinstance(account_id, str) or account_id not in self._offline_accounts:
+            raise AccountError("账号不存在或不是离线账户", "ACCOUNT_NOT_FOUND")
+        skin_id = self._normalize_offline_skin(skin)
+        with self._lock:
+            account = self._offline_accounts[account_id]
+            if skin_id is None:
+                account.pop("skin", None)
+            else:
+                account["skin"] = skin_id
+            self._save_state()
+        self._emit_changed()
+        with self._lock:
+            return self._all_accounts()
 
     def add_authlib(self, server_url: Any, username: Any, password: Any) -> dict[str, Any]:
         """
@@ -715,7 +789,7 @@ class AccountManager:
             self._save_state()
         self._emit_changed()
 
-    def refresh_account(self, account_id: Any) -> dict[str, Any]:
+    async def refresh_account(self, account_id: Any) -> dict[str, Any]:
         """
         刷新账户信息。
 
@@ -723,18 +797,27 @@ class AccountManager:
         """
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
+        is_microsoft = False
+        is_authlib = False
         with self._lock:
             if account_id in self._offline_accounts:
                 account = deepcopy(self._offline_accounts[account_id])
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
-                self.microsoft_manager.refresh_profile(account_id)
-                info = self.microsoft_manager.get_microsoft_accounts()[account_id]
-                account = self._microsoft_account(account_id, info)
+                is_microsoft = True
             elif account_id in self.authlib_manager.list_accounts():
-                info = self.authlib_manager.refresh_account(account_id)
-                account = self._authlib_account(account_id, info)
+                is_authlib = True
             else:
                 raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
+        # 网络刷新在锁外进行，避免持锁期间阻塞事件循环上的内存读取。
+        if is_microsoft:
+            await self.microsoft_manager.refresh_profile(account_id)
+            with self._lock:
+                info = self.microsoft_manager.get_microsoft_accounts()[account_id]
+                account = self._microsoft_account(account_id, info)
+        elif is_authlib:
+            info = self.authlib_manager.refresh_account(account_id)
+            with self._lock:
+                account = self._authlib_account(account_id, info)
         self._emit_changed()
         return account
 
@@ -772,7 +855,8 @@ class AccountManager:
                     result["capeUrl"] = active_cape["url"]
                 return result
             if account_id in self._offline_accounts:
-                return {}
+                skin_url = self._default_skin_url(self._offline_accounts[account_id].get("skin"))
+                return {"skinUrl": skin_url} if skin_url else {}
             is_authlib = account_id in self.authlib_manager.list_accounts()
         if is_authlib:
             return self.authlib_manager.get_texture_urls(account_id)
@@ -789,7 +873,7 @@ class AccountManager:
         if account_id not in self.microsoft_manager.get_microsoft_accounts():
             raise AccountError("账号不存在或不是正版账户", "ACCOUNT_NOT_FOUND")
 
-    def upload_skin(self, account_id: Any, variant: Any, image: bytes) -> dict[str, Any]:
+    async def upload_skin(self, account_id: Any, variant: Any, image: bytes) -> dict[str, Any]:
         """
         上传皮肤到 Mojang 服务器并刷新账户信息。
 
@@ -799,20 +883,20 @@ class AccountManager:
         """
         self._require_microsoft_account(account_id)
         normalized_variant = "slim" if str(variant or "").lower() == "slim" else "classic"
-        self.microsoft_manager.upload_skin(account_id, normalized_variant, image)
-        return self.refresh_account(account_id)
+        await self.microsoft_manager.upload_skin(account_id, normalized_variant, image)
+        return await self.refresh_account(account_id)
 
-    def reset_skin(self, account_id: Any) -> dict[str, Any]:
+    async def reset_skin(self, account_id: Any) -> dict[str, Any]:
         """
         将正版账户皮肤重置为默认。
 
         :param account_id: 账户的稳定标识
         """
         self._require_microsoft_account(account_id)
-        self.microsoft_manager.reset_skin(account_id)
-        return self.refresh_account(account_id)
+        await self.microsoft_manager.reset_skin(account_id)
+        return await self.refresh_account(account_id)
 
-    def set_cape(self, account_id: Any, cape_id: Any) -> dict[str, Any]:
+    async def set_cape(self, account_id: Any, cape_id: Any) -> dict[str, Any]:
         """
         为正版账户选择已解锁的披风。
 
@@ -822,18 +906,18 @@ class AccountManager:
         self._require_microsoft_account(account_id)
         if not isinstance(cape_id, str) or not cape_id.strip():
             raise AccountError("披风 ID 不能为空", "INVALID_CAPE_ID")
-        self.microsoft_manager.set_cape(account_id, cape_id.strip())
-        return self.refresh_account(account_id)
+        await self.microsoft_manager.set_cape(account_id, cape_id.strip())
+        return await self.refresh_account(account_id)
 
-    def reset_cape(self, account_id: Any) -> dict[str, Any]:
+    async def reset_cape(self, account_id: Any) -> dict[str, Any]:
         """
         取消正版账户当前佩戴的披风。
 
         :param account_id: 账户的稳定标识
         """
         self._require_microsoft_account(account_id)
-        self.microsoft_manager.reset_cape(account_id)
-        return self.refresh_account(account_id)
+        await self.microsoft_manager.reset_cape(account_id)
+        return await self.refresh_account(account_id)
 
     def _on_device_code(self, flow: dict[str, Any]) -> None:
         with self._lock:
@@ -866,16 +950,20 @@ class AccountManager:
             },
         )
 
-    def _run_microsoft_login(self) -> None:
+    async def _run_microsoft_login(self) -> None:
         frontend_event: dict[str, Any] | None = None
         try:
-            account_id = self.microsoft_manager.add_microsoft_account()
+            account_id = await self.microsoft_manager.add_microsoft_account()
             with self._lock:
                 account_id = self._deduplicate_microsoft_accounts(preferred_id=account_id) or account_id
                 self._current_account_id = account_id
                 self._save_state()
                 self._login_state = {"status": "ready", "account_id": account_id}
                 frontend_event = {"status": "ready"}
+        except asyncio.CancelledError:
+            with self._lock:
+                self._login_state = {"status": "cancelled"}
+            raise
         except Exception as exc:
             with self._lock:
                 if self._login_cancel_event.is_set():
@@ -892,7 +980,7 @@ class AccountManager:
         if frontend_event is not None:
             self.events.emit("accounts:microsoft_login_status", frontend_event)
 
-    def start_microsoft_login(self) -> dict[str, Any]:
+    async def start_microsoft_login(self) -> dict[str, Any]:
         """
         开始微软登录。
         """
@@ -902,26 +990,27 @@ class AccountManager:
                 "MICROSOFT_CLIENT_ID_REQUIRED",
             )
         with self._lock:
-            if self._login_thread and self._login_thread.is_alive():
+            task = self._login_task
+            if task is not None and not task.done():
                 if self._login_cancel_event.is_set():
                     raise AccountError("Microsoft 登录正在取消，请稍后重试", "MICROSOFT_LOGIN_CANCELLING")
                 state = deepcopy(self._login_state)
             elif self._login_state.get("status") == "ready":
                 self._login_state = {"status": "idle"}
-                self._login_thread = None
+                self._login_task = None
                 return {"status": "completed"}
             else:
                 self._login_state = {"status": "starting"}
                 self._login_flow = None
-                self._login_cancel_event.clear()
-                self._login_event.clear()
-                self._login_thread = Thread(target=self._run_microsoft_login, name="MicrosoftLogin", daemon=True)
-                self._login_thread.start()
-                self.logger.debug("Microsoft 设备码登录线程已启动")
+                self._login_cancel_event = asyncio.Event()
+                self._login_event = asyncio.Event()
+                self._login_task = asyncio.get_running_loop().create_task(self._run_microsoft_login())
+                self.logger.debug("Microsoft 设备码登录任务已启动")
                 state = deepcopy(self._login_state)
 
         if state.get("status") == "starting":
-            self._login_event.wait(timeout=_LOGIN_START_WAIT_SECONDS)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._login_event.wait(), timeout=_LOGIN_START_WAIT_SECONDS)
             with self._lock:
                 state = deepcopy(self._login_state)
 
@@ -980,7 +1069,7 @@ class AccountManager:
                 raise AccountError("Microsoft 账号数据不存在", "ACCOUNT_NOT_FOUND")
             account = self._microsoft_account(account_id, info)
             self._login_state = {"status": "idle"}
-            self._login_thread = None
+            self._login_task = None
         self._emit_changed()
         return {"status": "completed", "account": account}
 
@@ -989,8 +1078,8 @@ class AccountManager:
         取消登录流程；返回本次调用是否实际取消了任务。
         """
         with self._lock:
-            login_thread = self._login_thread
-            is_active = bool(login_thread and login_thread.is_alive())
+            task = self._login_task
+            is_active = bool(task is not None and not task.done())
             if not is_active and self._login_state.get("status") not in {"starting", "pending"}:
                 return False
 
@@ -999,17 +1088,24 @@ class AccountManager:
                 self._login_flow["expires_at"] = 0
             self._login_state = {"status": "cancelled"}
             self._login_event.set()
+            if task is not None and not task.done():
+                task.cancel()
         self.events.emit("accounts:microsoft_login_status", {"status": "cancelled"})
         return True
 
     def _emit_changed(self) -> None:
         self.events.emit("accounts:changed", self.list_accounts())
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """
         取消仍在运行的认证任务并释放认证客户端。
         """
         cancelled = self.cancel_microsoft_login()
         self.logger.debug("正在关闭账户服务: login_cancelled=%s", cancelled)
-        self.microsoft_manager.close()
+        if self._login_task is not None and not self._login_task.done():
+            self._login_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self._login_task
+            self._login_task = None
+        await self.microsoft_manager.aclose()
         self.authlib_manager.close()

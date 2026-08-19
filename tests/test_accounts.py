@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from importlib import import_module
 from typing import Any
@@ -22,7 +23,7 @@ class FakeMicrosoftManager:
     def get_microsoft_accounts(self) -> dict[str, dict[str, Any]]:
         return self.accounts.copy()
 
-    def add_microsoft_account(self) -> str:
+    async def add_microsoft_account(self) -> str:
         self.on_device_code(
             {
                 "user_code": "ABCD-EFGH",
@@ -47,32 +48,32 @@ class FakeMicrosoftManager:
     def del_microsoft_account(self, account_id: str) -> None:
         self.accounts.pop(account_id)
 
-    def refresh_profile(self, account_id: str) -> dict[str, Any]:
+    async def refresh_profile(self, account_id: str) -> dict[str, Any]:
         return self.accounts[account_id]
 
-    def get_minecraft_token(self, account_id: str) -> str:
+    async def get_minecraft_token(self, account_id: str) -> str:
         assert account_id in self.accounts
         return "minecraft-access-token"
 
-    def upload_skin(self, account_id: str, variant: str, image: bytes) -> dict[str, Any]:
+    async def upload_skin(self, account_id: str, variant: str, image: bytes) -> dict[str, Any]:
         assert account_id in self.accounts
         self.skin_variant = variant
         return {"uploaded": True}
 
-    def reset_skin(self, account_id: str) -> dict[str, Any]:
+    async def reset_skin(self, account_id: str) -> dict[str, Any]:
         assert account_id in self.accounts
         return {"reset": True}
 
-    def set_cape(self, account_id: str, cape_id: str) -> dict[str, Any]:
+    async def set_cape(self, account_id: str, cape_id: str) -> dict[str, Any]:
         assert account_id in self.accounts
         self.selected_cape_id = cape_id
         return {"cape": cape_id}
 
-    def reset_cape(self, account_id: str) -> dict[str, Any]:
+    async def reset_cape(self, account_id: str) -> dict[str, Any]:
         assert account_id in self.accounts
         return {"cape": None}
 
-    def close(self) -> None:
+    async def aclose(self) -> None:
         self.closed = True
 
 
@@ -148,7 +149,7 @@ class BlockingMicrosoftManager(FakeMicrosoftManager):
         super().__init__()
         self.flow: dict[str, Any] | None = None
 
-    def add_microsoft_account(self) -> str:
+    async def add_microsoft_account(self) -> str:
         self.flow = {
             "user_code": "ABCD-EFGH",
             "verification_uri": "https://microsoft.com/link",
@@ -158,7 +159,7 @@ class BlockingMicrosoftManager(FakeMicrosoftManager):
         }
         self.on_device_code(self.flow)
         while self.flow["expires_at"] > time.time():
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
         raise RuntimeError("device flow cancelled")
 
 
@@ -167,7 +168,7 @@ class DuplicateMicrosoftManager(FakeMicrosoftManager):
         super().__init__()
         self.login_count = 0
 
-    def add_microsoft_account(self) -> str:
+    async def add_microsoft_account(self) -> str:
         self.login_count += 1
         self.on_device_code(
             {
@@ -217,11 +218,11 @@ def test_offline_account_accepts_custom_uuid(tmp_path) -> None:
     assert account["id"] == "offline:01234567-89ab-cdef-0123-456789abcdef"
 
 
-def test_offline_account_exposes_launch_credentials(tmp_path) -> None:
+async def test_offline_account_exposes_launch_credentials(tmp_path) -> None:
     manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     manager.add_offline("Steve", "0123456789abcdef0123456789abcdef")
 
-    assert manager.get_launch_credentials() == {
+    assert await manager.get_launch_credentials() == {
         "player_name": "Steve",
         "uuid": "0123456789abcdef0123456789abcdef",
         "user_type": "legacy",
@@ -238,7 +239,93 @@ def test_offline_account_rejects_invalid_custom_uuid(tmp_path) -> None:
     assert error.value.error_code == "INVALID_OFFLINE_UUID"
 
 
-def test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None:
+def _make_skin_resource(tmp_path) -> str:
+    """构造仅含一个皮肤 PNG 的只读资源目录，返回其路径。"""
+    resource_path = tmp_path / "resources" / "Skins"
+    resource_path.mkdir(parents=True)
+    (resource_path / "Alice.png").write_bytes(b"\x89PNG-fake-skin-bytes")
+    return str(tmp_path)
+
+
+def test_offline_default_skins_load_from_resource_path(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        resource_path=_make_skin_resource(tmp_path),
+    )
+
+    skins = manager.default_skins()
+
+    assert len(skins) == 1
+    assert skins[0]["id"] == "alice"
+    assert skins[0]["name"] == "Alice"
+    assert skins[0]["skinUrl"].startswith("data:image/png;base64,")
+
+
+def test_offline_add_with_skin_exposes_skin_url_in_list(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        resource_path=_make_skin_resource(tmp_path),
+    )
+
+    account = manager.add_offline("Steve", skin="Alice")
+
+    assert account["skin"] == "alice"
+    listed = next(item for item in manager.list_accounts()["accounts"] if item["id"] == account["id"])
+    assert listed["skinUrl"].startswith("data:image/png;base64,")
+
+
+def test_offline_texture_urls_uses_selected_skin(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        resource_path=_make_skin_resource(tmp_path),
+    )
+
+    account = manager.add_offline("Steve", skin="Alice")
+
+    assert manager.texture_urls(account["id"])["skinUrl"].startswith("data:image/png;base64,")
+
+
+def test_offline_set_skin_updates_and_persists(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        resource_path=_make_skin_resource(tmp_path),
+    )
+    account = manager.add_offline("Steve")
+
+    accounts = manager.set_offline_skin(account["id"], "Alice")
+
+    updated = next(item for item in accounts if item["id"] == account["id"])
+    assert updated["skin"] == "alice"
+    assert updated["skinUrl"].startswith("data:image/png;base64,")
+
+
+def test_offline_invalid_skin_is_rejected(tmp_path) -> None:
+    manager = AccountManager(
+        tmp_path,
+        microsoft_manager=FakeMicrosoftManager(),
+        resource_path=_make_skin_resource(tmp_path),
+    )
+
+    with pytest.raises(accounts_service.AccountError) as error:
+        manager.add_offline("Steve", skin="missing")
+
+    assert error.value.error_code == "INVALID_OFFLINE_SKIN"
+
+
+def test_offline_without_skin_has_no_skin_url(tmp_path) -> None:
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+
+    account = manager.add_offline("Steve")
+
+    assert "skin" not in account
+    assert "skinUrl" not in manager.list_accounts()["accounts"][0]
+
+
+async def test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None:
     authlib_manager = FakeAuthlibManager()
     manager = AccountManager(
         tmp_path,
@@ -261,14 +348,14 @@ def test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None:
         "auth_server": "https://skin.example.com/api/yggdrasil",
         "isCurrent": True,
     }
-    assert manager.get_launch_credentials() == {
+    assert await manager.get_launch_credentials() == {
         "player_name": "AuthlibPlayer",
         "uuid": "0123456789abcdef0123456789abcdef",
         "user_type": "yggdrasil",
         "access_token": "yggdrasil-access-token",
         "auth_server": "https://skin.example.com/api/yggdrasil",
     }
-    assert manager.refresh_account(account["id"])["alias"] == "AuthlibPlayer"
+    assert (await manager.refresh_account(account["id"]))["alias"] == "AuthlibPlayer"
 
     manager.remove_account(account["id"])
 
@@ -352,7 +439,7 @@ def test_authlib_login_uses_server_error_message(tmp_path, monkeypatch) -> None:
     assert str(error.value) == "外置登录失败: Invalid credentials. Invalid username or password."
 
 
-def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch) -> None:
+async def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch) -> None:
     captured_options = {}
 
     class CapturingMicrosoftManager(FakeMicrosoftManager):
@@ -367,10 +454,10 @@ def test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch)
     assert captured_options["client_id"] == "runtime-client-id"
     assert "cache_path" not in captured_options
     assert manager.microsoft_login_config() == {"available": True, "needs_client_id": False}
-    manager.close()
+    await manager.close()
 
 
-def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) -> None:
+async def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) -> None:
     class CapturingMicrosoftManager(FakeMicrosoftManager):
         def __init__(self, **options):
             super().__init__()
@@ -381,23 +468,23 @@ def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) ->
 
     assert manager.microsoft_login_config() == {"available": False, "needs_client_id": True}
     with pytest.raises(accounts_service.AccountError) as error:
-        manager.start_microsoft_login()
+        await manager.start_microsoft_login()
 
     assert error.value.error_code == "MICROSOFT_CLIENT_ID_REQUIRED"
-    assert manager._login_thread is None
-    manager.close()
+    assert manager._login_task is None
+    await manager.close()
 
 
-def test_microsoft_device_login_flow(tmp_path) -> None:
+async def test_microsoft_device_login_flow(tmp_path) -> None:
     login_events = []
     event_bus = EventBus()
     event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
     microsoft_manager = FakeMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager, event_bus=event_bus)
 
-    started = manager.start_microsoft_login()
-    if manager._login_thread is not None:
-        manager._login_thread.join(timeout=1)
+    started = await manager.start_microsoft_login()
+    if manager._login_task is not None:
+        await asyncio.wait_for(manager._login_task, timeout=1)
 
     assert started["status"] in {"pending", "completed"}
     if started["status"] == "pending":
@@ -414,7 +501,7 @@ def test_microsoft_device_login_flow(tmp_path) -> None:
     assert login_events[-1] == {"status": "ready"}
 
 
-def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None:
+async def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None:
     microsoft_auth_core = import_module("ECL.game.auth.microsoft")
     stages = []
 
@@ -422,19 +509,19 @@ def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> N
         def __init__(self, **_options):
             pass
 
-        def get_token(self):
+        async def get_token(self):
             return "microsoft-token", "player@example.com"
 
     class FakeMinecraftClient:
-        def get_minecraft_token(self, token):
+        async def get_minecraft_token(self, token):
             assert token == "microsoft-token"
             return "minecraft-token", 0.0, 3600
 
-        def get_profile(self, token):
+        async def get_profile(self, token):
             assert token == "minecraft-token"
             return {"id": "profile-id", "name": "Player", "skins": []}
 
-        def close(self):
+        async def aclose(self):
             pass
 
     monkeypatch.setattr(microsoft_auth_core, "MicrosoftAuth", FakeMicrosoftAuth)
@@ -444,23 +531,23 @@ def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> N
         on_device_code=lambda _flow: None,
         on_progress=stages.append,
     )
-    manager._progress_client.client.close()
+    await manager._progress_client.client.close()
     manager._progress_client.client = FakeMinecraftClient()
 
-    account_id = manager.add_microsoft_account()
+    account_id = await manager.add_microsoft_account()
 
     assert account_id in manager.get_microsoft_accounts()
     assert stages == ["authorization_confirmed", "minecraft_token", "profile", "saving"]
-    manager.close()
+    await manager.aclose()
 
 
-def test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None:
+async def test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None:
     microsoft_manager = DuplicateMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
 
     for _ in range(2):
-        manager.start_microsoft_login()
-        manager._login_thread.join(timeout=1)
+        await manager.start_microsoft_login()
+        await asyncio.wait_for(manager._login_task, timeout=1)
         manager.complete_microsoft_login()
 
     account_list = manager.list_accounts()
@@ -513,35 +600,33 @@ def test_complete_microsoft_login_keeps_pending_state(tmp_path) -> None:
     assert manager.poll_microsoft_login() == {"status": "pending", "retry_after": 3}
 
 
-def test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None:
+async def test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None:
     login_events = []
     event_bus = EventBus()
     event_bus.subscribe("accounts:microsoft_login_status", login_events.append)
     microsoft_manager = BlockingMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager, event_bus=event_bus)
 
-    started = manager.start_microsoft_login()
+    started = await manager.start_microsoft_login()
     assert started["status"] == "pending"
     assert manager.cancel_microsoft_login() is True
 
-    manager._login_thread.join(timeout=1)
+    await asyncio.gather(manager._login_task, return_exceptions=True)
 
-    assert not manager._login_thread.is_alive()
+    assert manager._login_task.done()
     assert microsoft_manager.flow["expires_at"] == 0
     assert microsoft_manager.flow["interval"] == 2
     assert manager.poll_microsoft_login() == {"status": "error", "message": "Microsoft 登录已取消"}
     assert login_events[-1] == {"status": "cancelled"}
 
 
-def test_close_cancels_login_and_releases_manager(tmp_path) -> None:
+async def test_close_cancels_login_and_releases_manager(tmp_path) -> None:
     microsoft_manager = BlockingMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
 
-    manager.start_microsoft_login()
-    manager.close()
-    manager._login_thread.join(timeout=1)
+    await manager.start_microsoft_login()
+    await manager.close()
 
-    assert not manager._login_thread.is_alive()
     assert microsoft_manager.closed is True
 
 
@@ -575,68 +660,68 @@ def test_microsoft_account_includes_capes(tmp_path) -> None:
     ]
 
 
-def _manager_with_microsoft_account(tmp_path) -> tuple[AccountManager, FakeMicrosoftManager]:
+async def _manager_with_microsoft_account(tmp_path) -> tuple[AccountManager, FakeMicrosoftManager]:
     microsoft_manager = FakeMicrosoftManager()
     manager = AccountManager(tmp_path, microsoft_manager=microsoft_manager)
-    microsoft_manager.add_microsoft_account()
+    await microsoft_manager.add_microsoft_account()
     return manager, microsoft_manager
 
 
-def test_upload_skin_refreshes_account(tmp_path) -> None:
-    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+async def test_upload_skin_refreshes_account(tmp_path) -> None:
+    manager, microsoft_manager = await _manager_with_microsoft_account(tmp_path)
 
-    account = manager.upload_skin("microsoft-account", "slim", b"\x89PNG")
+    account = await manager.upload_skin("microsoft-account", "slim", b"\x89PNG")
 
     assert microsoft_manager.skin_variant == "slim"
     assert account["type"] == "microsoft"
     assert account["id"] == "microsoft-account"
 
 
-def test_upload_skin_normalizes_variant(tmp_path) -> None:
-    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+async def test_upload_skin_normalizes_variant(tmp_path) -> None:
+    manager, microsoft_manager = await _manager_with_microsoft_account(tmp_path)
 
-    manager.upload_skin("microsoft-account", "SLIM", b"bytes")
+    await manager.upload_skin("microsoft-account", "SLIM", b"bytes")
     assert microsoft_manager.skin_variant == "slim"
 
-    manager.upload_skin("microsoft-account", "classic", b"bytes")
+    await manager.upload_skin("microsoft-account", "classic", b"bytes")
     assert microsoft_manager.skin_variant == "classic"
 
 
-def test_reset_skin(tmp_path) -> None:
-    manager, _microsoft_manager = _manager_with_microsoft_account(tmp_path)
+async def test_reset_skin(tmp_path) -> None:
+    manager, _microsoft_manager = await _manager_with_microsoft_account(tmp_path)
 
-    account = manager.reset_skin("microsoft-account")
+    account = await manager.reset_skin("microsoft-account")
     assert account["id"] == "microsoft-account"
 
 
-def test_set_and_reset_cape(tmp_path) -> None:
-    manager, microsoft_manager = _manager_with_microsoft_account(tmp_path)
+async def test_set_and_reset_cape(tmp_path) -> None:
+    manager, microsoft_manager = await _manager_with_microsoft_account(tmp_path)
 
-    account = manager.set_cape("microsoft-account", "migrator")
+    account = await manager.set_cape("microsoft-account", "migrator")
     assert account["id"] == "microsoft-account"
     assert microsoft_manager.selected_cape_id == "migrator"
 
-    account = manager.reset_cape("microsoft-account")
+    account = await manager.reset_cape("microsoft-account")
     assert account["id"] == "microsoft-account"
 
 
-def test_skin_operations_require_microsoft_account(tmp_path) -> None:
+async def test_skin_operations_require_microsoft_account(tmp_path) -> None:
     manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     manager.add_offline("Steve")
 
     with pytest.raises(accounts_service.AccountError):
-        manager.upload_skin("offline:not-a-real-uuid", "classic", b"bytes")
+        await manager.upload_skin("offline:not-a-real-uuid", "classic", b"bytes")
     with pytest.raises(accounts_service.AccountError):
-        manager.set_cape("offline:not-a-real-uuid", "migrator")
+        await manager.set_cape("offline:not-a-real-uuid", "migrator")
     with pytest.raises(accounts_service.AccountError):
-        manager.reset_cape("offline:not-a-real-uuid")
+        await manager.reset_cape("offline:not-a-real-uuid")
 
 
-def test_set_cape_rejects_empty_cape_id(tmp_path) -> None:
-    manager, _microsoft_manager = _manager_with_microsoft_account(tmp_path)
+async def test_set_cape_rejects_empty_cape_id(tmp_path) -> None:
+    manager, _microsoft_manager = await _manager_with_microsoft_account(tmp_path)
 
     with pytest.raises(accounts_service.AccountError):
-        manager.set_cape("microsoft-account", "   ")
+        await manager.set_cape("microsoft-account", "   ")
 
 
 def test_texture_urls_returns_microsoft_skin_and_active_cape(tmp_path) -> None:

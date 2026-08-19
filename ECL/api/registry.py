@@ -102,6 +102,8 @@ COMMAND_NAMES = (
     "accounts_list",
     "accounts_current",
     "accounts_add_offline",
+    "accounts_default_skins",
+    "accounts_set_offline_skin",
     "accounts_add_authlib",
     "accounts_select_authlib_profile",
     "accounts_microsoft_login_config",

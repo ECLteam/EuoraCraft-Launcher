@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import ssl
 from collections.abc import Callable
@@ -96,7 +98,12 @@ class ApplicationContext:
             logger.debug("开始关闭应用上下文中的共享资源")
             for resource in (self.plugins, self.processes, self.game, self.accounts, self.http):
                 try:
-                    resource.close()
+                    close = resource.close
+                    if inspect.iscoroutinefunction(close):
+                        # 账户等资源的异步关闭需要在独立事件循环中完成
+                        asyncio.run(close())
+                    else:
+                        close()
                 except Exception:
                     logger.exception("关闭后端资源失败: %s", type(resource).__name__)
             self.events.clear()
@@ -161,6 +168,7 @@ def create_application(
             microsoft_client_id=environment.get_value("MICROSOFT_CLIENT_ID"),
             event_bus=events,
             disable_ssl_verify=disable_ssl_verify,
+            resource_path=state.resource_path,
         )
         created.append(accounts)
         logger.info(

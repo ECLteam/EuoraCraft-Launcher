@@ -278,7 +278,7 @@ class LaunchCoordinator(_GameState):
                 self._emit_launch_progress("offline_account", "正在读取离线账户信息", 7)
             else:
                 self._emit_launch_progress("account", "正在验证游戏账户", 7)
-            credentials = await to_thread.run_sync(self.accounts.get_launch_credentials)
+            credentials = await self.accounts.get_launch_credentials()
             if credentials["user_type"] == "msa":
                 self._emit_launch_progress("account_ready", "正版登录令牌已就绪", 17)
             elif credentials["user_type"] == "yggdrasil":
