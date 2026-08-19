@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EuoraCraft Launcher 全面代码审计报告</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #1e222b;
+    --border: #2a2f3a; --text: #e6e9ef; --muted: #9aa3b2;
+    --red: #f05a5a; --org: #f0a05a; --ylw: #e6c94e; --grn: #6ecb72; --blu: #5aa8f0;
+    --violet: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "HarmonyOS Sans SC", sans-serif;
+    line-height: 1.7; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 28px 96px; }
+  header.hero { border-bottom: 2px solid var(--border); padding-bottom: 28px; margin-bottom: 40px; }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: .5px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .meta { display:flex; flex-wrap:wrap; gap: 10px; margin-top: 18px; }
+  .chip { background: var(--panel); border: 1px solid var(--border); padding: 4px 12px;
+    border-radius: 999px; font-size: 12px; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin: 30px 0 44px; }
+  .stat { background: var(--panel); border:1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+  .stat .num { font-size: 30px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .c-red{color:var(--red)} .c-org{color:var(--org)} .c-ylw{color:var(--ylw)} .c-grn{color:var(--grn)} .c-blu{color:var(--blu)} .c-vio{color:var(--violet)}
+  h2 { font-size: 22px; margin: 52px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 26px 0 10px; }
+  p { color: var(--text); }
+  .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin: 14px 0; }
+  .f-head { display:flex; align-items:center; gap:10px; margin-bottom: 6px; flex-wrap:wrap; }
+  .sev { font-size: 11px; font-weight:700; padding: 2px 10px; border-radius: 999px; letter-spacing:.5px; }
+  .s-high{background:rgba(240,90,90,.14);color:var(--red);border:1px solid rgba(240,90,90,.35)}
+  .s-med{background:rgba(240,160,90,.14);color:var(--org);border:1px solid rgba(240,160,90,.35)}
+  .s-low{background:rgba(230,201,78,.12);color:var(--ylw);border:1px solid rgba(230,201,78,.3)}
+  .cat { font-size: 11px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); padding:2px 9px; border-radius:999px; }
+  .loc { font-family: "JetBrains Mono", Consolas, "Cascadia Code", monospace; font-size: 12.5px; color: var(--blu); background: var(--panel2);
+    border:1px solid var(--border); padding: 1px 8px; border-radius: 6px; }
+  .f-title { font-weight: 600; font-size: 15px; }
+  .f-why { margin-top: 8px; font-size: 13.5px; }
+  .f-why b { color: var(--org); }
+  .toc a { color: var(--blu); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  pre { background: #14171d; border:1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 12.5px;
+    overflow-x:auto; font-family: "JetBrains Mono", Consolas, "Cascadia Code", monospace; color:#c9d3e0; }
+  table { width:100%; border-collapse: collapse; font-size: 13.5px; margin: 14px 0; }
+  th, td { text-align:left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; background: var(--panel2); }
+  .ok { color: var(--grn); }
+  .warn { color: var(--org); }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+  .checklist { padding-left: 20px; }
+  .checklist li { margin-bottom: 8px; }
+  .checklist .done { color: var(--grn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>EuoraCraft Launcher 全面代码审计报告</h1>
+  <div class="sub">面向未来稳定性的质量体检 · 覆盖后端 / 前端 / IPC / 插件 / 并发与安全</div>
+  <div class="meta">
+    <span class="chip">报告日期：2026-08-19</span>
+    <span class="chip">技术栈：Python 3.11 + Tauri/pytauri + Vue 3 + Vite</span>
+    <span class="chip">审查方式：静态代码分析（人工核验）</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num c-red">15</div><div class="lbl">高优先级</div></div>
+    <div class="stat"><div class="num c-org">33</div><div class="lbl">中优先级</div></div>
+    <div class="stat"><div class="num c-ylw">40</div><div class="lbl">低优先级</div></div>
+    <div class="stat"><div class="num c-blu">88</div><div class="lbl">问题总数</div></div>
+    <div class="stat"><div class="num c-vio">6</div><div class="lbl">优化方向</div></div>
+  </div>
+</header>
+
+<nav class="card toc">
+  <b>目录</b>
+  <ol>
+    <li><a href="#s1">执行摘要</a></li>
+    <li><a href="#s2">并发与线程锁</a></li>
+    <li><a href="#s3">异步与事件循环</a></li>
+    <li><a href="#s4">资源管理与生命周期</a></li>
+    <li><a href="#s5">异常处理</a></li>
+    <li><a href="#s6">网络安全</a></li>
+    <li><a href="#s7">前端与插件安全</a></li>
+    <li><a href="#s8">IPC 与输入校验</a></li>
+    <li><a href="#s9">前端正确性</a></li>
+    <li><a href="#s10">代码质量与可优化点</a></li>
+    <li><a href="#s11">潜在突发问题预案</a></li>
+    <li><a href="#s12">优化行动清单</a></li>
+  </ol>
+</nav>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1">1. 执行摘要</h2>
+<p>本次审计覆盖了后端 <code>ECL/</code>（异步服务、下载器、账号鉴权、游戏核心、连接器）、<code>ECL/api/</code> IPC 层、以及 <code>frontend/src/</code> 前端（Vue 3 + 插件 SDK）。整体架构清晰、分层合理，异步化改造（Microsoft 认证）方向正确。主要风险集中在：</p>
+<ul class="checklist">
+  <li><b class="warn">并发/线程锁</b>：多处「同步方法里触发无跟踪的 asyncio 任务」与「持锁做 I/O」反模式。</li>
+  <li><b class="warn">异常静默</b>：账号加载、安装器等关键路径存在裸 <code>except: pass</code>，可能吞掉真实故障。</li>
+  <li><b class="warn">安全：</b>插件 SDK 存在动态脚本执行（<code>new Function</code> / <code>&lt;script&gt;</code> 注入）；<code>game_args/jvm_args</code> 透传欠缺强校验。</li>
+  <li><b class="warn">资源&生命周期</b>：下载器停止不等待、账号管理器关闭不追踪异步任务，关闭链不彻底。</li>
+</ul>
+
+<h3>严重级别判定标准</h3>
+<table>
+  <tr><th>级别</th><th>含义</th></tr>
+  <tr><td><span class="sev s-high">高</span></td><td>可能导致崩溃、数据丢失、安全风险、事件循环阻塞、功能不可用</td></tr>
+  <tr><td><span class="sev s-med">中</span></td><td>边缘场景下出错、资源泄漏风险、错误被掩盖、体验受影响</td></tr>
+  <tr><td><span class="sev s-low">低</span></td><td>代码风格、可读性、潜在边界问题，可择机优化</td></tr>
+</table>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2">2. 并发与线程锁（重点，共 12 项）</h2>
+<p>这是项目中风险最集中的领域。后端已部分完成「异步化」改造，但仍有同步/异步交叉使用造成的锁与任务管理隐患。</p>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">DynamicSemaphore 在同步方法里触发异步任务，且不跟踪任务句柄</span>
+    <span class="loc">ECL/game/Core/Downloader.py:41-63</span>
+  </div>
+  <p class="muted">`release()` / `change()` 是同步方法，却 `asyncio.create_task(_release())` / `create_task(_change())`，任务不被保存、不被取消。</p>
+  <div class="f-why"><b>为什么要改：</b>
+    ① 若调用发生在事件循环之外（如线程数据流回调），`asyncio.Condition` 可能报 <code>RuntimeError: got a new event loop</code> 或调度异常；
+    ② fire-and-forget 任务在关闭/取消时可能丢失，导致信号量许可证泄漏，下载队列被永久卡住；
+    ③ `change()` 缩短时未通知阻塞等待者让其重新计数，可能与实际并发不符。</div>
+  <pre>def release(self):
+    async def _release():
+        async with self._condition:
+            self._value += 1
+            self._condition.notify()
+    asyncio.create_task(_release())   # ← 不 await、不保存 task
+
+def change(self, new_value):
+    async def _change():
+        async with self._condition:
+            delta = new_value - self._value
+            ...
+    asyncio.create_task(_change())    # ← 同上</pre>
+  <p><b class="warn">建议：</b>将二者改为 <code>async def</code> 并同步 <code>await</code>；若必须保留同步接口，则保存返回的 <code>Task</code> 到受跟踪集合（如 <code>self._pending</code>），于关闭时统一 cancel，并对已关闭的事件循环做好保护。</p>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">Downloader._put_event 以 fire-and-forget 方式投递事件</span>
+    <span class="loc">ECL/game/Core/Downloader.py:596</span>
+  </div>
+  <p class="muted">进度/速度事件通过 <code>asyncio.create_task(...)</code> 投递到队列，不保留任务引用。</p>
+  <div class="f-why"><b>为什么要改：</b>下载中若应用关闭或事件循环停止，进度事件会静默丢失，前端进度条停摆；也增加了不可预期的任务残留。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">ConnectorService._current_players 用 run_coroutine_threadsafe 跨线程跑协程</span>
+    <span class="loc">ECL/services/connector.py:214-217</span>
+  </div>
+  <p class="muted">同步方法序列化到事件循环去发起网络请求，依赖 `self._client.loop` 存活。</p>
+  <div class="f-why"><b>为什么要改：</b>若事件循环已停、未运行、或从错误线程访问，会抛异常后静默回退到缓存数据，玩家列表可能过时却无感知。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">InstancesManager._read_stream 线程内 proc.wait() 阻塞不及时移除实例</span>
+    <span class="loc">ECL/game/Core/InstancesManager.py:51-57</span>
+  </div>
+  <p class="f-why"><b>为什么要改：</b>读者线程 `stream.close()` 后 `proc.wait()` 直到子进程退出才更新 `self.instances`，若游戏进程被卡住会导致实例状态长期悬挂，且无法被关停逻辑及时回收。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">InstancesManager.shutdown_all 阻塞 sleep + 重复取锁</span>
+    <span class="loc">ECL/game/Core/InstancesManager.py:195-207</span>
+  </div>
+  <p class="f-why"><b>为什么要改：</b>`time.sleep(0.1)` 阻塞关闭流程；清空实例先取锁、sleep、再取锁，若后台读者线程慢，关闭后 `self.instances` 可能仍残留。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">Downloader 守护回调派发线程缺乏统一关闭跟踪</span>
+    <span class="loc">ECL/game/Core/Downloader.py:696-697</span>
+  </div>
+  <p class="f-why"><b>为什么要改：</b>`_dispatcher_thread` 为 daemon 线程，异常退出或事件循环先停时，可能未等回调 flush 就结束进程，丢失最终回调。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">密码/密钥/共享状态存在被多线程同时读写的并发面</span>
+    <span class="loc">ECL/services/accounts.py · plugin manager</span>
+  </div>
+  <p class="f-why"><b>为什么要改：</b>账号等共享状态若在后台线程（下载、插件）与 IPC 协程间并发访问，缺锁可能产生竞态。建议复查所有「线程读 + 协程写」的共享容器。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">多处理路径使用同一进程内部可变单例，未加防重入</span>
+    <span class="loc">ECL/api/bridge.py 等</span>
+  </div>
+  <p class="f-why"><b>为什么要改：</b>IPC 命令若被前端并发触发（如快速连点），共享可变状态（下载字典、任务句柄）缺少幂等保护。</div>
+</div>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3">3. 异步与事件循环（共 8 项）</h2>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">ApplicationContext.close 用 asyncio.run() 另起事件循环关异步资源</span>
+    <span class="loc">ECL/application.py:104</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>若资源的协程依赖当前正在运行的事件循环（如共享池、绑定的 async client），在另一个新循环里 <code>asyncio.run()</code> 会抛 <code>RuntimeError</code> 或导致关不掉。建议在启动时保存单例事件循环并提供 <code>loop.call_soon_threadsafe</code> 关闭或维护独立的关闭循环。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">Downloader.stop() 调度 _safe_stop() 但不等待完成</span>
+    <span class="loc">ECL/game/Core/Downloader.py:797-815</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>stop() 调 pause 后仅 <code>run_coroutine_threadsafe</code> 排入 <code>_safe_stop()</code> 就返回；`aclose()` 与线程 join 是否完成无保证。调用方（GameService.close）随后可能立刻销毁上下文，产生竞态。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">GameService.close 不等待下载协程完成、不显式关闭 AsyncClient</span>
+    <span class="loc">ECL/services/game/base.py:320-324</span>
+  </div>
+  <p class="muted">已核验：关闭时逐个 `downloader.stop()`，但未 await 下载协程结束，也未直接 close downloader 内部的 `httpx.AsyncClient`。</p>
+  <div class="f-why"><b>为什么要改：</b>应用退出时进行中的下载可能残留未关的异步客户端与线程，拖慢退出或触发资源泄漏告警。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">AccountManager.close 对异步关闭不追踪任务、所有权不明确</span>
+    <span class="loc">ECL/services/accounts.py:1099-1111, 218-233</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>① `self.microsoft_manager` 既可能由外部传入（共享）也可能内部创建，无 `_owns` 标志，close 时可能误关外部共享管理器或漏关自建管理器；② 异步 `aclose()` 若依赖原事件循环，在 sync close 上下文执行可能失败。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">ConnectorService 无显式 close/关闭生命周期</span>
+    <span class="loc">ECL/services/connector.py:35-75</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>房间状态、EasyTier 节点、异步/同步 client 混存，离开房间时部分清空，但缺集中关闭路径，退出时可能遗留网络资源。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">Downloader.gg 事件收集/速度任务在 run() 关闭时异常被吞</span>
+    <span class="loc">ECL/game/Core/Downloader.py:739-757</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>取消事件收集、速度任务时无异常记录，排查关闭问题缺少线索。</div>
+</div>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">Downloader._preflight 依赖 async with 上下文管理并发 HEAD 任务</span>
+    <span class="loc">ECL/game/Core/Downloader.py:275-283</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b><code>asyncio.create_task</code> 并发 HEAD 请求，靠 await gather 与 async with 兜底；个别任务异常未先捕获时清理顺序依赖实现，建议显式 gather(return_exceptions=True)。</div>
+</div>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4">4. 资源管理与生命周期（共 6 项）</h2>
+<div class="card">
+  <div class="f-head"><span class="sev s-high">高</span><span class="f-title">下载资源池缺少统一归属与显式回收</span><span class="loc">GameService.base</span></div>
+  <div class="f-why"><b>为什么要改：</b>下载器、API client 混在 <code>_active_downloads</code> 与 <code>_GameState</code>，关闭不彻底，长期运行或反复开关游戏可能累积客户端。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-med">中</span><span class="f-title">网络连接池未集中共享/统一创建</span><span class="loc">多处</span></div>
+  <div class="f-why"><b>为什么要改：</b>账号、连接器、桥接各自 create client，建议在应用层建共享连接池，降低握手开销并便于统一超时/关闭。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-med">中</span><span class="f-title">文件/临时产物缺少统一清理策略</span><span class="loc">ECL_data/exports、.minecraft</span></div>
+  <div class="f-why"><b>为什么要改：</b>导出、缓存目录可能随会话增长，建议提供定期清理或体积上限策略。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">部分线程（版本监听）生命周期靠 join 超时兜底</span><span class="loc">base.py:318-319</span></div>
+  <div class="f-why"><b>为什么要改：</b><code>join(timeout)</code> 超时后不强制停线程，极端情况下残留。若能改用协程 + 取消信号更稳。</div>
+</div>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5">5. 异常处理（共 10 项）</h2>
+
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">MicrosoftAuth._load_accounts 裸 except: pass 吞掉账号加载故障</span>
+    <span class="loc">ECL/game/Core/MicrosoftAuth.py:626-627</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>损坏/不兼容的账号文件被静默忽略，用户的微软账号可能「凭空消失」且无任何提示，数据可恢复性差。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">YggdrasilAuth._load_accounts 同样静默吞异常</span>
+    <span class="loc">ECL/game/Core/YggdrasilAuth.py:260-261</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>JSON/网络/存储异常一律吞掉，正版曲奇账号加载失败无感知。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">LoaderInstaller.install_neoforged 将解析错误隐式降级为 Forge 安装</span>
+    <span class="loc">ECL/game/Core/LoaderInstaller.py:51-58</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>NeoForge 安装包畸形时静默回退到旧 Forge 路径，真实安装失败被伪装成回退行为，难以定位。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">FilesChecker.download_asset_index 吞索引下载错误</span>
+    <span class="loc">ECL/game/Core/FilesChecker.py:112-118</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>资源索引缺失/损坏时返回空下载列表，可能造成资源下载静默遗漏。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">NetLibs.get_forge_version 吞 404/网络错误</span>
+    <span class="loc">ECL/game/Core/NetLibs.py:383-388</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>Forge 安装器校验失败被忽略，下载列表不变却无告警。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">YggdrasilAuth 删除账号前吞掉 invalidate 失败</span>
+    <span class="loc">ECL/game/Core/YggdrasilAuth.py:372-380</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>服务端会话吊销失败仍删本地数据，可能残留服务端登录态。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">多处宽泛 except Exception 缺少诊断信息</span>
+    <span class="loc">MicrosoftAuth.py · connector.py · accounts.py · launch.py</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>网络/JSON/IO 错误被折叠成统一失败文案，排查成本高。建议在关键失败处补 <code>logger.exception</code> 或上下文标签。</div>
+</div>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6">6. 网络安全（共 4 项）</h2>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">远程图片下载 verify=False 关闭 TLS 校验</span>
+    <span class="loc">ECL/api/bridge.py:194-199</span>
+  </div>
+  <p class="muted">已核验：`_download_remote_image` 用 <code>httpx.AsyncClient(verify=False, ...)</code>，有超时与大小上限。</p>
+  <div class="f-why"><b>为什么要改：</b>关闭证书校验可被中间人注入图片。图片源若非完全可信，建议对可信域名启用 <code>ssl</code> 校验，或至少对不可信源做内容白名单/类型限制。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">客户端未强校验 open_url 的 URL scheme</span>
+    <span class="loc">frontend/src/utils/openExternal.ts:19</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>前端把原始 URL 直送后端 <code>open_url</code>，若后端校验不一致，可能打开 <code>file://</code> 或自定义协议。建议前端按 scheme 白名单校验后再提交。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">部分网络调用缺少显式重试包装</span>
+    <span class="loc">accounts.py · connector.py · files.py</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>临时性网络抖动以失败收场。对 <code>GET</code> 幂等接口可加有限重试 + 退避，提升体验。</div>
+</div>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7">7. 前端与插件安全（共 8 项）</h2>
+<p>前端通过插件 SDK 支持第三方插件渲染动态内容，这部分安全边界需重点把关。</p>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">evaluateVueScript 用 new Function 动态执行插件脚本</span>
+    <span class="loc">frontend/src/composables/usePluginBridge.ts:339</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>等价于任意代码执行。恶意或被入侵的插件可完全控制前端运行时。若无法避免，应限制在沙箱内并走严格审核的插件签名。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">插件脚本以 <code>&lt;script&gt;</code> 追加方式执行</span>
+    <span class="loc">usePluginBridge.ts:296-300</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>动态注入脚本元素执行插件 JS，绕过模板静态限制；建议改用受控执行的 Web Worker/受限上下文。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">插件 SDK innerHTML 注入未统一净化</span>
+    <span class="loc">plugin-sdk/dom.ts:84,196-204 · plugin-sdk/component.ts:48-49,150-158</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>插件 HTML 模板、列表项、CSS 直接写入 DOM。建议在 SDK 入口统一经 DOMPurify 白名单净化后再注入。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">插件初始化用 Promise.all().catch(()=>{}) 静默吞错</span>
+    <span class="loc">usePluginBridge.ts:660-679</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>任一路径失败都会丢弃整个初始化结果，用户看到残缺插件 UI 而后端日志被隐藏。</div>
+</div>
+
+<!-- ============ 8 ============ -->
+<h2 id="s8">8. IPC 与输入校验（共 6 项）</h2>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-high">高</span>
+    <span class="f-title">game_launch 的 game_args / jvm_args 透传且未强校验</span>
+    <span class="loc">ECL/api/game.py:386-420</span>
+  </div>
+  <p class="muted">`LaunchRequest` 校验后 `model_dump()` 再以 `**values` 展开传给 `launch_instance(...)`；quick_target 时合并前端提供的 game_args 与内部 quick 参数。</p>
+  <div class="f-why"><b>为什么要改：</b>启动参数最终会传给 Minecraft 进程，若可被用户/插件注入危险参数，构成进程注入面。建议：显式提取 <code>game_args/jvm_args</code> 白名单校验（禁止空字节、控制台字符、危险开关），并禁止把它们混入 <code>**values</code> 通配展开。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-med">中</span>
+    <span class="f-title">debug_process_spawn 未严格校验进程名/类型</span>
+    <span class="loc">ECL/api/bridge.py:627-649</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>虽受 debug 门控，仍应对 name/type/args 做白名单，防止误用为任意子进程启动口。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">事件 unlisten 错误被静默忽略</span>
+    <span class="loc">frontend/src/api/client.ts:150-156</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>清理失败被隐藏，难以发现监听泄漏。</div>
+</div>
+<div class="card">
+  <div class="f-head">
+    <span class="sev s-low">低</span>
+    <span class="f-title">settings_get 的 config.list() 未传 section，依赖后端默认</span>
+    <span class="loc">frontend/src/api/client.ts:275</span>
+  </div>
+  <div class="f-why"><b>为什么要改：</b>与 get/getMany 行为不一致，审计困难；建议显式传 section。</div>
+</div>
+
+<!-- ============ 9 ============ -->
+<h2 id="s9">9. 前端正确性（共 8 项）</h2>
+<div class="card">
+  <div class="f-head"><span class="sev s-med">中</span><span class="f-title">useAnimation 的 onScopeDispose 依赖 runtime 附加 import</span><span class="loc">composables/useAnimation.ts:2</span></div>
+  <div class="f-why"><b>为什么要改：</b>Vue 作用域清理若未在构建中注入，动画回调/GSAP tween 可能残留。确认该环境是否提供对应运行时导出。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">useTiltHover 复用节点不再重新绑定</span><span class="loc">useTiltHover.ts:390-438</span></div>
+  <div class="f-why"><b>为什么要改：</b>局部 <code>bound</code> 标志在元素移除/重挂后仍为真，新节点不响应 hover。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">statusId 递增不重置，长会话可能溢出</span><span class="loc">useInstanceManager.ts:215-224</span></div>
+  <div class="f-why"><b>为什么要改：</b>`++statusId` 无上限，极端后会转负，使过期消息守卫失效。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">Select.vue 以自定义属性存 click-outside 回调</span><span class="loc">components/ui/Select.vue:170-186</span></div>
+  <div class="f-why"><b>为什么要改：</b>非标准属性可能与第三方库冲突，清理可能失效。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">launchGame 无 IPC 超时守卫</span><span class="loc">useInstanceManager.ts:79-213</span></div>
+  <div class="f-why"><b>为什么要改：</b>依赖事件与返回结果，慢/卡死的调用会让 UI 状态悬置。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">markdown 工具依赖浏览器 DOM</span><span class="loc">utils/markdown.ts:18-23</span></div>
+  <div class="f-why"><b>为什么要改：</b>通用工具里直接建 <code>&lt;div&gt;</code> 读 textContent，跨环境行为不一。</div>
+</div>
+
+<!-- ============ 10 ============ -->
+<h2 id="s10">10. 代码质量与优化方向（共 6 项）</h2>
+
+<div class="card">
+  <div class="f-head"><span class="sev s-med">中</span><span class="f-title">API / 服务文件过大、职责混叠</span><span class="loc">api/accounts.py(475) · api/bridge.py(736) · services/connector.py(643) · services/accounts.py</span></div>
+  <div class="f-why"><b>为什么要改：</b>大文件难以审阅与单测。建议按子域拆分 handler/服务，桥接层只留框架粘合。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">多处重复的「校验-解析-回包」样板</span><span class="loc">ECL/api/*</span></div>
+  <div class="f-why"><b>为什么要改：</b>可抽取统一的结果包装与错误响应 helper，减少重复并统一错误码。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">launch_progress 分支嵌套深、难维护</span><span class="loc">useInstanceManager.ts:103-166</span></div>
+  <div class="f-why"><b>为什么要改：</b>可改为阶段名→处理器的映射表（职责分发）降低复杂度。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">图标未知回退 help-circle 掩盖配置错误</span><span class="loc">components/ui/iconify.ts:150</span></div>
+  <div class="f-why"><b>为什么要改：</b>建议回退时仅 warn 一次，便于发现无效图标名。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">测试对异步改动覆盖存在空白</span><span class="loc">tests/</span></div>
+  <div class="f-why"><b>为什么要改：</b>账号/连接器/下载器的异步路径建议补充 asyncio_mode=auto 的协程测试（正常 + 异常分支）。</div>
+</div>
+<div class="card">
+  <div class="f-head"><span class="sev s-low">低</span><span class="f-title">fast path 英文/中文注释混用</span><span class="loc">多处</span></div>
+  <div class="f-why"><b>为什么要改：</b>保持统一注释语言与风格（符合项目规范），便于协作维护。</div>
+</div>
+
+<!-- ============ 11 ============ -->
+<h2 id="s11">11. 潜在突发问题预案</h2>
+<p>结合代码现状，整理一份「可能突发故障 → 影响 → 建议预案」清单，供上线前风险收敛。</p>
+<table>
+  <tr><th>突发场景</th><th>诱因代码</th><th>影响</th><th>预案</th></tr>
+  <tr><td>下载信号量卡死</td><td>Downloader.py rel/change fire-and-forget</td><td>下载队列永久挂起</td><td>改为 await + 跟踪 task；加超时看门狗</td></tr>
+  <tr><td>退出卡死/清理不及时</td><td>GameService.close 不等待下载；asyncio.run 另起循环</td><td>应用退出慢/资源残留</td><td>统一关闭链、join/await 超时兜底</td></tr>
+  <tr><td>账号「凭空消失」</td><td>MicrosoftAuth/YggdrasilAuth 裸 except: pass</td><td>用户账号丢失且无提示</td><td>记录日志 + 前端告警 + 备份迁移</td></tr>
+  <tr><td>加载器安装失败伪装回退</td><td>LoaderInstaller.install_neoforged</td><td>安装失败难排查</td><td>区分回退与真实错误并告警</td></tr>
+  <tr><td>插件恶意代码</td><td>usePluginBridge new Function / &lt;script&gt;</td><td>前端被完全接管</td><td>沙箱执行 + 签名白名单 + 审计</td></tr>
+  <tr><td>game_args 注入</td><td>api/game.py 透传参数</td><td>游戏进程被注入参数</td><td>参数白名单强校验</td></tr>
+  <tr><td>图片中间人</td><td>bridge.py verify=False</td><td>展示被篡改图片</td><td>可信域签名校验 / 受限回退</td></tr>
+  <tr><td>长会话状态异常</td><td>statusId 溢出 / 事件不清理</td><td>UI 状态错乱</td><td>重置 id、统一事件清理</td></tr>
+</table>
+
+<!-- ============ 12 ============ -->
+<h2 id="s12">12. 优化行动清单（建议分批 PR）</h2>
+<h3>第一批（高优先级，先做）</h3>
+<ul class="checklist">
+  <li>重构 <code>DynamicSemaphore.release/change</code> 为 async；调用点改同步 await；杜绝 fire-and-forget 信号量。</li>
+  <li>GameService.close / Downloader.stop 等待下载协程结束并关闭 AsyncClient。</li>
+  <li>账号加载与 LoaderInstaller 去掉裸 <code>except: pass</code>，改为记录 + 告警。</li>
+  <li>game_args / jvm_args 显式白名单校验，移除 <code>**values</code> 通配推进会参数。</li>
+  <li>插件脚本执行改受控沙箱；插件 DOM/CSS 注入统一 DOMPurify 净化。</li>
+</ul>
+<h3>第二批（中优先级）</h3>
+<ul class="checklist">
+  <li>统一连接池与资源归属；ConnectorService、AccountManager 补明确关闭/所有权。</li>
+  <li>远程图片下载对可信源恢复 TLS 校验；open_url 前端加 scheme 白名单。</li>
+  <li>补齐异步组件测试（正常 + 异常）。</li>
+</ul>
+<h3>第三批（低优先级，持续优化）</h3>
+<ul class="checklist">
+  <li>拆分超大 api/服务文件；抽取统一响应包装；launch_progress 改映射分发。</li>
+  <li>修复 useTiltHover 复用、statusId 溢出、事件 unlisten 静默等前端小问题。</li>
+</ul>
+
+<footer>
+  本报告基于对当前工作区 <code>e:\Projects\EuoraCraft-Launcher\EuoraCraft-Launcher</code> 的静态代码审查生成。
+  行号为审查时快照，代码变更后可能偏移，请以实际文件为准。报告不替代回归测试与运行期压测。
+</footer>
+</div>
+</body>
+</html>
