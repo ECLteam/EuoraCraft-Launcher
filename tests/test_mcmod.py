@@ -182,3 +182,26 @@ def test_search_online_resources_mod_facet_excludes_modpack(tmp_path: Path) -> N
 
     facets = json_module.loads(captured["params"]["facets"])
     assert ["project_type:mod"] in facets
+
+
+def test_search_online_resources_omits_empty_facets(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        response = type("R", (), {})()
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"hits": [], "total_hits": 0}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("", "", "", resource_type="mod")
+
+    import json as json_module
+
+    facets = json_module.loads(captured["params"]["facets"])
+    assert facets == [["project_type:mod"]]

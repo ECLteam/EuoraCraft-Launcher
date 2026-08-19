@@ -517,16 +517,18 @@ class ResourceCoordinator:
             if project_type is None:
                 raise GameServiceError("未知在线资源类型", "INVALID_RESOURCE_TYPE")
             if resource_type == "mod":
-                facets = json.dumps([
-                    ["project_type:mod"],
-                    [f"versions:{game_version}"],
-                    [f"categories:{loader.casefold()}"],
-                ])
+                facets = [["project_type:mod"]]
+                if game_version:
+                    facets.append([f"versions:{game_version}"])
+                if loader:
+                    facets.append([f"categories:{loader.casefold()}"])
             else:
-                facets = json.dumps([[f"project_type:{project_type}"], [f"versions:{game_version}"]])
+                facets = [[f"project_type:{project_type}"]]
+                if game_version:
+                    facets.append([f"versions:{game_version}"])
             params: dict[str, Any] = {
                 "query": query,
-                "facets": facets,
+                "facets": json.dumps(facets),
                 "limit": min(limit, 50),
                 "offset": offset,
             }
@@ -550,15 +552,17 @@ class ResourceCoordinator:
             key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key
             if not key:
                 raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
+            params: dict[str, Any] = {
+                "gameId": 432,
+                "searchFilter": query,
+                "pageSize": min(limit, 50),
+                "index": offset,
+            }
+            if game_version:
+                params["gameVersion"] = game_version
             response = httpx.get(
                 "https://api.curseforge.com/v1/mods/search",
-                params={
-                    "gameId": 432,
-                    "searchFilter": query,
-                    "gameVersion": game_version,
-                    "pageSize": min(limit, 50),
-                    "index": offset,
-                },
+                params=params,
                 headers={"x-api-key": key},
                 timeout=10,
             )
