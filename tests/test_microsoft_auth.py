@@ -143,6 +143,20 @@ async def test_get_token_without_device_flow_raises_on_refresh_failure() -> None
         raise AssertionError("刷新失败且禁止设备码流程时应抛出 MicrosoftAuthError")
 
 
+class _FailingCloseClient:
+    async def aclose(self):
+        raise RuntimeError("Event loop is closed")
+
+
+async def test_manager_aclose_ignores_closed_loop_error(tmp_path) -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+
+    manager = MicrosoftAuthManager(client_id="test-client", cache_path=tmp_path)
+    manager._shared_client = _FailingCloseClient()
+
+    await manager.aclose()  # 事件循环已关闭时不应抛出异常
+
+
 async def test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> None:
     from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
 
