@@ -668,5 +668,35 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
+        if not self.game.curseforge_available():
+            self.emit_popup_to_frontend(
+                {
+                    "id": "curseforge-key-required",
+                    "title": "CurseForge API Key 未配置",
+                    "content": (
+                        "在线模组搜索的 **CurseForge** 来源需要配置 API Key，未配置时该来源会被禁用。\n\n"
+                        "请在启动器根目录的 `.env` 文件中添加 `CURSEFORGE_API_KEY=你的密钥`，"
+                        "或设置同名系统环境变量后重启启动器。"
+                    ),
+                    "level": "warning",
+                    "dismissible": True,
+                    "cacheable": True,
+                }
+            )
+        if not self.accounts.microsoft_login_config().get("available"):
+            self.emit_popup_to_frontend(
+                {
+                    "id": "microsoft-client-id-required",
+                    "title": "Microsoft client_id 未配置",
+                    "content": (
+                        "正版（Microsoft）登录需要配置 **client_id**，未配置时无法使用正版登录。\n\n"
+                        "请在启动器根目录的 `.env` 文件中添加 `MICROSOFT_CLIENT_ID=你的应用ID`，"
+                        "或设置同名系统环境变量后重启启动器。"
+                    ),
+                    "level": "warning",
+                    "dismissible": True,
+                    "cacheable": True,
+                }
+            )
         self.logger.info("前端加载完成，已显示主窗口")
         return {"success": True}

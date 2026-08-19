@@ -72,7 +72,7 @@ class ModHandlers(_FrontendState):
     @_ipc_handler("MOD_SEARCH_FAILED")
     async def search_mods(self, body: dict[str, Any]) -> ApiResponse:
         """
-        搜索在线模组（Modrinth），映射为前端在线模组卡片结构。
+        搜索在线模组（Modrinth/CurseForge），映射为前端在线模组卡片结构。
 
         :param body: 在线搜索条件
         :return: 在线模组搜索结果
@@ -86,6 +86,8 @@ class ModHandlers(_FrontendState):
             None,
             body.get("limit", 20),
             body.get("resource_type", "mod"),
+            body.get("offset", 0),
+            body.get("sort", "relevance"),
         )
         source = str(result.get("source") or "modrinth")
         resource_type = str(result.get("resource_type") or "mod")
@@ -94,10 +96,20 @@ class ModHandlers(_FrontendState):
             {
                 "items": items,
                 "sources": {source: {"available": True, "error": "", "total": len(items)}},
-                "total": len(items),
+                "total": result.get("total") or len(items),
                 "query": body.get("query", ""),
             }
         )
+
+    @_ipc_handler("MOD_SOURCE_CONFIG_FAILED")
+    async def mod_source_config(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        返回在线资源来源的可用性配置，供前端禁用未配置的来源选项。
+
+        :param body: 空 IPC 请求数据
+        :return: 各来源的可用状态
+        """
+        return success({"curseforge": {"available": self.game.curseforge_available()}})
 
     @_ipc_handler("MOD_INFO_FAILED")
     async def get_mod_info(self, body: dict[str, Any]) -> ApiResponse:

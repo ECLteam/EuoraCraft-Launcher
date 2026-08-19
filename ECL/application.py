@@ -180,7 +180,13 @@ def create_application(
 
         phase_started = perf_counter()
         logger.info("正在初始化游戏服务")
-        game = GameService(accounts, data_path=state.data_path, event_bus=events)
+        game = GameService(
+            accounts,
+            data_path=state.data_path,
+            resource_path=state.resource_path,
+            curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY"),
+            event_bus=events,
+        )
         created.append(game)
         logger.info("游戏服务初始化完成，duration=%.2fs", perf_counter() - phase_started)
 

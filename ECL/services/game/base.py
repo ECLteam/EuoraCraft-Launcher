@@ -34,6 +34,7 @@ from ECL.utils import (
 )
 
 from .instance_profiles import InstanceProfileStore
+from .mcmod import McmodTranslator
 from .operations import GameOperationManager
 from .version_stats import VersionStatsStore
 
@@ -100,6 +101,8 @@ class _GameState:
         command_builder: CommandBuilder = build_minecraft_cmd,
         java_scanner_factory: JavaScannerFactory = JavaScanner,
         data_path: Path | str | None = None,
+        resource_path: Path | str | None = None,
+        curseforge_api_key: str | None = None,
         authlib_injector: AuthlibInjector | None = None,
         enable_version_watcher: bool | None = None,
         version_watch_interval: float = 0.75,
@@ -117,6 +120,8 @@ class _GameState:
         :param command_builder: 启动命令构建函数
         :param java_scanner_factory: Java 运行时扫描器工厂
         :param data_path: 用于缓存和 Authlib Injector 的数据目录
+        :param resource_path: 打包资源或源码资源所在目录，用于定位 MC百科译名数据
+        :param curseforge_api_key: CurseForge API Key，用于在线资源搜索
         :param authlib_injector: 可选的外置登录组件管理器
         :param enable_version_watcher: 是否启用本地版本目录监听
         :param version_watch_interval: 目录监听轮询间隔，单位为秒
@@ -137,6 +142,10 @@ class _GameState:
             if data_path
             else (Path(gettempdir()) / "EuoraCraft-Launcher").resolve(strict=False)
         )
+        self._mcmod = McmodTranslator(
+            Path(resource_path) / "resources" / "mcmod_data.json" if resource_path else None
+        )
+        self._curseforge_api_key = curseforge_api_key
         self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
         # Java 与 Core 上下文按需创建并复用，避免每次目录查询重新建立网络客户端。

@@ -50,6 +50,9 @@ class FakeAccounts:
         }
         return {"accounts": [account], "current": account}
 
+    def microsoft_login_config(self):
+        return {"available": True}
+
     def texture_urls(self, account_id):
         assert account_id == "microsoft-account"
         return {"skinUrl": "https://textures.example.com/skin.png", "skinModel": "slim"}
@@ -171,6 +174,9 @@ class FakeGame:
         self.requested_paths = None
         self.scan_force = False
         self.crash_call = None
+
+    def curseforge_available(self):
+        return True
 
     def scan_versions(self, paths, *, force=False):
         self.requested_paths = paths

@@ -33,6 +33,11 @@ class Environment:
             self.env_data["MICROSOFT_CLIENT_ID"] = system_client_id
         elif not self.env_data.get("MICROSOFT_CLIENT_ID") and self.env_data.get("ECL_MICROSOFT_CLIENT_ID"):
             self.env_data["MICROSOFT_CLIENT_ID"] = self.env_data["ECL_MICROSOFT_CLIENT_ID"]
+        system_cf_key = os.environ.get("CURSEFORGE_API_KEY") or os.environ.get("ECL_CURSEFORGE_API_KEY")
+        if system_cf_key:
+            self.env_data["CURSEFORGE_API_KEY"] = system_cf_key
+        elif not self.env_data.get("CURSEFORGE_API_KEY") and self.env_data.get("ECL_CURSEFORGE_API_KEY"):
+            self.env_data["CURSEFORGE_API_KEY"] = self.env_data["ECL_CURSEFORGE_API_KEY"]
         return dict(self.env_data)
 
     def get_value(self, *keys: str, default: str | None = None) -> str | None:

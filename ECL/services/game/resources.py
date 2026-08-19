@@ -66,6 +66,7 @@ class _ModrinthSearchHit(BaseModel):
         default_factory=list, validation_alias="game_versions", serialization_alias="gameVersions"
     )
     alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    wiki: dict[str, Any] | None = Field(default=None)
 
 
 class _ModrinthProjectInfo(BaseModel):
@@ -87,6 +88,29 @@ class _ModrinthProjectInfo(BaseModel):
         default_factory=list, validation_alias="game_versions", serialization_alias="gameVersions"
     )
     project_url: str = Field(default="", serialization_alias="projectUrl")
+
+
+def _normalize_curseforge_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    """
+    将 CurseForge 搜索命中转换为 Modrinth 风格字段，供 ``_ModrinthSearchHit`` 复用。
+
+    :param hit: CurseForge ``/v1/mods/search`` 返回的单个命中
+    :return: 归一化后的命中字典
+    """
+    authors = hit.get("authors") or []
+    logo = hit.get("logo") or {}
+    return {
+        "project_id": hit.get("id"),
+        "slug": hit.get("slug"),
+        "title": hit.get("name"),
+        "description": hit.get("summary"),
+        "author": authors[0].get("name") if authors else "",
+        "icon_url": logo.get("url"),
+        "downloads": hit.get("downloadCount"),
+        "date_modified": hit.get("dateModified"),
+        "categories": [],
+        "versions": [],
+    }
 
 
 def _sha512(path: Path) -> str:
@@ -459,6 +483,14 @@ class ResourceCoordinator:
         atomic_write_text(output, content)
         return {"path": str(output)}
 
+    def curseforge_available(self) -> bool:
+        """
+        返回 CurseForge 在线搜索是否已配置 API Key。
+
+        :return: 已配置时返回 True，未配置时返回 False
+        """
+        return bool(os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key)
+
     def search_online_resources(
         self,
         query: str,
@@ -468,63 +500,104 @@ class ResourceCoordinator:
         curseforge_key: str | None = None,
         limit: int = 20,
         resource_type: str = "mod",
+        offset: int = 0,
+        sort: str = "relevance",
     ) -> dict[str, Any]:
         """
         搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
 
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定 Modrinth project_type 过滤
+        :param offset: 分页偏移量，用于翻页加载更多结果
+        :param sort: 排序方式（relevance/downloads/updated），映射为 Modrinth index 参数
         """
+        if resource_type in {"mod", "datapack"} and re.search(r"[\u4e00-\u9fff]", query):
+            query = self._mcmod.to_english_query(query) or query
         if source == "modrinth":
             project_type = _RESOURCE_PROJECT_TYPE.get(resource_type)
             if project_type is None:
                 raise GameServiceError("未知在线资源类型", "INVALID_RESOURCE_TYPE")
             if resource_type == "mod":
-                facets = json.dumps([[f"versions:{game_version}"], [f"categories:{loader.casefold()}"]])
+                facets = json.dumps([
+                    ["project_type:mod"],
+                    [f"versions:{game_version}"],
+                    [f"categories:{loader.casefold()}"],
+                ])
             else:
                 facets = json.dumps([[f"project_type:{project_type}"], [f"versions:{game_version}"]])
+            params: dict[str, Any] = {
+                "query": query,
+                "facets": facets,
+                "limit": min(limit, 50),
+                "offset": offset,
+            }
+            if sort:
+                params["index"] = sort
             response = httpx.get(
                 "https://api.modrinth.com/v2/search",
-                params={"query": query, "facets": facets, "limit": min(limit, 50)},
+                params=params,
                 headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
                 timeout=10,
             )
             response.raise_for_status()
-            return {"source": source, "items": response.json().get("hits", []), "resource_type": resource_type}
+            data = response.json()
+            return {
+                "source": source,
+                "items": data.get("hits", []),
+                "total": data.get("total_hits", 0),
+                "resource_type": resource_type,
+            }
         if source == "curseforge":
-            key = os.getenv("CURSEFORGE_API_KEY") or curseforge_key
+            key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key
             if not key:
                 raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
             response = httpx.get(
                 "https://api.curseforge.com/v1/mods/search",
-                params={"gameId": 432, "searchFilter": query, "gameVersion": game_version, "pageSize": min(limit, 50)},
+                params={
+                    "gameId": 432,
+                    "searchFilter": query,
+                    "gameVersion": game_version,
+                    "pageSize": min(limit, 50),
+                    "index": offset,
+                },
                 headers={"x-api-key": key},
                 timeout=10,
             )
             response.raise_for_status()
-            return {"source": source, "items": response.json().get("data", [])}
+            data = response.json()
+            return {
+                "source": source,
+                "items": data.get("data", []),
+                "total": (data.get("pagination") or {}).get("totalCount", 0),
+            }
         raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
 
-    @staticmethod
     def map_search_hits(
+        self,
         source: str,
         hits: list[dict[str, Any]],
         resource_type: str = "mod",
     ) -> list[dict[str, Any]]:
         """
-        将 Modrinth 搜索命中结果映射为前端在线模组卡片所需的结构。
+        将在线搜索命中结果映射为前端在线模组卡片所需的结构。
 
-        :param source: 数据来源（modrinth）
-        :param hits: Modrinth ``/search`` 返回的命中列表
+        命中项存在 MC百科译名时，填充 ``wiki`` 字段并将 ``displayTitle`` 替换为中文名。
+
+        :param source: 数据来源（modrinth/curseforge）
+        :param hits: 在线搜索返回的命中列表
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定项目页 URL 路径
         :return: 前端 ``ModSearchItem`` 兼容的字典列表
         """
         project_type = _RESOURCE_PROJECT_TYPE.get(resource_type, "mod")
         result: list[dict[str, Any]] = []
-        for hit in hits:
-            if not isinstance(hit, dict):
+        for raw in hits:
+            if not isinstance(raw, dict):
                 continue
+            hit = _normalize_curseforge_hit(raw) if source == "curseforge" else raw
             slug = str(hit.get("slug") or "")
-            project_url = f"https://modrinth.com/{project_type}/{slug}"
+            if source == "curseforge":
+                project_url = f"https://www.curseforge.com/minecraft/mc-mods/{slug}"
+            else:
+                project_url = f"https://modrinth.com/{project_type}/{slug}"
             dto = _ModrinthSearchHit.model_validate(hit)
             dto.slug = slug
             dto.source = source
@@ -536,6 +609,17 @@ class ResourceCoordinator:
                 "slug": slug,
                 "projectUrl": project_url,
             }]
+            if resource_type in {"mod", "datapack"}:
+                lookup = (
+                    self._mcmod.lookup_by_curseforge_slug
+                    if source == "curseforge"
+                    else self._mcmod.lookup_by_modrinth_slug
+                )
+                wiki_mod = lookup(slug)
+                if wiki_mod is not None:
+                    dto.wiki = self._mcmod.to_wiki_info(wiki_mod)
+                    if dto.wiki["title"]:
+                        dto.display_title = dto.wiki["title"]
             result.append(dto.model_dump(by_alias=True))
         return result
 
