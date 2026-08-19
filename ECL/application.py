@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import ssl
 from collections.abc import Callable
 from contextlib import suppress
@@ -150,6 +151,12 @@ def create_application(
         phase_started = perf_counter()
         logger.debug("正在创建共享 HTTP 客户端")
         disable_ssl_verify = bool((state.config.get("launcher") or {}).get("disable_ssl_verify", False))
+        ignore_proxy = bool((state.config.get("launcher") or {}).get("ignore_proxy", True))
+        if ignore_proxy:
+            # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
+            # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
+            os.environ["NO_PROXY"] = "*"
+            os.environ["no_proxy"] = "*"
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
         http = httpx.Client(

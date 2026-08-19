@@ -12,7 +12,7 @@ from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
 
 default_config: dict[str, Any] = {
-    "launcher": {"debug": False, "disable_ssl_verify": False},
+    "launcher": {"debug": False, "disable_ssl_verify": False, "ignore_proxy": True},
     "game": {
         "minecraft_paths": [],
         "java_auto": True,
