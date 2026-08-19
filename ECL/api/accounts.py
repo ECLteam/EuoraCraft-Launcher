@@ -407,7 +407,7 @@ class AccountHandlers(_FrontendState):
         self.logger.info("衣柜纹理已导出: item=%s, kind=%s", item["id"], item["kind"])
         return {"success": True, "data": {"path": str(target)}}
 
-    @_ipc_handler("SKIN_UPDATE_FAILED")
+    @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)
     async def wardrobe_apply_skin(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         将衣柜中的标准 64×64 皮肤上传到指定 Microsoft 账户。
@@ -433,7 +433,7 @@ class AccountHandlers(_FrontendState):
         self.logger.info("衣柜皮肤已上传: item=%s, model=%s", item["id"], item["model"])
         return {"success": True, "data": account}
 
-    @_ipc_handler("SKIN_UPDATE_FAILED")
+    @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)
     async def microsoft_reset_skin(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         将正版账户皮肤重置为默认。
@@ -446,7 +446,7 @@ class AccountHandlers(_FrontendState):
         account = await self.accounts.reset_skin(request.account_id)
         return {"success": True, "data": account}
 
-    @_ipc_handler("SKIN_UPDATE_FAILED")
+    @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)
     async def microsoft_set_cape(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         为正版账户选择已解锁的披风。
@@ -459,7 +459,7 @@ class AccountHandlers(_FrontendState):
         account = await self.accounts.set_cape(request.account_id, request.cape_id)
         return {"success": True, "data": account}
 
-    @_ipc_handler("SKIN_UPDATE_FAILED")
+    @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)
     async def microsoft_reset_cape(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         取消正版账户当前佩戴的披风。

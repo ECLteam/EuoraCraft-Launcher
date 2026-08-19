@@ -4,6 +4,7 @@ import sys
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 pytauri_module = ModuleType("pytauri")
 pytauri_module.__path__ = []  # type: ignore[attr-defined]
@@ -37,6 +38,7 @@ ConfigManager = import_module("ECL.utils").ConfigManager
 EventBus = import_module("ECL.events").EventBus
 AccountError = import_module("ECL.services.accounts").AccountError
 command_handlers = import_module("ECL.api.registry").command_handlers
+_guarded_call = import_module("ECL.api.bridge")._guarded_call
 
 
 class FakeAccounts:
@@ -681,6 +683,31 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
             "detail": "secret detail",
         }
     ]
+
+
+def test_guarded_call_timeout_cancels_slow_operation(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    async def slow() -> dict[str, Any]:
+        await asyncio.sleep(5)
+        return {"success": True}
+
+    result = asyncio.run(_guarded_call(api, "test_slow", "INTERNAL_ERROR", slow(), timeout=0.05))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "OPERATION_TIMEOUT"
+    assert result["message"] == "操作超时，请检查网络后重试"
+
+
+def test_guarded_call_without_timeout_runs_to_completion(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    async def fast() -> dict[str, Any]:
+        return {"success": True}
+
+    result = asyncio.run(_guarded_call(api, "test_fast", "INTERNAL_ERROR", fast()))
+
+    assert result == {"success": True}
 
 
 def test_critical_persistence_error_returns_modal_metadata_and_emits_event(tmp_path, monkeypatch) -> None:

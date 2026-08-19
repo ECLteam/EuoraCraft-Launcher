@@ -53,3 +53,46 @@ async def test_device_flow_connect_error_message_is_readable() -> None:
         assert "无法连接到微软认证服务器" in str(error)
     else:
         raise AssertionError("device flow 应抛出 MicrosoftAuthError")
+
+
+class _RefreshFailingClient:
+    async def post(self, *args, **kwargs):
+        raise httpx.ConnectError("")
+
+
+async def test_get_token_without_device_flow_raises_on_refresh_failure() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
+
+    auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+
+    async def unexpected_device_flow():
+        raise AssertionError("已有账户不应进入设备码流程")
+
+    auth._device_flow = unexpected_device_flow  # type: ignore[method-assign]
+
+    try:
+        await auth.get_token(allow_device_flow=False)
+    except MicrosoftAuthError as error:
+        assert "令牌刷新失败" in str(error)
+    else:
+        raise AssertionError("刷新失败且禁止设备码流程时应抛出 MicrosoftAuthError")
+
+
+async def test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
+
+    auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+
+    async def fake_device_flow():
+        raise MicrosoftAuthError("设备码流程已进入")
+
+    auth._device_flow = fake_device_flow  # type: ignore[method-assign]
+
+    try:
+        await auth.get_token(allow_device_flow=True)
+    except MicrosoftAuthError as error:
+        assert "设备码流程已进入" in str(error)
+    else:
+        raise AssertionError("允许设备码流程时应进入设备码流程")

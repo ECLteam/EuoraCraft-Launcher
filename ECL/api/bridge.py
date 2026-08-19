@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import functools
 import json
@@ -267,7 +268,13 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
     )
 
 
-async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitable: Any) -> Any:
+def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
+    """为操作超时构造失败响应，提示用户检查网络。"""
+    state.logger.warning("%s 操作超时，已取消", operation)
+    return failure("操作超时，请检查网络后重试", "OPERATION_TIMEOUT")
+
+
+async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitable: Any, timeout: float | None = None) -> Any:
     """
     统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
 
@@ -275,10 +282,15 @@ async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitabl
     :param operation: 当前操作的名称，用于日志与错误编号
     :param fallback_code: 已知错误映射失败时的兜底错误码
     :param awaitable: 已构建的协程对象
+    :param timeout: 可选的总操作超时秒数，超时后取消任务
     :return: ``ApiResponse``
     """
     try:
+        if timeout is not None:
+            return await asyncio.wait_for(awaitable, timeout)
         return await awaitable
+    except TimeoutError:
+        return _make_timeout_response(state, operation)
     except _IPC_ERRORS as exc:
         if isinstance(exc, httpx.HTTPError):
             state.logger.warning("%s 远程请求失败: %s", operation, exc)
@@ -289,29 +301,29 @@ async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitabl
         return _make_unexpected_error_response(state, operation, exc)
 
 
-def guard_ipc_handler(state: Any, operation: str, handler: Any) -> Any:
+def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float | None = None) -> Any:
     """
     为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
 
     :param state: 拥有日志与应用事件总线的前端 API 门面
     :param operation: 注册到 PyTauri 的稳定命令名
     :param handler: 原始异步命令处理器
+    :param timeout: 可选的总操作超时秒数，超时后取消任务
     :return: 捕获所有异常并返回 ``ApiResponse`` 的异步处理器
     """
-
     @functools.wraps(handler)
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
-        return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs))
+        return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
 
     return guarded
 
 
-def _ipc_handler(fallback_code: str = "INTERNAL_ERROR"):
+def _ipc_handler(fallback_code: str = "INTERNAL_ERROR", timeout: float | None = None):
     """装饰器，为 IPC 命令处理器补齐统一异常边界与错误呈现元数据。"""
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs):
-            return await _guarded_call(self, func.__name__, fallback_code, func(self, *args, **kwargs))
+            return await _guarded_call(self, func.__name__, fallback_code, func(self, *args, **kwargs), timeout)
 
         return wrapper
 
