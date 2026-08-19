@@ -524,6 +524,14 @@ class PortRequest(RequestModel):
     port: int = Field(ge=1, le=65535)
 
 
+class PortsRequest(RequestModel):
+    """
+    候选端口列表请求体。
+    """
+
+    ports: list[int] = Field(min_length=1, max_length=64)
+
+
 class RoomCodeRequest(RequestModel):
     """
     房间码请求体。
@@ -592,6 +600,7 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "connector_host_port": PortRequest,
     "connector_join": RoomCodeRequest,
     "connector_kick": KickRequest,
+    "connector_search_mc_port": PortsRequest,
 }
 
 def request_schemas() -> dict[str, dict]:
@@ -651,6 +660,7 @@ __all__ = [
     "LoaderCatalogRequest",
     "MicrosoftCapeRequest",
     "PortRequest",
+    "PortsRequest",
     "RoomCodeRequest",
     "SettingsQuery",
     "SettingsUpdate",

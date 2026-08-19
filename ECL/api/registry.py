@@ -154,6 +154,7 @@ COMMAND_NAMES = (
     "remove_mod",
     "open_mods_folder",
     "search_mods",
+    "mod_source_config",
     "get_mod_info",
     "get_mod_versions",
     "download_mod",
@@ -181,7 +182,8 @@ COMMAND_NAMES = (
     "connector_match_instances",
     "connector_easytier_status",
     "connector_easytier_download",
-    "connector_scan_ports",
+    "connector_detect_ports",
+    "connector_search_mc_port",
     "connector_nat_type",)
 
 

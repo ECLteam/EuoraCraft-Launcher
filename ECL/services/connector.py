@@ -477,19 +477,28 @@ class ConnectorService:
         self._players = [p for p in self._players if p.get("machineId") != machine_id]
         return {"status": "kicked"}
 
-    def scan_ports(self) -> dict[str, Any]:
+    def detect_ports(self) -> dict[str, Any]:
         """
-        扫描本机 Java 进程开放的 Minecraft 服务端口。
+        探测本机 Java 进程开放的候选端口。
 
         Minecraft 的“对局域网开放”会分配随机端口，不能依赖 25565 等固定端口。
-        此处先从 Java 进程的监听套接字缩小范围，再发送无副作用的状态请求确认
-        对端确实是 Minecraft 服务端，避免把其他应用的开放端口误用于联机。
+        此处先从 Java 进程的监听套接字缩小范围，供后续搜索 MC 端口使用。
 
+        :returns: 包含 ports 的字典（候选端口列表）
+        """
+        return {"ports": self._minecraft_listener_ports()}
+
+    def search_mc_port(self, ports: list[int]) -> dict[str, Any]:
+        """
+        在候选端口中搜索确认 Minecraft 服务端口。
+
+        对每个候选端口发送无副作用的状态请求确认对端确实是 Minecraft 服务端，
+        避免把其他应用的开放端口误用于联机。
+
+        :param ports: 候选端口列表
         :returns: 包含 port 的字典（未找到时 port 为 None）
         """
-        candidates = self._minecraft_listener_ports()
-        logger.debug("开始扫描本地 Minecraft 端口: candidates=%s", candidates)
-        for port in candidates:
+        for port in ports:
             if self._is_minecraft_server(port):
                 logger.info("发现本地 Minecraft 服务端口: %s", port)
                 return {"port": port}

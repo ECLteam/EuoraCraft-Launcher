@@ -6,7 +6,7 @@ from typing import Any
 from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, failure, success
-from ECL.api.models import InstanceTarget, KickRequest, PortRequest, RoomCodeRequest
+from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsRequest, RoomCodeRequest
 from ECL.services.connector import ConnectorError, ConnectorNotAvailableError
 
 from .bridge import _FrontendState, _ipc_handler
@@ -101,9 +101,15 @@ class ConnectorHandlers(_FrontendState):
         return success(self.connector.get_easytier_status())
 
     @_ipc_handler("CONNECTOR_SCAN_PORTS_FAILED")
-    async def connector_scan_ports(self, body: dict[str, Any]) -> ApiResponse:
-        """扫描本机可用且可用于联机的端口。"""
-        return success(self.connector.scan_ports())
+    async def connector_detect_ports(self, body: dict[str, Any]) -> ApiResponse:
+        """探测本机 Java 进程开放的候选端口。"""
+        return success(self.connector.detect_ports())
+
+    @_ipc_handler("CONNECTOR_SCAN_PORTS_FAILED")
+    async def connector_search_mc_port(self, body: dict[str, Any]) -> ApiResponse:
+        """在候选端口中搜索确认 Minecraft 服务端口。"""
+        ports = PortsRequest.model_validate(body).ports
+        return success(self.connector.search_mc_port(ports))
 
     @_ipc_handler("CONNECTOR_NAT_TYPE_FAILED")
     async def connector_nat_type(self, body: dict[str, Any]) -> ApiResponse:
