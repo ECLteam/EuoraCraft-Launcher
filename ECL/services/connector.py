@@ -209,7 +209,8 @@ class ConnectorService:
         if self._mode == "guest" and self._client is not None:
             loop = getattr(self._client, "loop", None)
             writer = getattr(self._client, "writer", None)
-            if loop is not None and writer is not None:
+            # 连接断开后客户端事件循环可能已关闭，向已关闭的循环调度协程会遗弃协程并触发警告
+            if loop is not None and writer is not None and not loop.is_closed() and loop.is_running():
                 try:
                     status, body = asyncio.run_coroutine_threadsafe(
                         self._client.send_request("c:player_profiles_list", b""),
@@ -452,7 +453,9 @@ class ConnectorService:
         if client is None:
             return
         loop = getattr(client, "loop", None)
-        if loop is None:
+        # 循环已关闭或未运行时无需调度停止协程，直接清理引用即可
+        if loop is None or loop.is_closed() or not loop.is_running():
+            self._client = None
             return
         async def _stop() -> None:
             task = getattr(client, "heartbeat_task", None)

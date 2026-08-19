@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -67,3 +68,32 @@ def test_minecraft_status_probe_accepts_valid_status_response(monkeypatch) -> No
     monkeypatch.setattr("ECL.services.connector.socket.create_connection", lambda *_args, **_kwargs: Connection())
 
     assert ConnectorService._is_minecraft_server(38123) is True
+
+
+def test_current_players_skips_closed_client_loop() -> None:
+    service = ConnectorService()
+    loop = asyncio.new_event_loop()
+    loop.close()
+    service._mode = "guest"
+    service._client = SimpleNamespace(
+        loop=loop,
+        writer=object(),
+        player_name="Alice",
+        vendor="test",
+        machine_id="m1",
+    )
+
+    players = service._current_players()
+    assert players == [
+        {"name": "Alice", "vendor": "test", "iconBase64": None, "kind": "guest", "machineId": "m1"}
+    ]
+
+
+def test_stop_async_thread_client_handles_closed_loop() -> None:
+    service = ConnectorService()
+    loop = asyncio.new_event_loop()
+    loop.close()
+    service._client = SimpleNamespace(loop=loop, writer=object())
+
+    service._stop_async_thread_client()
+    assert service._client is None
