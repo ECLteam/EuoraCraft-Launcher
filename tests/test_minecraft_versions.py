@@ -152,3 +152,26 @@ def test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypat
 
     assert service.loader_versions("forge", "1.20.1") == ["55.0.9", "55.0.8"]
     assert service.loader_versions("quilt", "1.20.1") == []
+
+
+def test_forge_version_parser_accepts_bytes_html(monkeypatch) -> None:
+    from ECL.game.Core.NetLibs import BaseApiClient, _ForgeVersionParser
+
+    html = (
+        '<table class="download-list"><tr>'
+        '<td class="download-version">47.4.22</td>'
+        '<td class="download-version"><span>47.4.21</span></td>'
+        "</tr></table>"
+    )
+    parser = _ForgeVersionParser()
+    parser.feed(html)
+
+    assert parser.versions == ["47.4.22"]
+
+    client = BaseApiClient.__new__(BaseApiClient)
+    client.config = SimpleNamespace()
+    client._download_with_retry = lambda url: html.encode("utf-8")
+
+    versions = client.get_forge_versions("1.20.1")
+
+    assert versions == [{"LoaderVersion": "47.4.22", "GameVersion": "1.20.1"}]
