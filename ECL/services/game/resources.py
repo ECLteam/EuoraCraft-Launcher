@@ -40,6 +40,23 @@ _RESOURCE_PROJECT_TYPE = {
     "datapack": "datapack",
 }
 
+# CurseForge 分类 classId 映射，与 HMCL/PCL-CE 一致，用于只搜索对应资源类型
+_CURSEFORGE_CLASS_ID = {
+    "mod": 6,
+    "resourcepack": 12,
+    "shaderpack": 6552,
+    "datapack": 6945,
+}
+
+# CurseForge 排序 sortField 映射；默认采用 HMCL 的人气排序（2=Popularity）
+_CURSEFORGE_SORT_FIELD = {
+    "relevance": 2,
+    "downloads": 6,
+    "follows": 2,
+    "newest": 11,
+    "updated": 3,
+}
+
 
 class _ModrinthSearchHit(BaseModel):
     """Modrinth 搜索命中 → 前端 ``ModSearchItem`` 的字段映射模型。"""
@@ -508,7 +525,7 @@ class ResourceCoordinator:
 
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定 Modrinth project_type 过滤
         :param offset: 分页偏移量，用于翻页加载更多结果
-        :param sort: 排序方式（relevance/downloads/updated），映射为 Modrinth index 参数
+        :param sort: 排序方式（relevance/downloads/follows/newest/updated），Modrinth 映射为 index 参数，CurseForge 映射为 sortField（默认人气排序）
         """
         if resource_type in {"mod", "datapack"} and re.search(r"[\u4e00-\u9fff]", query):
             query = self._mcmod.to_english_query(query) or query
@@ -552,20 +569,30 @@ class ResourceCoordinator:
             key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key
             if not key:
                 raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
+            # 参数构造与 HMCL 保持一致：始终带全 classId/gameVersion/searchFilter/sortField，
+            # 默认按人气排序，classId 保证只返回对应资源类型（mod 不混入整合包）。
             params: dict[str, Any] = {
                 "gameId": 432,
+                "classId": _CURSEFORGE_CLASS_ID.get(resource_type, 6),
+                "gameVersion": game_version,
                 "searchFilter": query,
-                "pageSize": min(limit, 50),
+                "sortField": _CURSEFORGE_SORT_FIELD.get(sort, 2),
+                "sortOrder": "desc",
                 "index": offset,
+                "pageSize": min(limit, 50),
             }
-            if game_version:
-                params["gameVersion"] = game_version
             response = httpx.get(
                 "https://api.curseforge.com/v1/mods/search",
                 params=params,
                 headers={"x-api-key": key},
                 timeout=10,
             )
+            if response.status_code == 403:
+                # CurseForge 对无效或过期的 Key 返回 403，此时给出可操作的指引而非原始错误。
+                raise GameServiceError(
+                    "CurseForge API Key 无效或已过期，请到 console.curseforge.com 重新生成后更新 .env 配置",
+                    "CURSEFORGE_KEY_INVALID",
+                )
             response.raise_for_status()
             data = response.json()
             return {

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from ECL.services.game import GameService
 from ECL.services.game.mcmod import McmodTranslator
 
@@ -205,3 +207,80 @@ def test_search_online_resources_omits_empty_facets(tmp_path: Path) -> None:
 
     facets = json_module.loads(captured["params"]["facets"])
     assert facets == [["project_type:mod"]]
+
+
+def test_search_curseforge_403_raises_key_invalid(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from ECL.services.game.base import GameServiceError
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        response = type("R", (), {})()
+        response.status_code = 403
+        response.raise_for_status = lambda: None
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        with pytest.raises(GameServiceError) as exc_info:
+            service.search_online_resources("iris", "", "", source="curseforge", resource_type="mod")
+
+    assert exc_info.value.error_code == "CURSEFORGE_KEY_INVALID"
+    assert captured["headers"]["x-api-key"] == "test-key"
+
+
+def test_search_curseforge_uses_hmcl_style_params(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"data": [], "pagination": {"totalCount": 0}}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("", "", "", source="curseforge", resource_type="mod")
+
+    params = captured["params"]
+    assert params["gameId"] == 432
+    assert params["classId"] == 6
+    assert params["gameVersion"] == ""
+    assert params["searchFilter"] == ""
+    assert params["sortField"] == 2
+    assert params["sortOrder"] == "desc"
+    assert params["pageSize"] == 20
+    assert params["index"] == 0
+
+
+def test_search_curseforge_maps_sort_and_resource_type(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["params"] = params
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"data": [], "pagination": {"totalCount": 0}}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("sodium", "1.20.1", "fabric", source="curseforge", resource_type="shaderpack", sort="downloads")
+
+    params = captured["params"]
+    assert params["classId"] == 6552
+    assert params["gameVersion"] == "1.20.1"
+    assert params["searchFilter"] == "sodium"
+    assert params["sortField"] == 6
