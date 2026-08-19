@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -116,3 +117,38 @@ def test_version_service_rejects_invalid_path_payload() -> None:
         service.scan_versions({"path": "invalid"})
 
     assert error.value.error_code == "INVALID_GAME_PATH"
+
+
+def test_loader_versions_returns_plain_version_strings(tmp_path, monkeypatch) -> None:
+    service = GameService(FakeAccounts(), data_path=tmp_path)
+    fake_games = SimpleNamespace(
+        get_fabric_versions=lambda version: {
+            "All": [
+                {"LoaderVersion": "0.16.14", "GameVersion": version, "Stable": True},
+                {"LoaderVersion": "0.16.13", "GameVersion": version, "Stable": False},
+            ],
+            "Stable": [{"LoaderVersion": "0.16.14", "GameVersion": version, "Stable": True}],
+            "NotStable": [{"LoaderVersion": "0.16.13", "GameVersion": version, "Stable": False}],
+        }
+    )
+    monkeypatch.setattr(service, "_query_context", lambda source="official": SimpleNamespace(games=fake_games))
+
+    result = service.loader_versions("fabric", "26.1.2")
+
+    assert result == ["0.16.14", "0.16.13"]
+    assert all(isinstance(item, str) for item in result)
+
+
+def test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypatch) -> None:
+    service = GameService(FakeAccounts(), data_path=tmp_path)
+    fake_games = SimpleNamespace(
+        get_forge_versions=lambda version: [
+            {"LoaderVersion": "55.0.9", "GameVersion": version},
+            {"LoaderVersion": "55.0.8", "GameVersion": version},
+        ],
+        get_quilt_versions=lambda version: None,
+    )
+    monkeypatch.setattr(service, "_query_context", lambda source="official": SimpleNamespace(games=fake_games))
+
+    assert service.loader_versions("forge", "1.20.1") == ["55.0.9", "55.0.8"]
+    assert service.loader_versions("quilt", "1.20.1") == []

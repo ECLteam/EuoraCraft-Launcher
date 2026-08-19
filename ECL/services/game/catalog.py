@@ -56,7 +56,7 @@ class CatalogCoordinator(_GameState):
             raise GameServiceError("未知的版本分类", "INVALID_VERSION_FILTER")
         return catalog[key]
 
-    def loader_versions(self, loader_type: Any, game_version: Any, source: Any = "official") -> list[Any]:
+    def loader_versions(self, loader_type: Any, game_version: Any, source: Any = "official") -> list[str]:
         """
         查询指定游戏版本兼容的加载器版本。
 
@@ -77,9 +77,12 @@ class CatalogCoordinator(_GameState):
             result = games.get_quilt_versions(version)
         else:
             raise GameServiceError(f"暂不支持加载器: {loader_type}", "UNSUPPORTED_LOADER")
-        if result is None:
-            return []
         if isinstance(result, dict):
             values = result.get("All", result.get("all", []))
-            return values if isinstance(values, list) else []
-        return result if isinstance(result, list) else []
+        else:
+            values = result if isinstance(result, list) else []
+        return [
+            str(item.get("LoaderVersion") or "").strip()
+            for item in values
+            if isinstance(item, dict) and item.get("LoaderVersion")
+        ]
