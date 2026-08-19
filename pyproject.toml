@@ -10,6 +10,7 @@ authors = [
     {name = "ECLTeam", email = "ECL@eclteam.top"},
 ]
 dependencies = [
+    "aiofiles>=23.0.0",
     "pytauri-wheel>=0.8.0",
     "pytauri>=0.8.0",
     "anyio>=4.0",
@@ -19,7 +20,7 @@ dependencies = [
     "mcstatus>=12.0.0",
     "psutil>=7.2.0",
     "Send2Trash>=1.8.3",
-    "easytier-pyo3>=0.1.1"
+    "easytier-pyo3>=0.1.2"
 ]
 requires-python = ">=3.11"
 readme = "README.md"
