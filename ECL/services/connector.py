@@ -7,7 +7,11 @@ import socket
 import struct
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from ipaddress import ip_address
+from threading import RLock
+from time import monotonic, sleep
 from typing import Any
+from uuid import uuid4
 
 import easytier_pyo3
 import httpx
@@ -22,11 +26,14 @@ _NODE_UA = "ECL"
 _DEFAULT_NODES = ["tcp://public.easytier.cn:11010"]
 _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
 _NODE_FETCH_TIMEOUT_SECONDS = 10.0
+_NODE_CACHE_TTL_SECONDS = 30 * 60.0
 _MAX_AGGREGATE_WORKERS = 8
 _PLAYER_LIST_FETCH_TIMEOUT_SECONDS = 5
 _MAX_STATUS_PACKET_BYTES = 1_048_576
 _MAX_TCP_PORT = 65535
 _STATUS_PROBE_TIMEOUT_SECONDS = 0.5
+_NAT_PROBE_TIMEOUT_SECONDS = 25.0
+_NAT_PROBE_INTERVAL_SECONDS = 0.25
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
@@ -45,6 +52,7 @@ class ConnectorService:
         log_callback: Callable[[str, str], None] | None = None,
         player_name: str | None = None,
         http_client: httpx.Client | None = None,
+        node_cache_ttl: float = _NODE_CACHE_TTL_SECONDS,
     ) -> None:
         self._launcher_info = launcher_info
         self._player_name = player_name or "Player"
@@ -68,6 +76,9 @@ class ConnectorService:
         self._client: Any = None  # AsyncFloroldingClient
         self._players: list[dict[str, Any]] = []
         self._nodes: list[str] = list(_DEFAULT_NODES)
+        self._node_cache_ttl = max(0.0, node_cache_ttl)
+        self._node_cache_refreshed_at: float | None = None
+        self._node_cache_lock = RLock()
         self._error: str | None = None
         self._started: bool = False
 
@@ -98,52 +109,73 @@ class ConnectorService:
         except Exception:
             return "unknown"
 
-    def fetch_nodes(self) -> list[str]:
+    def _remember_nodes(self, nodes: list[str]) -> list[str]:
+        """更新进程内节点缓存并返回副本。"""
+        self._nodes = list(nodes)
+        self._node_cache_refreshed_at = monotonic()
+        return list(self._nodes)
+
+    def fetch_nodes(self, *, force: bool = False) -> list[str]:
         """
         获取可用的 EasyTier 中继节点 URI 列表。
 
         从 Qomicex 节点服务拉取节点，聚合的 ``https://`` 节点会二次请求解析出实际 URI。
         失败时回退到内置默认节点，保证建房/加入不会因取节点失败而中断。
 
+        :param force: 是否忽略有效缓存并强制刷新
         :returns: 去重保序的节点 URI 列表
         """
-        if self._http is None:
-            return list(_DEFAULT_NODES)
-        try:
-            response = self._http.get(
-                _NODE_LIST_URL,
-                headers={"User-Agent": _NODE_UA},
-                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            items = response.json()
-            if not isinstance(items, list):
-                logger.warning("节点服务返回了非数组结构，使用默认节点")
-                return list(_DEFAULT_NODES)
+        with self._node_cache_lock:
+            now = monotonic()
+            if (
+                not force
+                and self._node_cache_refreshed_at is not None
+                and now - self._node_cache_refreshed_at < self._node_cache_ttl
+            ):
+                return list(self._nodes)
 
-            nodes: list[str] = []
-            aggregate_urls: list[str] = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                url = str(item.get("url") or "").strip()
-                if not url:
-                    continue
-                if self._is_easytier_peer(url):
-                    nodes.append(url)
-                elif url.startswith("https://"):
-                    aggregate_urls.append(url)
+            cached_nodes = list(self._nodes) if self._node_cache_refreshed_at is not None else []
+            if self._http is None:
+                return self._remember_nodes(cached_nodes or list(_DEFAULT_NODES))
+            try:
+                response = self._http.get(
+                    _NODE_LIST_URL,
+                    headers={"User-Agent": _NODE_UA},
+                    timeout=_NODE_FETCH_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                items = response.json()
+                if not isinstance(items, list):
+                    raise ValueError("节点服务返回了非数组结构")
 
-            if aggregate_urls:
-                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
-                    for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
-                        nodes.extend(resolved)
-            resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
-            logger.debug("联机节点列表: %s", resolved)
-            return resolved
-        except Exception as exc:
-            logger.warning("拉取联机节点列表失败，使用默认节点: %s", exc)
-            return list(_DEFAULT_NODES)
+                nodes: list[str] = []
+                aggregate_urls: list[str] = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    url = str(item.get("url") or "").strip()
+                    if not url:
+                        continue
+                    if self._is_easytier_peer(url):
+                        nodes.append(url)
+                    elif url.startswith("https://"):
+                        aggregate_urls.append(url)
+
+                if aggregate_urls:
+                    with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
+                        for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
+                            nodes.extend(resolved)
+                resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
+                logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
+                return self._remember_nodes(resolved)
+            except Exception as exc:
+                fallback = cached_nodes or list(_DEFAULT_NODES)
+                logger.warning(
+                    "拉取联机节点列表失败，使用%s: %s",
+                    "内存中的旧缓存" if cached_nodes else "默认节点",
+                    exc,
+                )
+                return self._remember_nodes(fallback)
 
     def _resolve_aggregate_node(self, url: str) -> list[str]:
         """
@@ -266,15 +298,145 @@ class ConnectorService:
 
     def get_nat_type(self) -> dict[str, Any]:
         """
-        检测 NAT 类型（简易实现）。
+        使用 EasyTier 内置 STUN 探测检测 NAT 类型。
 
-        :returns: 包含 type, publicIp, publicPort 的字典
+        活跃房间会直接复用当前 EasyTier 节点的 STUN 快照；空闲时启动一个无 TUN、
+        无中继连接的临时节点，取得结果后立即停止。类型归类沿用 EasyTier/PCL-CE
+        的判定：开放与各类锥形 NAT 归为 ``cone``，对称映射归为 ``symmetric``。
+
+        :returns: NAT 大类、详细类型、公网地址、端口范围与 IPv6 支持状态
         """
-        # 简易实现：仅标记为 unknown，实际 NAT 检测需要 STUN 协议
+        node = self._easy_tier_node
+        owns_node = node is None
+        if owns_node:
+            identity = uuid4().hex
+            node = easytier_pyo3.Node(
+                {
+                    "instance_name": "ecl-nat-probe",
+                    "network_identity": {
+                        "network_name": f"ecl-nat-probe-{identity}",
+                        "network_secret": uuid4().hex,
+                    },
+                    "listeners": [],
+                    "peer": [],
+                    "dhcp": False,
+                    "flags": {
+                        "no_tun": True,
+                        "bind_device": False,
+                        "enable_ipv6": True,
+                    },
+                }
+            )
+
+        started_at = monotonic()
+        latest_result: dict[str, Any] | None = None
+        try:
+            if owns_node:
+                node.start()
+            while monotonic() - started_at < _NAT_PROBE_TIMEOUT_SECONDS:
+                node_info = node.node_info()
+                result = self._nat_result_from_stun_info(node_info.get("stun_info"))
+                if result is not None:
+                    latest_result = result
+                    if result["detailType"] == "unknown":
+                        sleep(_NAT_PROBE_INTERVAL_SECONDS)
+                        continue
+                    logger.info(
+                        "NAT 检测完成: detail=%s, public=%s:%s-%s, ipv6=%s",
+                        result["detailType"],
+                        result["publicIp"],
+                        result["publicPort"],
+                        result["publicPortEnd"],
+                        result["supportsIpv6"],
+                    )
+                    return result
+                sleep(_NAT_PROBE_INTERVAL_SECONDS)
+            logger.warning("NAT 检测超时，未取得完整的 EasyTier STUN 类型")
+        except Exception:
+            logger.warning("NAT 检测失败", exc_info=True)
+        finally:
+            if owns_node:
+                try:
+                    node.stop()
+                except Exception:
+                    logger.debug("停止 NAT 临时探测节点失败", exc_info=True)
+
+        if latest_result is not None:
+            return latest_result
         return {
             "type": "unknown",
+            "detailType": "unknown",
             "publicIp": None,
             "publicPort": None,
+            "publicPortEnd": None,
+            "supportsIpv6": False,
+        }
+
+    @staticmethod
+    def _nat_result_from_stun_info(stun_info: Any) -> dict[str, Any] | None:
+        """把 EasyTier STUN 快照转换为稳定的前端结构。"""
+        if not isinstance(stun_info, dict) or not stun_info:
+            return None
+
+        raw_type = str(stun_info.get("udp_nat_type") or "Unknown").strip()
+        normalized_type = raw_type.casefold().replace("_", "").replace("-", "")
+        detail_types = {
+            "openinternet": "openInternet",
+            "nopat": "noPat",
+            "fullcone": "fullCone",
+            "restricted": "restricted",
+            "portrestricted": "portRestricted",
+            "symmetriceasy": "symmetricEasy",
+            "symmetriceasyinc": "symmetricEasy",
+            "symmetriceasydec": "symmetricEasy",
+            "symmetric": "symmetric",
+            "symmetricfirewall": "symmetricFirewall",
+            "symudpfirewall": "symmetricFirewall",
+            "udpblocked": "udpBlocked",
+        }
+        detail_type = detail_types.get(normalized_type, "unknown")
+        if detail_type in {"openInternet", "noPat", "fullCone", "restricted", "portRestricted"}:
+            nat_type = "cone"
+        elif detail_type in {"symmetricEasy", "symmetric", "symmetricFirewall"}:
+            nat_type = "symmetric"
+        elif detail_type == "udpBlocked":
+            nat_type = "blocked"
+        else:
+            nat_type = "unknown"
+
+        public_ips = stun_info.get("public_ip")
+        if not isinstance(public_ips, list):
+            public_ips = []
+        valid_ips: list[str] = []
+        for value in public_ips:
+            try:
+                valid_ips.append(str(ip_address(str(value).strip())))
+            except ValueError:
+                continue
+        ipv4 = next((value for value in valid_ips if ":" not in value), None)
+        public_ip = ipv4 or (valid_ips[0] if valid_ips else None)
+
+        def valid_port(value: Any) -> int | None:
+            try:
+                port = int(value)
+            except (TypeError, ValueError):
+                return None
+            return port if 0 < port <= _MAX_TCP_PORT else None
+
+        public_port = valid_port(stun_info.get("min_port"))
+        public_port_end = valid_port(stun_info.get("max_port"))
+        if public_port is None:
+            public_port = public_port_end
+        if public_port_end is None:
+            public_port_end = public_port
+
+        return {
+            "type": nat_type,
+            "detailType": detail_type,
+            "publicIp": public_ip,
+            "publicPort": public_port,
+            "publicPortEnd": public_port_end,
+            "supportsIpv6": any(":" in value for value in valid_ips),
         }
 
     def host_port(self, port: int) -> dict[str, Any]:

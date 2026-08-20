@@ -138,4 +138,5 @@ class ConnectorHandlers(_FrontendState):
     @_ipc_handler("CONNECTOR_NAT_TYPE_FAILED")
     async def connector_nat_type(self, body: dict[str, Any]) -> ApiResponse:
         """查询本机网络的 NAT 类型。"""
-        return success(self.connector.get_nat_type())
+        result = await _run_in_daemon(self.connector.get_nat_type)
+        return success(result)
