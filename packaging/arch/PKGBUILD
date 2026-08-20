@@ -1,5 +1,5 @@
 # 维护者: EuoraCraft Team
-# Arch Linux 原生打包，基于发布在 GitHub Release 上的 Linux 预编译产物构建。
+# Arch Linux 原生打包，基于发布在 GitHub Release 上的 Arch 预编译产物构建。
 # 版本由 CI 通过 `_tag` 与 `pkgver` 注入，单独改动此处即可本地验证打包。
 
 pkgname=euoracraft-launcher
@@ -22,7 +22,7 @@ depends=(
 source=(
     "euoracraft-launcher.desktop"
     "euoracraft-launcher.png"
-    "euoracraft-launcher.zip::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Linux-X64.zip"
+    "euoracraft-launcher.zip::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Arch-X64.zip"
 )
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 

@@ -196,11 +196,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Arch Linux 打包：GitHub 无原生 Arch hosted runner，使用 archlinux 容器让整个 job
-  # 在 Arch 用户空间内直接 makepkg，入场产物直接复用后端构建的 Linux 二进制。
+  # Arch Linux 打包：GitHub 无原生 Arch hosted runner，因此在 Arch 容器中
+  # 原生构建 PyInstaller 产物，避免将 Ubuntu/WebKitGTK 的编译期路径带入 Arch 包。
   build-arch-pkg:
     name: Build Arch Linux package
-    needs: build-backend
+    # 等待后端矩阵仅为确保 tag Release 已创建；Arch job 不下载或复用其 Linux 二进制。
+    needs: [build-frontend, build-backend]
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
@@ -209,54 +210,147 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend/dist
 
       - name: Resolve version from tag
         id: ver
         shell: bash
         run: |
           TAG=""
+          VTYPE=""
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             TAG="${{ github.ref_name }}"
           fi
           VER="0.0.0"
           if [ -n "$TAG" ]; then
             VER="${TAG#v}"
+            if [[ "$VER" == *-beta* ]]; then
+              VTYPE="beta"
+            elif [[ "$VER" == *-alpha* ]]; then
+              VTYPE="alpha"
+            else
+              VTYPE="release"
+            fi
             CLEAN="${VER%-*}"
             [ "$CLEAN" != "$VER" ] && VER="$CLEAN"
           fi
           echo "tagname=$TAG" >> "$GITHUB_OUTPUT"
           echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
+          echo "version_type=$VTYPE" >> "$GITHUB_OUTPUT"
 
       - name: Install build toolchain
-        # Arch 容器内默认 root，先同步并安装打包工具链与 PKGBUILD 声明的运行时依赖，
-        # 否则非 root 的 builder 调用 makepkg 校验依赖时会直接失败。
-        run: pacman -Syu --noconfirm curl github-cli unzip zip gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator
+        run: |
+          pacman -Syu --noconfirm \
+            python python-pip python-setuptools python-wheel \
+            gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
+            xorg-server-xvfb xorg-xauth dbus \
+            patchelf zip curl github-cli
 
-      - name: Download Linux binary artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: EuoraCraft-Launcher-Linux-X64.zip
-          path: linux-dist
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m venv .venv-arch
+          .venv-arch/bin/python -m pip install --upgrade pip
+          .venv-arch/bin/python -m pip install -e ".[dev]"
+
+      - name: Inject build secrets
+        shell: bash
+        env:
+          CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
+          CF_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+        run: |
+          .venv-arch/bin/python - <<'PY'
+          import os, re
+          path = "ECL/common/build_env.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          cid = os.environ.get("CLIENT_ID", "")
+          cfk = os.environ.get("CF_API_KEY", "")
+          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
+          text = re.sub(r'CURSEFORGE_API_KEY\s*=\s*"[^"]*"', f'CURSEFORGE_API_KEY = "{cfk}"', text)
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PY
+
+      - name: Inject version info into version.py
+        shell: bash
+        env:
+          VTYPE: ${{ steps.ver.outputs.version_type }}
+          VVER: ${{ steps.ver.outputs.pkgver }}
+        run: |
+          .venv-arch/bin/python - <<'PY'
+          import os, re
+          vtype = os.environ.get("VTYPE", "")
+          vver = os.environ.get("VVER", "")
+          if vtype and vver != "0.0.0":
+              path = "ECL/common/version.py"
+              with open(path, encoding="utf-8") as f:
+                  text = f.read()
+              text = re.sub(
+                  r'''__version__\s*=\s*['"][^'"]*['"]''',
+                  f'__version__ = "{vver}"',
+                  text,
+              )
+              text = re.sub(
+                  r'''__version_type__\s*=\s*['"][^'"]*['"]''',
+                  f'__version_type__ = "{vtype}"',
+                  text,
+              )
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
+              print(f"Injected version={vver}, version_type={vtype}")
+          else:
+              print("No tag detected, keeping existing version.py")
+          PY
+
+      - name: Build Arch binary with PyInstaller
+        env:
+          ECL_UPX: "0"
+        run: .venv-arch/bin/pyinstaller EuoraCraft-Launcher.spec
+
+      - name: Smoke test Arch binary
+        shell: bash
+        run: |
+          set +e
+          timeout 30s dbus-run-session -- \
+            xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+            './dist/EuoraCraft Launcher' > arch-smoke.log 2>&1
+          status=$?
+          set -e
+
+          cat arch-smoke.log
+          if grep -Fq '/usr/lib/x86_64-linux-gnu' arch-smoke.log; then
+            echo 'Arch 产物仍在访问 Debian/Ubuntu 的多架构路径' >&2
+            exit 1
+          fi
+          if grep -Eq 'Unable to spawn.*WebKit|SIGTRAP|Traceback \(most recent call last\)' arch-smoke.log; then
+            echo 'Arch 产物启动时出现致命错误' >&2
+            exit 1
+          fi
+          # timeout=124 表示 GUI 在冒烟测试结束时仍正常运行；提前退出也应失败。
+          if [ "$status" -ne 124 ]; then
+            echo "Arch 产物异常退出，status=$status" >&2
+            exit 1
+          fi
 
       - name: Prepare source zip for PKGBUILD
         working-directory: packaging/arch
         shell: bash
         run: |
-          SRC=$(find "$GITHUB_WORKSPACE/linux-dist" -type f -name 'EuoraCraft Launcher' | head -n1)
-          if [ -z "$SRC" ]; then
-            Z=$(find "$GITHUB_WORKSPACE/linux-dist" -type f -name '*.zip' | head -n1)
-            if [ -n "$Z" ]; then
-              D=$(mktemp -d)
-              unzip -o "$Z" -d "$D"
-              SRC=$(find "$D" -type f -name 'EuoraCraft Launcher' | head -n1)
-            fi
-          fi
-          [ -n "$SRC" ] || { echo "未找到 Linux 二进制"; exit 1; }
+          SRC="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher"
+          [ -x "$SRC" ] || { echo "未找到 Arch 原生二进制"; exit 1; }
           mkdir -p srcdist
           cp "$SRC" srcdist/'EuoraCraft Launcher'
-          (cd srcdist && zip -rq "$GITHUB_WORKSPACE/packaging/arch/EuoraCraft-Launcher-Linux-X64.zip" 'EuoraCraft Launcher')
-          # CI 直接用本 workflow 构建出的二进制，把 PKGBUILD 的远程 source 换成本地 zip
-          sed -i 's#^.*EuoraCraft-Launcher-Linux-X64.zip"$#    "EuoraCraft-Launcher-Linux-X64.zip"#' PKGBUILD
+          (cd srcdist && zip -rq "$GITHUB_WORKSPACE/packaging/arch/EuoraCraft-Launcher-Arch-X64.zip" 'EuoraCraft Launcher')
+          # CI 用本 job 的 Arch 原生产物，把 PKGBUILD 的远程 source 换成本地 zip。
+          sed -i 's#^.*EuoraCraft-Launcher-Arch-X64.zip"$#    "EuoraCraft-Launcher-Arch-X64.zip"#' PKGBUILD
 
       - name: Build package
         working-directory: packaging/arch
@@ -272,7 +366,9 @@ jobs:
       - name: Upload package as artifact
         uses: actions/upload-artifact@v7
         with:
-          path: packaging/arch/euoracraft-launcher-*.pkg.tar.zst
+          path: |
+            packaging/arch/euoracraft-launcher-*.pkg.tar.zst
+            packaging/arch/EuoraCraft-Launcher-Arch-X64.zip
           archive: false
 
       - name: Upload package to Release
@@ -284,5 +380,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PKG_FILE=$(ls euoracraft-launcher-*.pkg.tar.zst | head -n1)
-          echo "uploading $PKG_FILE to $TAG"
-          gh release upload "$TAG" "$PKG_FILE" --clobber
+          echo "uploading $PKG_FILE and Arch binary to $TAG"
+          gh release upload "$TAG" "$PKG_FILE" EuoraCraft-Launcher-Arch-X64.zip --clobber
