@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ECL.common import __version__, __version_type__
+from ECL.common import CURSEFORGE_API_KEY, __version__, __version_type__
 from ECL.common.runtime import RuntimeInfo
 from ECL.events import EventBus
 from ECL.game import InstancesManager
@@ -202,7 +202,7 @@ def create_application(
             accounts,
             data_path=state.data_path,
             resource_path=state.resource_path,
-            curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY"),
+            curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY") or CURSEFORGE_API_KEY or None,
             event_bus=events,
             instances_manager=shared_instances,
         )
