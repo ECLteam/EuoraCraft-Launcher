@@ -474,6 +474,40 @@ def test_select_save_file_uses_system_dialog_and_normalizes_zip_suffix(tmp_path,
     ]
 
 
+def test_select_save_file_accepts_mod_default_directory_and_filename(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+    mods_directory = tmp_path / ".minecraft" / "mods"
+
+    class FakeSaveDialog:
+        def blocking_save_file(self, **options):
+            calls.append(options)
+            return mods_directory / "fabric-api.jar"
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakeSaveDialog()))
+
+    result = asyncio.run(
+        api.select_save_file(
+            {
+                "purpose": "mod-file",
+                "default_directory": str(mods_directory),
+                "default_name": "fabric-api.jar",
+            }
+        )
+    )
+
+    assert result == {"success": True, "data": {"path": str(mods_directory / "fabric-api.jar")}}
+    assert calls == [
+        {
+            "add_filter": ("JAR 文件", ["jar", "zip"]),
+            "set_file_name": "fabric-api.jar",
+            "set_title": "另存模组文件",
+            "set_directory": str(mods_directory),
+        }
+    ]
+
+
 def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 

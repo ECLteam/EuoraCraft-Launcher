@@ -514,6 +514,22 @@ class FileSelectionRequest(RequestModel):
 
 class FileSaveRequest(RequestModel):
     purpose: FileSavePurpose
+    default_directory: str | None = Field(default=None, max_length=4096)
+    default_name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("default_directory")
+    @classmethod
+    def validate_default_directory(cls, value: str | None) -> str | None:
+        if value is not None and "\0" in value:
+            raise ValueError("默认目录不能包含空字符")
+        return value
+
+    @field_validator("default_name")
+    @classmethod
+    def validate_default_name(cls, value: str | None) -> str | None:
+        if value is not None and ("\0" in value or Path(value).name != value or value in {".", ".."}):
+            raise ValueError("默认文件名格式无效")
+        return value
 
 
 

@@ -455,7 +455,14 @@ class FileHandlers(_FrontendState):
         file_path = await to_thread.run_sync(_pick)
         return self._normalize_file_path(str(file_path)) if file_path else ""
 
-    async def _pick_save_path(self, title: str, default_name: str, extensions: list[str], filter_label: str = "ZIP 压缩包") -> str:
+    async def _pick_save_path(
+        self,
+        title: str,
+        default_name: str,
+        extensions: list[str],
+        filter_label: str = "ZIP 压缩包",
+        default_directory: str | None = None,
+    ) -> str:
         """
         在 Tauri 主窗口上打开系统文件保存对话框。
 
@@ -468,13 +475,14 @@ class FileHandlers(_FrontendState):
         if self._webview is None:
             return ""
 
-        file_path = await to_thread.run_sync(
-            lambda: DialogExt.file(self._webview).blocking_save_file(
-                add_filter=(filter_label, extensions),
-                set_file_name=default_name,
-                set_title=title,
-            )
-        )
+        options: dict[str, Any] = {
+            "add_filter": (filter_label, extensions),
+            "set_file_name": default_name,
+            "set_title": title,
+        }
+        if default_directory:
+            options["set_directory"] = default_directory
+        file_path = await to_thread.run_sync(lambda: DialogExt.file(self._webview).blocking_save_file(**options))
         return self._normalize_file_path(str(file_path)) if file_path else ""
 
     @_ipc_handler("SELECT_DIRECTORY_ERROR")
@@ -571,8 +579,16 @@ class FileHandlers(_FrontendState):
         title, default_name, extensions = _SAVE_FILE_OPTIONS.get(
             request.purpose, ("导出资源清单", "resources.json", ["zip"])
         )
+        if request.default_name:
+            default_name = request.default_name
         filter_label = "JAR 文件" if request.purpose == FileSavePurpose.MOD_FILE else "ZIP 压缩包"
-        selected = await self._pick_save_path(title, default_name, extensions, filter_label)
+        selected = await self._pick_save_path(
+            title,
+            default_name,
+            extensions,
+            filter_label,
+            request.default_directory,
+        )
         if (
             selected
             and request.purpose
