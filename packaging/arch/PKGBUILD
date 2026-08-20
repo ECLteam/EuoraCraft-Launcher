@@ -1,0 +1,35 @@
+# 维护者: EuoraCraft Team
+# Arch Linux 原生打包，基于发布在 GitHub Release 上的 Linux 预编译产物构建。
+# 版本由 CI 通过 `_tag` 与 `pkgver` 注入，单独改动此处即可本地验证打包。
+
+pkgname=euoracraft-launcher
+# CI 会用实际 tag 覆写 _tag 与 pkgver；此处仅供本地手动测试用。
+_tag=v1.0.0
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="基于 Tauri 的 Minecraft 启动器（EuoraCraft Launcher）"
+arch=('x86_64')
+url="https://github.com/ECLteam/EuoraCraft-Launcher"
+license=('MIT')
+depends=(
+    'gtk3'
+    'webkit2gtk'
+    'librsvg'
+    'libayatana-appindicator'
+)
+
+# 本地随包分发图标与桌面入口；预编译产物从对应 tag 的 Release 下载。
+source=(
+    "euoracraft-launcher.desktop"
+    "euoracraft-launcher.png"
+    "euoracraft-launcher.zip::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Linux-X64.zip"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+    cd "$srcdir"
+
+    install -Dm755 "EuoraCraft Launcher" "$pkgdir/usr/bin/euoracraft-launcher"
+    install -Dm644 "euoracraft-launcher.desktop" "$pkgdir/usr/share/applications/euoracraft-launcher.desktop"
+    install -Dm644 "euoracraft-launcher.png" "$pkgdir/usr/share/pixmaps/euoracraft-launcher.png"
+}

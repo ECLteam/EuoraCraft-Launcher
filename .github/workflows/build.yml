@@ -181,6 +181,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
+          name: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
           path: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
           archive: false
 
@@ -191,3 +192,92 @@ jobs:
           files: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Arch Linux 打包：GitHub 无原生 Arch hosted runner，使用 archlinux 容器让整个 job
+  # 在 Arch 用户空间内直接 makepkg，入场产物直接复用后端构建的 Linux 二进制。
+  build-arch-pkg:
+    name: Build Arch Linux package
+    needs: build-backend
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          TAG=""
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          fi
+          VER="0.0.0"
+          if [ -n "$TAG" ]; then
+            VER="${TAG#v}"
+            CLEAN="${VER%-*}"
+            [ "$CLEAN" != "$VER" ] && VER="$CLEAN"
+          fi
+          echo "tagname=$TAG" >> "$GITHUB_OUTPUT"
+          echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Install build toolchain
+        run: pacman -Syu --noconfirm curl gh unzip zip
+
+      - name: Download Linux binary artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: EuoraCraft-Launcher-Linux-X64.zip
+          path: linux-dist
+
+      - name: Prepare source zip for PKGBUILD
+        working-directory: packaging/arch
+        shell: bash
+        run: |
+          SRC=$(find "$GITHUB_WORKSPACE/linux-dist" -type f -name 'EuoraCraft Launcher' | head -n1)
+          if [ -z "$SRC" ]; then
+            Z=$(find "$GITHUB_WORKSPACE/linux-dist" -type f -name '*.zip' | head -n1)
+            if [ -n "$Z" ]; then
+              D=$(mktemp -d)
+              unzip -o "$Z" -d "$D"
+              SRC=$(find "$D" -type f -name 'EuoraCraft Launcher' | head -n1)
+            fi
+          fi
+          [ -n "$SRC" ] || { echo "未找到 Linux 二进制"; exit 1; }
+          mkdir -p srcdist
+          cp "$SRC" srcdist/'EuoraCraft Launcher'
+          (cd srcdist && zip -rq "$GITHUB_WORKSPACE/packaging/arch/EuoraCraft-Launcher-Linux-X64.zip" 'EuoraCraft Launcher')
+          # CI 直接用本 workflow 构建出的二进制，把 PKGBUILD 的远程 source 换成本地 zip
+          sed -i 's#^.*EuoraCraft-Launcher-Linux-X64.zip"$#    "EuoraCraft-Launcher-Linux-X64.zip"#' PKGBUILD
+
+      - name: Build package
+        working-directory: packaging/arch
+        shell: bash
+        env:
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+        run: |
+          sed -i 's#^pkgver=.*#pkgver='"$PKGVER"'#' PKGBUILD
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE/packaging/arch"
+          su builder -s /bin/bash -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg -f -c --noconfirm --skipinteg"
+
+      - name: Upload package as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: packaging/arch/euoracraft-launcher-*.pkg.tar.zst
+          archive: false
+
+      - name: Upload package to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: packaging/arch
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tagname }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG_FILE=$(ls euoracraft-launcher-*.pkg.tar.zst | head -n1)
+          echo "uploading $PKG_FILE to $TAG"
+          gh release upload "$TAG" "$PKG_FILE" --clobber

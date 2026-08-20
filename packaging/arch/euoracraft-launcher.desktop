@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=EuoraCraft Launcher
+Name[zh_CN]=EuoraCraft 启动器
+Comment=EuoraCraft Minecraft launcher
+Comment[zh_CN]=EuoraCraft MC 启动器
+Exec=euoracraft-launcher
+Icon=euoracraft-launcher
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=true
+StartupWMClass=EuoraCraft Launcher
