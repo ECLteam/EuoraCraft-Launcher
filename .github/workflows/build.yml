@@ -174,32 +174,34 @@ jobs:
           ECL_UPX: "0"
         run: pyinstaller EuoraCraft-Launcher.spec
 
-      - name: Package artifact for Unix
-        if: ${{ runner.os != 'Windows' }}
+      - name: Package artifact
+        id: package
         shell: bash
         run: |
           cd dist
-          mv "EuoraCraft Launcher" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
-
-      - name: Package artifact for Windows
-        if: ${{ runner.os == 'Windows' }}
-        shell: bash
-        run: |
-          cd dist
-          mv "EuoraCraft Launcher.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "EuoraCraft Launcher.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
+            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg" >> "$GITHUB_OUTPUT"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            mv "EuoraCraft Launcher.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
+            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
+          else
+            mv "EuoraCraft Launcher" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
+            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
-          path: dist/EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
+          name: ${{ steps.package.outputs.filename }}
+          path: dist/${{ steps.package.outputs.filename }}
           archive: false
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
+          files: dist/${{ steps.package.outputs.filename }}
           prerelease: ${{ steps.version_info.outputs.type != 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
