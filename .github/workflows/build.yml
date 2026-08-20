@@ -252,7 +252,7 @@ jobs:
       - name: Install build toolchain
         run: |
           pacman -S --needed --noconfirm \
-            python python-pip python-setuptools python-wheel \
+            uv \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
             xorg-server-xvfb xorg-xauth dbus \
             patchelf zip curl github-cli
@@ -260,9 +260,10 @@ jobs:
       - name: Install Python dependencies
         shell: bash
         run: |
-          python -m venv .venv-arch
-          .venv-arch/bin/python -m pip install --upgrade pip
-          .venv-arch/bin/python -m pip install -e ".[dev]"
+          uv python install 3.12
+          uv venv --python 3.12 .venv-arch
+          uv pip install --python .venv-arch/bin/python -e ".[dev]"
+          .venv-arch/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
 
       - name: Inject build secrets
         shell: bash
