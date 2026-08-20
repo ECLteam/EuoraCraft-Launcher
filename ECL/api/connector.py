@@ -1,15 +1,39 @@
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import functools
+import threading
 from typing import Any
-
-from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsRequest, RoomCodeRequest
 from ECL.services.connector import ConnectorError, ConnectorNotAvailableError
 
 from .bridge import _FrontendState, _ipc_handler
+
+
+def _run_in_daemon(func, *args):
+    """
+    在守护线程中执行阻塞调用，避免窗口关闭后进程等待该线程退出。
+
+    加入/托管房间等操作可能阻塞数十秒，若运行在 anyio 的非守护线程池中，
+    关闭窗口后解释器会等待其结束。守护线程不阻塞解释器退出。
+
+    :param func: 待执行的阻塞函数
+    :param args: 传给函数的参数
+    :returns: 可等待的 asyncio Future，正常运行时返回函数结果
+    """
+    future = concurrent.futures.Future()
+
+    def runner() -> None:
+        try:
+            future.set_result(func(*args))
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    threading.Thread(target=runner, daemon=True, name="ECL-connector").start()
+    return asyncio.wrap_future(future)
 
 
 def _connector_guard(error_code: str):
@@ -51,7 +75,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_host_port(self, body: dict[str, Any]) -> ApiResponse:
         """在联机服务中对外开放并托管指定端口。"""
         port = PortRequest.model_validate(body).port
-        result = await to_thread.run_sync(self.connector.host_port, port)
+        result = await _run_in_daemon(self.connector.host_port, port)
         return success(result)
 
     @_ipc_handler("CONNECTOR_HOST_INSTANCE_FAILED")
@@ -59,7 +83,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_host_instance(self, body: dict[str, Any]) -> ApiResponse:
         """在联机服务中托管一个指定的本地游戏实例。"""
         target = InstanceTarget.model_validate(body)
-        result = await to_thread.run_sync(self.connector.host_instance, target.game_path, target.version_id)
+        result = await _run_in_daemon(self.connector.host_instance, target.game_path, target.version_id)
         return success(result)
 
     @_ipc_handler("CONNECTOR_JOIN_FAILED")
@@ -67,7 +91,7 @@ class ConnectorHandlers(_FrontendState):
     async def connector_join(self, body: dict[str, Any]) -> ApiResponse:
         """通过房间码加入他人托管的联机房间。"""
         code = RoomCodeRequest.model_validate(body).code
-        result = await to_thread.run_sync(self.connector.join, code)
+        result = await _run_in_daemon(self.connector.join, code)
         return success(result)
 
     @_ipc_handler("CONNECTOR_LEAVE_FAILED")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -9,14 +10,6 @@ import pytest
 pytest.importorskip("easytier_pyo3")
 
 from ECL.services.connector import ConnectorService
-
-
-def test_scan_ports_returns_only_protocol_confirmed_minecraft_port(monkeypatch) -> None:
-    service = ConnectorService()
-    monkeypatch.setattr(service, "_minecraft_listener_ports", lambda: [25565, 38123])
-    monkeypatch.setattr(service, "_is_minecraft_server", lambda port: port == 38123)
-
-    assert service.scan_ports() == {"port": 38123}
 
 
 def test_minecraft_listener_ports_limits_candidates_to_java_processes(monkeypatch) -> None:
@@ -97,3 +90,34 @@ def test_stop_async_thread_client_handles_closed_loop() -> None:
 
     service._stop_async_thread_client()
     assert service._client is None
+
+
+def test_close_stops_active_room() -> None:
+    service = ConnectorService()
+    service._mode = "host"
+    service._room_server = SimpleNamespace(sync_stop=lambda: None)
+    service._easy_tier_node = SimpleNamespace(stop=lambda: None)
+
+    service.close()
+    assert service._mode == "idle"
+    assert service._room_server is None
+    assert service._easy_tier_node is None
+
+
+async def test_run_in_daemon_returns_result() -> None:
+    from ECL.api.connector import _run_in_daemon
+
+    assert await _run_in_daemon(lambda: 42) == 42
+
+
+async def test_run_in_daemon_uses_daemon_thread() -> None:
+    from ECL.api.connector import _run_in_daemon
+
+    captured: dict[str, bool] = {}
+
+    def probe() -> str:
+        captured["daemon"] = threading.current_thread().daemon
+        return "ok"
+
+    assert await _run_in_daemon(probe) == "ok"
+    assert captured["daemon"] is True

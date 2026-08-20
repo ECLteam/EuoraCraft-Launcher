@@ -98,7 +98,7 @@ class ApplicationContext:
                 return
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭应用上下文中的共享资源")
-            for resource in (self.plugins, self.processes, self.game, self.accounts, self.http):
+            for resource in (self.plugins, self.processes, self.game, self.connector, self.accounts, self.http):
                 try:
                     close = resource.close
                     if inspect.iscoroutinefunction(close):

@@ -356,7 +356,7 @@ class ConnectorService:
         self._mode = "starting"
         self._room_code = code
         self._error = None
-
+        logger.debug("开始获取联机节点")
         self._nodes = self.fetch_nodes()
         try:
             florolding = Florolding(
@@ -440,6 +440,18 @@ class ConnectorService:
         self._client = None
         self._error = None
         return {"status": "left"}
+
+    def close(self) -> None:
+        """
+        关闭联机服务，停止运行中的房间与 EasyTier 节点。
+
+        应用关闭时由上下文按依赖逆序调用；进行中的加入房间操作运行在守护线程，
+        由解释器退出时一并回收，不在此处等待。
+        """
+        try:
+            self.leave()
+        except Exception:
+            logger.debug("关闭联机服务失败", exc_info=True)
 
     def _stop_async_thread_client(self) -> None:
         """
