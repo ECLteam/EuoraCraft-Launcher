@@ -86,6 +86,20 @@ class GameHandlers(_FrontendState):
         )
         return success(versions)
 
+    @_ipc_handler("LOADER_VERSIONS_FAILED")
+    async def game_fabric_api_versions(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        查询指定 Minecraft 版本可用的 Fabric API 版本。
+
+        :param body: 符合 ``LoaderCatalogRequest`` 的请求数据
+        :return: Fabric API 版本列表
+        """
+        request, invalid = _validate_body(LoaderCatalogRequest, body)
+        if invalid is not None:
+            return invalid
+        versions = await to_thread.run_sync(self.game.fabric_api_versions, request.game_version)
+        return success(versions)
+
     @_ipc_handler("VERSION_SCAN_FAILED")
     async def game_scan(self, body: dict[str, Any]) -> ApiResponse:
         """

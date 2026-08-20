@@ -1,13 +1,18 @@
 import asyncio
+import json
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from anyio import to_thread
 
 from .base import GameServiceError, _GameState
+
+_FABRIC_API_PROJECT = "fabric-api"
+_FABRIC_API_TIMEOUT_SECONDS = 10
 
 
 class InstallCoordinator(_GameState):
@@ -89,8 +94,13 @@ class InstallCoordinator(_GameState):
             field_name = f"{loader}_version"
             value = body.get(field_name)
             if not isinstance(value, str) or not value.strip():
-                raise GameServiceError("未选择加载器版本", "LOADER_VERSION_REQUIRED")
-            loader_version = value.strip()
+                if loader == "fabric":
+                    # Fabric 未指定加载器版本时由 Core 解析最新版本
+                    loader_version = None
+                else:
+                    raise GameServiceError("未选择加载器版本", "LOADER_VERSION_REQUIRED")
+            else:
+                loader_version = value.strip()
         if loader in {"forge", "neoforge"}:
             java_path = self._resolve_java_path(java_path)
 
@@ -113,6 +123,7 @@ class InstallCoordinator(_GameState):
                     save_name,
                     loader,
                     loader_version,
+                    body.get("fabric_api_version"),
                     path,
                     normalized_source,
                     java_path,
@@ -130,6 +141,7 @@ class InstallCoordinator(_GameState):
         save_name: str,
         loader: str,
         loader_version: str | None,
+        fabric_api_version: Any,
         game_path: Path,
         source: str,
         java_path: str | None,
@@ -144,11 +156,17 @@ class InstallCoordinator(_GameState):
                     save_name,
                 )
             elif loader == "fabric":
+                fabric_api = await to_thread.run_sync(
+                    self._resolve_fabric_api,
+                    version_id,
+                    fabric_api_version if isinstance(fabric_api_version, str) else None,
+                )
                 download_list = await to_thread.run_sync(
                     games.build_fabric_download_list,
                     version_id,
                     loader_version,
                     save_name,
+                    fabric_api,
                 )
             elif loader == "quilt":
                 download_list = await to_thread.run_sync(
@@ -255,6 +273,51 @@ class InstallCoordinator(_GameState):
             with self._lock:
                 self._active_downloads.pop(task_id, None)
                 self._install_tasks.pop(task_id, None)
+
+    @staticmethod
+    def _resolve_fabric_api(game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
+        """
+        解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
+
+        :param game_version: 目标 Minecraft 游戏版本
+        :param fabric_api_version: 指定版本号，为空时选择最新版本
+        :return: 主文件下载地址与文件名
+        """
+        params = {
+            "game_versions": json.dumps([game_version]),
+            "loaders": json.dumps(["fabric"]),
+        }
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/project/{_FABRIC_API_PROJECT}/version",
+            params=params,
+            headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
+            timeout=_FABRIC_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        versions = response.json()
+        if not isinstance(versions, list) or not versions:
+            raise GameServiceError("未找到可用的 Fabric API 版本", "FABRIC_API_NOT_FOUND")
+        if fabric_api_version:
+            selected = next(
+                (
+                    item
+                    for item in versions
+                    if isinstance(item, dict) and item.get("version_number") == fabric_api_version
+                ),
+                None,
+            )
+            if selected is None:
+                raise GameServiceError(f"未找到 Fabric API 版本: {fabric_api_version}", "FABRIC_API_VERSION_NOT_FOUND")
+        else:
+            selected = versions[0]
+        files = selected.get("files") or []
+        primary = next(
+            (item for item in files if isinstance(item, dict) and item.get("primary")),
+            files[0] if files else None,
+        )
+        if not isinstance(primary, dict) or not primary.get("url") or not primary.get("filename"):
+            raise GameServiceError("Fabric API 缺少可下载文件", "FABRIC_API_FILE_MISSING")
+        return primary["url"], primary["filename"]
 
     def uninstall_version(self, version_id: Any, game_path: Any) -> None:
         """

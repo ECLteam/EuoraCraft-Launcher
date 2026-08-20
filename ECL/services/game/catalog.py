@@ -1,6 +1,11 @@
 from typing import Any
 
+import httpx
+
 from .base import GameServiceError, _GameState
+
+_FABRIC_API_PROJECT = "fabric-api"
+_FABRIC_API_TIMEOUT_SECONDS = 10
 
 
 class CatalogCoordinator(_GameState):
@@ -85,4 +90,32 @@ class CatalogCoordinator(_GameState):
             str(item.get("LoaderVersion") or "").strip()
             for item in values
             if isinstance(item, dict) and item.get("LoaderVersion")
+        ]
+
+    def fabric_api_versions(self, game_version: Any) -> list[str]:
+        """
+        查询指定 Minecraft 版本可用的 Fabric API 版本。
+
+        :param game_version: 目标 Minecraft 游戏版本
+        :return: Fabric API 版本号列表，按发布时间降序
+        """
+        version = self._normalize_version_name(game_version, "Minecraft 版本")
+        params = {
+            "game_versions": '["' + version + '"]',
+            "loaders": '["fabric"]',
+        }
+        response = httpx.get(
+            f"https://api.modrinth.com/v2/project/{_FABRIC_API_PROJECT}/version",
+            params=params,
+            headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
+            timeout=_FABRIC_API_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        versions = response.json()
+        if not isinstance(versions, list):
+            return []
+        return [
+            str(item.get("version_number") or "").strip()
+            for item in versions
+            if isinstance(item, dict) and item.get("version_number")
         ]

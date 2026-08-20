@@ -173,5 +173,23 @@ class ModHandlers(_FrontendState):
             }
         )
 
+    @_ipc_handler("MOD_DOWNLOAD_TO_PATH_FAILED")
+    async def download_mod_to_path(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        下载在线模组文件到用户指定的保存路径，不安装到任何实例。
+
+        :param body: 在线模组版本和用户选择的保存路径
+        :return: 保存结果（文件名）
+        """
+        result = await to_thread.run_sync(
+            self.game.download_resource_to_path,
+            body.get("source", "modrinth"),
+            body.get("mod_id"),
+            body.get("file_id"),
+            body.get("save_path"),
+            task_id=body.get("task_id"),
+        )
+        return success({"filename": result["filename"]})
+
 
 __all__ = ["ModHandlers"]

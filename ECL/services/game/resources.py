@@ -873,6 +873,55 @@ class ResourceCoordinator:
         finally:
             temp.unlink(missing_ok=True)
 
+    def download_resource_to_path(
+        self,
+        source: str,
+        project_id: str,
+        version_id_str: str,
+        save_path: str,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        按版本 ID 下载在线资源文件到用户指定的保存路径，不写入任何实例目录。
+
+        :param source: 数据来源（modrinth）
+        :param project_id: Modrinth 项目 ID（仅用于错误上下文）
+        :param version_id_str: Modrinth 版本 ID
+        :param save_path: 用户选择的完整目标文件路径
+        :param task_id: 任务队列 ID，非空时上报字节进度与实时速度事件
+        :return: 保存结果（文件名与来源）
+        """
+        if source != "modrinth":
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        destination = Path(save_path)
+        if not destination.parent.exists():
+            raise GameServiceError("保存目录不存在", "INVALID_SAVE_PATH")
+        selected = self._fetch_online_version(version_id_str)
+        filename = str(selected["filename"])
+        temp = destination.with_name(f".{destination.name}.ecl-download")
+        try:
+            self._download_online_file(str(selected["url"]), temp, filename, task_id)
+            hashes = selected.get("hashes") or {}
+            if hashes.get("sha512") and _sha512(temp).casefold() != str(hashes["sha512"]).casefold():
+                raise GameServiceError("下载文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
+            temp.replace(destination)
+            if task_id:
+                self._emit_install_progress(task_id, "done", f"{filename} 已保存", done=1, total=1)
+            return {"filename": destination.name, "source": source, "skipped": False}
+        except GameServiceError as exc:
+            if task_id:
+                self._emit_install_progress(task_id, "error", str(exc), done=0, total=1, error_code=exc.error_code)
+            raise
+        except Exception as exc:
+            if task_id:
+                self._emit_install_progress(
+                    task_id, "error", f"保存 {filename} 失败: {exc}", done=0, total=1,
+                    error_code="RESOURCE_DOWNLOAD_FAILED",
+                )
+            raise
+        finally:
+            temp.unlink(missing_ok=True)
+
     def identify_resource_hash(
         self, sha512: str, curseforge_key: str | None = None
     ) -> dict[str, Any]:

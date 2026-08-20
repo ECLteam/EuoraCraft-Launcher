@@ -57,6 +57,7 @@ _SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
     FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.zip", ["zip"]),
     FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
     FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
+    FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
 }
 
 
@@ -454,13 +455,14 @@ class FileHandlers(_FrontendState):
         file_path = await to_thread.run_sync(_pick)
         return self._normalize_file_path(str(file_path)) if file_path else ""
 
-    async def _pick_save_path(self, title: str, default_name: str, extensions: list[str]) -> str:
+    async def _pick_save_path(self, title: str, default_name: str, extensions: list[str], filter_label: str = "ZIP 压缩包") -> str:
         """
         在 Tauri 主窗口上打开系统文件保存对话框。
 
         :param title: 系统对话框标题
         :param default_name: 预填充且不包含目录部分的文件名
         :param extensions: 允许用户选择的扩展名列表
+        :param filter_label: 系统对话框中的文件类型筛选标签
         :return: 用户确认的绝对路径；取消时返回空字符串
         """
         if self._webview is None:
@@ -468,7 +470,7 @@ class FileHandlers(_FrontendState):
 
         file_path = await to_thread.run_sync(
             lambda: DialogExt.file(self._webview).blocking_save_file(
-                add_filter=("ZIP 压缩包", extensions),
+                add_filter=(filter_label, extensions),
                 set_file_name=default_name,
                 set_title=title,
             )
@@ -569,8 +571,14 @@ class FileHandlers(_FrontendState):
         title, default_name, extensions = _SAVE_FILE_OPTIONS.get(
             request.purpose, ("导出资源清单", "resources.json", ["zip"])
         )
-        selected = await self._pick_save_path(title, default_name, extensions)
-        if selected and request.purpose not in {FileSavePurpose.RESOURCE_MANIFEST, FileSavePurpose.SCREENSHOT} and Path(selected).suffix.casefold() != ".zip":
+        filter_label = "JAR 文件" if request.purpose == FileSavePurpose.MOD_FILE else "ZIP 压缩包"
+        selected = await self._pick_save_path(title, default_name, extensions, filter_label)
+        if (
+            selected
+            and request.purpose
+            not in {FileSavePurpose.RESOURCE_MANIFEST, FileSavePurpose.SCREENSHOT, FileSavePurpose.MOD_FILE}
+            and Path(selected).suffix.casefold() != ".zip"
+        ):
             selected = str(Path(selected).with_suffix(".zip"))
         self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
         return success({"path": selected})

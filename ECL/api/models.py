@@ -87,6 +87,7 @@ class FileSavePurpose(StrEnum):
     INSTANCE_EXPORT = "instance-export"
     RESOURCE_MANIFEST = "resource-manifest"
     SCREENSHOT = "screenshot"
+    MOD_FILE = "mod-file"
 
 
 class SettingsQuery(RequestModel):
@@ -283,6 +284,7 @@ class InstallRequest(RequestModel):
     version_name: str | None = None
     loader_type: LoaderType | None = None
     loader_version: str | None = None
+    fabric_api_version: str | None = None
     game_path: SafePath
     java_path: SafePath | None = None
     source: DownloadSource | None = None
