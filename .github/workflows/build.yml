@@ -132,7 +132,18 @@ jobs:
           if [[ "$TAG" == v* ]]; then
             echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+            # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
+            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            if [ -n "$VER_PY" ]; then
+              if [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
+                echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
+              else
+                echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Inject version info into version.py
@@ -263,7 +274,18 @@ jobs:
           if [ -n "$TAG" ]; then
             echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+            # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
+            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            if [ -n "$VER_PY" ]; then
+              if [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
+                echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
+              else
+                echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Install build toolchain
