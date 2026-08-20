@@ -199,7 +199,7 @@ jobs:
   # Arch Linux 打包：GitHub 无原生 Arch hosted runner，因此在 Arch 容器中
   # 原生构建 PyInstaller 产物，避免将 Ubuntu/WebKitGTK 的编译期路径带入 Arch 包。
   build-arch-pkg:
-    name: Build Frontend(Arch-x64)
+    name: Build Arch Linux package
     # 只等待共用前端产物，随后与其他平台的后端矩阵并行构建。
     needs: build-frontend
     runs-on: ubuntu-latest
