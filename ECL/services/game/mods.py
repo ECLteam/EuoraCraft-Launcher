@@ -33,15 +33,22 @@ class ModCoordinator(_GameState):
                 continue
             enabled = path.name.endswith(".jar")
             metadata = ResourceCoordinator._parse_mod(path)
+            original_name = str(metadata.get("name") or path.stem.removesuffix(".disabled"))
+            project_id = str(metadata.get("projectId") or "")
+            wiki_mod = self._mcmod.lookup_by_alias(project_id, original_name, path.stem.removesuffix(".disabled"))
+            wiki = self._mcmod.to_wiki_info(wiki_mod) if wiki_mod is not None else None
             result.append(
                 {
                     "filename": path.name,
-                    "name": metadata.get("name") or path.stem.removesuffix(".disabled"),
+                    "name": original_name,
+                    "display_name": (wiki or {}).get("title") or original_name,
+                    "english_name": (wiki or {}).get("englishName") or original_name,
+                    "mcmod_url": (wiki or {}).get("url") or "",
                     "version": metadata.get("version") or "",
                     "author": metadata.get("author") or "",
                     "loader_type": metadata.get("loader") or "",
                     "game_version": metadata.get("gameVersion") or "",
-                    "project_id": metadata.get("projectId") or "",
+                    "project_id": project_id,
                     "dependencies": metadata.get("dependencies") or [],
                     "enabled": enabled,
                     "size": path.stat().st_size,

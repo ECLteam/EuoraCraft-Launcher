@@ -30,6 +30,7 @@ class McmodTranslator:
         self._mods: list[dict[str, Any]] = []
         self._by_mr: dict[str, dict[str, Any]] = {}
         self._by_cf: dict[str, dict[str, Any]] = {}
+        self._by_alias: dict[str, dict[str, Any]] = {}
         self._loaded = False
 
     def _ensure_loaded(self) -> None:
@@ -55,6 +56,15 @@ class McmodTranslator:
                 self._by_mr.setdefault(mr, mod)
             if cf:
                 self._by_cf.setdefault(cf, mod)
+            aliases = [mod.get("english"), mod.get("mr"), mod.get("cf"), *(mod.get("modIds") or [])]
+            for alias in aliases:
+                key = self._normalize_alias(alias)
+                if key:
+                    self._by_alias.setdefault(key, mod)
+
+    @staticmethod
+    def _normalize_alias(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
     def lookup_by_modrinth_slug(self, slug: str) -> dict[str, Any] | None:
         """
@@ -75,6 +85,15 @@ class McmodTranslator:
         """
         self._ensure_loaded()
         return self._by_cf.get(str(slug or "").casefold())
+
+    def lookup_by_alias(self, *aliases: str) -> dict[str, Any] | None:
+        """按英文名、平台 slug 或模组 ID 查询译名。"""
+        self._ensure_loaded()
+        for alias in aliases:
+            key = self._normalize_alias(alias)
+            if key and key in self._by_alias:
+                return self._by_alias[key]
+        return None
 
     def search_chinese(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """
