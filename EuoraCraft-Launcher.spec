@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -8,7 +9,28 @@ SPEC_DIR = Path(SPECPATH).resolve()
 
 APP_NAME = "EuoraCraft Launcher"
 BUNDLE_IDENTIFIER = "top.eclteam.euoracraft-launcher"
-CONSOLE = os.environ.get("ECL_CONSOLE", "1") == "1"
+
+
+def _resolve_console_mode() -> bool:
+    """根据构建类型决定是否显示命令行窗口。
+
+    beta/release 构建面向普通用户，隐藏控制台避免弹出黑色命令行窗口；
+    alpha 构建与源码启动（dev）保留控制台便于排查启动问题。显式设置 ECL_CONSOLE 时以其为准。
+    """
+    explicit = os.environ.get("ECL_CONSOLE")
+    if explicit is not None:
+        return explicit == "1"
+    version_path = SPEC_DIR / "ECL" / "common" / "version.py"
+    try:
+        text = version_path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    match = re.search(r'__version_type__\s*=\s*["\']([^"\']+)["\']', text)
+    version_type = match.group(1) if match else ""
+    return version_type not in {"beta", "release"}
+
+
+CONSOLE = _resolve_console_mode()
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")

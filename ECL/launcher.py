@@ -37,7 +37,7 @@ class EuoraCraftLauncher:
         self.resource_path: Path = self.runtime_info["resource_path"]  # 打包资源或源码资源所在目录
         self.data_path = self.app_path / "ECL_data"  # 后端持久化数据目录
         self.launcher_version = __version__  # 启动器版本号
-        self.launcher_version_type = __version_type__  # 启动器发布类型（dev/alpha/beta/release）
+        self.launcher_version_type = __version_type__  # 启动器版本类型（alpha/beta/release；dev 表示源码启动）
         self.is_frozen = self.runtime_info["is_frozen"]  # 是否运行于打包后的可执行文件
         self.debug = False  # 是否启用 Debug 日志
         self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
