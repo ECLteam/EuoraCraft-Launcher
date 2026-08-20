@@ -129,6 +129,11 @@ jobs:
             echo "type=" >> "$GITHUB_OUTPUT"
             echo "version=" >> "$GITHUB_OUTPUT"
           fi
+          if [[ "$TAG" == v* ]]; then
+            echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Inject version info into version.py
         shell: bash
@@ -170,29 +175,31 @@ jobs:
         run: pyinstaller EuoraCraft-Launcher.spec
 
       - name: Package artifact for Unix
-        if: ${{ runner.os != 'Windows'}}
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
         run: |
           cd dist
-          7z a -tzip -mx=9 -mmt=on "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip" "EuoraCraft Launcher"
+          mv "EuoraCraft Launcher" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
 
       - name: Package artifact for Windows
-        if: ${{runner.os == 'Windows'}}
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
         run: |
           cd dist
-          7z a -tzip -mx=9 -mmt=on "../EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip" "EuoraCraft Launcher.exe"
+          mv "EuoraCraft Launcher.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
-          path: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
+          name: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
+          path: dist/EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
           archive: false
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}.zip
+          files: dist/EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}${{ runner.os == 'Windows' && '.exe' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -250,6 +257,11 @@ jobs:
           echo "tagname=$TAG" >> "$GITHUB_OUTPUT"
           echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
           echo "version_type=$VTYPE" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "filename_version=dev" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install build toolchain
         run: |
@@ -257,7 +269,7 @@ jobs:
             uv \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
             xorg-server-xvfb xorg-xauth dbus \
-            patchelf zip curl
+            patchelf curl
 
       - name: Install Python dependencies
         shell: bash
@@ -347,17 +359,16 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare source zip for PKGBUILD
+      - name: Prepare source for PKGBUILD
         working-directory: packaging/arch
         shell: bash
         run: |
           SRC="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher"
           [ -x "$SRC" ] || { echo "未找到 Arch 原生二进制"; exit 1; }
-          mkdir -p srcdist
-          cp "$SRC" srcdist/'EuoraCraft Launcher'
-          (cd srcdist && zip -rq "$GITHUB_WORKSPACE/packaging/arch/EuoraCraft-Launcher-Arch-X64.zip" 'EuoraCraft Launcher')
-          # CI 用本 job 的 Arch 原生产物，把 PKGBUILD 的远程 source 换成本地 zip。
-          sed -i 's#^.*EuoraCraft-Launcher-Arch-X64.zip"$#    "EuoraCraft-Launcher-Arch-X64.zip"#' PKGBUILD
+          cp "$SRC" euoracraft-launcher
+          cp "$SRC" "$GITHUB_WORKSPACE/EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}"
+          # CI 用本 job 的 Arch 原生产物，把 PKGBUILD 的远程 source 换成本地二进制。
+          sed -i 's#^.*euoracraft-launcher::.*$#    "euoracraft-launcher"#' PKGBUILD
 
       - name: Build package
         working-directory: packaging/arch
@@ -399,8 +410,8 @@ jobs:
       - name: Upload Arch binary as artifact
         uses: actions/upload-artifact@v7
         with:
-          name: EuoraCraft-Launcher-Arch-X64.zip
-          path: packaging/arch/EuoraCraft-Launcher-Arch-X64.zip
+          name: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
+          path: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
           archive: false
 
   publish-arch:
@@ -420,7 +431,7 @@ jobs:
       - name: Download Arch binary
         uses: actions/download-artifact@v8
         with:
-          name: EuoraCraft-Launcher-Arch-X64.zip
+          name: EuoraCraft-Launcher-Arch-X64-${{ github.ref_name }}
           path: release-assets
 
       - name: Upload Arch artifacts to Release
@@ -430,8 +441,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
-          ARCH_ZIP="release-assets/EuoraCraft-Launcher-Arch-X64.zip"
+          ARCH_BIN="release-assets/EuoraCraft-Launcher-Arch-X64-$TAG"
           [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
-          [ -f "$ARCH_ZIP" ] || { echo "未找到 Arch 二进制：$ARCH_ZIP" >&2; exit 1; }
-          echo "uploading $PKG_FILE and $ARCH_ZIP to $TAG"
-          gh release upload "$TAG" "$PKG_FILE" "$ARCH_ZIP" --clobber
+          [ -f "$ARCH_BIN" ] || { echo "未找到 Arch 二进制：$ARCH_BIN" >&2; exit 1; }
+          echo "uploading $PKG_FILE and $ARCH_BIN to $TAG"
+          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" --clobber

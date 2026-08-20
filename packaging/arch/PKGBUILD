@@ -22,14 +22,14 @@ depends=(
 source=(
     "euoracraft-launcher.desktop"
     "euoracraft-launcher.png"
-    "euoracraft-launcher.zip::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Arch-X64.zip"
+    "euoracraft-launcher::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Arch-X64-${_tag}"
 )
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 package() {
     cd "$srcdir"
 
-    install -Dm755 "EuoraCraft Launcher" "$pkgdir/usr/bin/euoracraft-launcher"
+    install -Dm755 "euoracraft-launcher" "$pkgdir/usr/bin/euoracraft-launcher"
     install -Dm644 "euoracraft-launcher.desktop" "$pkgdir/usr/share/applications/euoracraft-launcher.desktop"
     install -Dm644 "euoracraft-launcher.png" "$pkgdir/usr/share/pixmaps/euoracraft-launcher.png"
 }
