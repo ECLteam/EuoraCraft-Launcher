@@ -448,4 +448,7 @@ jobs:
           [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
           [ -f "$ARCH_BIN" ] || { echo "未找到 Arch 二进制：$ARCH_BIN" >&2; exit 1; }
           echo "uploading $PKG_FILE and $ARCH_BIN to $TAG"
-          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" --clobber
+          # 本发布 Job 未 checkout 仓库，必须显式指定目标仓库，避免 gh 调用 git 推断仓库失败。
+          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
