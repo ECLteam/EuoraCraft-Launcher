@@ -301,7 +301,7 @@ class ConnectorService:
         使用 EasyTier 内置 STUN 探测检测 NAT 类型。
 
         活跃房间会直接复用当前 EasyTier 节点的 STUN 快照；空闲时启动一个无 TUN、
-        无中继连接的临时节点，取得结果后立即停止。类型归类沿用 EasyTier/PCL-CE
+        无中继连接的临时节点，取得结果后立即停止。类型归类沿用 EasyTier
         的判定：开放与各类锥形 NAT 归为 ``cone``，对称映射归为 ``symmetric``。
 
         :returns: NAT 大类、详细类型、公网地址、端口范围与 IPv6 支持状态

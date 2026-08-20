@@ -40,7 +40,7 @@ _RESOURCE_PROJECT_TYPE = {
     "datapack": "datapack",
 }
 
-# CurseForge 分类 classId 映射，与 HMCL/PCL-CE 一致，用于只搜索对应资源类型
+# CurseForge 分类 classId 映射，用于只搜索对应资源类型
 _CURSEFORGE_CLASS_ID = {
     "mod": 6,
     "resourcepack": 12,
@@ -57,7 +57,7 @@ _CURSEFORGE_WEB_PATH = {
     "world": "worlds",
 }
 
-# CurseForge 排序 sortField 映射；默认采用 HMCL 的人气排序（2=Popularity）
+# CurseForge 排序 sortField 映射；默认按人气排序（2=Popularity）
 _CURSEFORGE_SORT_FIELD = {
     "relevance": 2,
     "downloads": 6,
@@ -611,7 +611,7 @@ class ResourceCoordinator:
             key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key
             if not key:
                 raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
-            # 参数构造与 HMCL 保持一致：始终带全 classId/gameVersion/searchFilter/sortField，
+            # 始终带全 classId/gameVersion/searchFilter/sortField，
             # 默认按人气排序，classId 保证只返回对应资源类型（mod 不混入整合包）。
             params: dict[str, Any] = {
                 "gameId": 432,

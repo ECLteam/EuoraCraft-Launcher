@@ -77,7 +77,7 @@ def _find_key(value: Any, key: str) -> Any:
 
 class InstanceCompatibilityReader:
     """
-    读取 PCL、HMCL 与 Qomicex 的实例元数据，不对第三方文件执行任何写入。
+    读取第三方启动器的实例元数据，不对第三方文件执行任何写入。
 
     解析失败会转换为来源级警告，使单个损坏配置不会阻断整个版本扫描。
     """
