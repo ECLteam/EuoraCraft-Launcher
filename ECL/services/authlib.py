@@ -504,7 +504,7 @@ class AuthlibAccountManager:
         后端只读取签名后的材质元数据，不下载或裁切图片，前端可据此完成统一渲染。
 
         :param account_id: 账户的稳定标识
-        :return: 可用的 ``skinUrl`` 和 ``capeUrl``；没有材质时返回空字典
+        :return: 可用的 ``skinUrl``、``skinModel`` 与 ``capeUrl``；没有材质时返回空字典
         """
         with self._lock:
             account = self.accounts.get(account_id)
@@ -536,10 +536,14 @@ class AuthlibAccountManager:
         texture_data = json.loads(base64.b64decode(texture))
         textures = texture_data.get("textures") or {}
         result: dict[str, str] = {}
-        skin_url = (textures.get("SKIN") or {}).get("url")
+        skin = textures.get("SKIN") or {}
+        skin_url = skin.get("url")
         cape_url = (textures.get("CAPE") or {}).get("url")
         if isinstance(skin_url, str) and skin_url:
             result["skinUrl"] = skin_url
+            # 皮肤站通过材质元数据的 metadata.model 声明纤细手臂，缺失时按经典手臂处理
+            model = (skin.get("metadata") or {}).get("model")
+            result["skinModel"] = "slim" if str(model or "").lower() == "slim" else "classic"
         if isinstance(cape_url, str) and cape_url:
             result["capeUrl"] = cape_url
         return result

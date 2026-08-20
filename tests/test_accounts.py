@@ -285,7 +285,9 @@ def test_offline_texture_urls_uses_selected_skin(tmp_path) -> None:
 
     account = manager.add_offline("Steve", skin="Alice")
 
-    assert manager.texture_urls(account["id"])["skinUrl"].startswith("data:image/png;base64,")
+    textures = manager.texture_urls(account["id"])
+    assert textures["skinUrl"].startswith("data:image/png;base64,")
+    assert textures["skinModel"] == "slim"
 
 
 def test_offline_set_skin_updates_and_persists(tmp_path) -> None:

@@ -856,7 +856,10 @@ class AccountManager:
                 return result
             if account_id in self._offline_accounts:
                 skin_url = self._default_skin_url(self._offline_accounts[account_id].get("skin"))
-                return {"skinUrl": skin_url} if skin_url else {}
+                if skin_url:
+                    # 离线账户没有模型元数据，默认按纤细手臂渲染
+                    return {"skinUrl": skin_url, "skinModel": "slim"}
+                return {}
             is_authlib = account_id in self.authlib_manager.list_accounts()
         if is_authlib:
             return self.authlib_manager.get_texture_urls(account_id)

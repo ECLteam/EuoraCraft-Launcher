@@ -1,5 +1,5 @@
 import json
-from base64 import urlsafe_b64encode
+from base64 import b64encode, urlsafe_b64encode
 from hashlib import sha256
 from pathlib import Path
 
@@ -386,4 +386,67 @@ def test_refresh_saves_selected_profile_and_user_without_available_profiles(tmp_
     assert account["Username"] == "player@example.com"
     saved_accounts = json.loads((tmp_path / "accounts" / "yggdrasil_accounts_list.json").read_text(encoding="utf-8"))
     assert "availableProfiles" not in saved_accounts["saved-account"]["Profiles"]
+    manager.close()
+
+
+def _texture_value(skin_url: str, model: str | None = None) -> str:
+    skin = {"url": skin_url}
+    if model:
+        skin["metadata"] = {"model": model}
+    payload = {
+        "timestamp": 0,
+        "profileId": "profile-id",
+        "profileName": "Player",
+        "textures": {"SKIN": skin},
+    }
+    return b64encode(json.dumps(payload).encode()).decode()
+
+
+def _manager_with_profile(tmp_path, value: str) -> AuthlibAccountManager:
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == (
+            "https://skin.example.com/api/yggdrasil/sessionserver/session/minecraft/profile/profile-id?unsigned=true"
+        )
+        return httpx.Response(
+            200,
+            request=request,
+            json={"properties": [{"name": "textures", "value": value}]},
+        )
+
+    manager = AuthlibAccountManager(
+        tmp_path,
+        OfflineClient(),
+        httpx.Client(transport=httpx.MockTransport(handle)),
+    )
+    manager.accounts["account-id"] = {
+        "AccountId": "account-id",
+        "YggdrasilAPI": "https://skin.example.com/api/yggdrasil",
+        "Profiles": {"selectedProfile": {"id": "profile-id", "name": "Player"}},
+    }
+    return manager
+
+
+def test_get_texture_urls_parses_slim_model_from_metadata(tmp_path) -> None:
+    manager = _manager_with_profile(
+        tmp_path,
+        _texture_value("https://textures.example.com/skin.png", "slim"),
+    )
+
+    assert manager.get_texture_urls("account-id") == {
+        "skinUrl": "https://textures.example.com/skin.png",
+        "skinModel": "slim",
+    }
+    manager.close()
+
+
+def test_get_texture_urls_defaults_classic_when_model_missing(tmp_path) -> None:
+    manager = _manager_with_profile(
+        tmp_path,
+        _texture_value("https://textures.example.com/skin.png"),
+    )
+
+    assert manager.get_texture_urls("account-id") == {
+        "skinUrl": "https://textures.example.com/skin.png",
+        "skinModel": "classic",
+    }
     manager.close()
