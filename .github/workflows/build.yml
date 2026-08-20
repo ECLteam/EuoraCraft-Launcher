@@ -208,6 +208,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Bootstrap Git for checkout
+        # archlinux:base-devel 不包含 Git；checkout 的 REST 回退模式不支持子模块。
+        run: pacman -Syu --needed --noconfirm git
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -247,7 +251,7 @@ jobs:
 
       - name: Install build toolchain
         run: |
-          pacman -Syu --noconfirm \
+          pacman -S --needed --noconfirm \
             python python-pip python-setuptools python-wheel \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
             xorg-server-xvfb xorg-xauth dbus \
