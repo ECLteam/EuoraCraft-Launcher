@@ -228,7 +228,7 @@ jobs:
           echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Install build toolchain
-        run: pacman -Syu --noconfirm curl gh unzip zip
+        run: pacman -Syu --noconfirm curl github-cli unzip zip
 
       - name: Download Linux binary artifact
         uses: actions/download-artifact@v8
