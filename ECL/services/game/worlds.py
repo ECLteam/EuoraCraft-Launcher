@@ -90,7 +90,9 @@ class WorldCoordinator:
                 worlds.append({"id": path.name, "name": path.name, "path": str(path), "error": str(exc)})
         return sorted(worlds, key=lambda item: item.get("modifiedAt") or "", reverse=True)
 
-    def world_detail(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> dict[str, Any]:
+    def world_detail(
+        self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
+    ) -> dict[str, Any]:
         return self._read_world(self._world_path(game_path, version_id, world_id, version_isolation))
 
     def _assert_world_writable(self, target: Any, world_path: Path) -> None:
@@ -199,7 +201,9 @@ class WorldCoordinator:
             raise GameServiceError("世界图标必须是可读图片", "INVALID_WORLD_ICON") from exc
         return {"path": str(world / "icon.png")}
 
-    def delete_world_to_trash(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> None:
+    def delete_world_to_trash(
+        self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
+    ) -> None:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         world = self._world_path(game_path, version_id, world_id, version_isolation)
         self._assert_world_writable(target, world)
@@ -236,29 +240,39 @@ class WorldCoordinator:
         source = Path(str(source_path)).expanduser().resolve(strict=True)
 
         def worker(context: OperationContext) -> dict[str, str]:
-            root.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix="ecl-world-import-", dir=root.parent) as temp_dir:
-                temp = Path(temp_dir)
-                if source.is_dir():
-                    copied = temp / source.name
-                    shutil.copytree(source, copied)
-                elif zipfile.is_zipfile(source):
-                    safe_extract_zip(source, temp)
-                else:
-                    raise GameServiceError("仅支持世界目录或 ZIP 文件", "UNSUPPORTED_WORLD_IMPORT")
-                candidates = [path.parent for path in temp.rglob("level.dat")]
-                if len(candidates) != 1:
-                    raise GameServiceError("导入内容必须且只能包含一个有效存档", "INVALID_WORLD_ARCHIVE")
-                candidate = candidates[0]
-                self._read_world(candidate)
-                destination = resolve_relative_id(root, candidate.name, must_exist=False)
-                if destination.exists():
-                    raise GameServiceError("同名存档已存在", "WORLD_ALREADY_EXISTS")
-                context.check_cancelled()
-                shutil.move(str(candidate), destination)
-                return {"worldId": destination.name}
+            return self._import_world_source(root, source, context)
 
         return self._game_operations.submit("world_import", worker)
+
+    def _import_world_source(
+        self,
+        root: Path,
+        source: Path,
+        context: OperationContext | None = None,
+    ) -> dict[str, str]:
+        """校验并导入单个世界目录或 ZIP，供本地导入与在线存档下载共用。"""
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="ecl-world-import-", dir=root.parent) as temp_dir:
+            temp = Path(temp_dir)
+            if source.is_dir():
+                copied = temp / source.name
+                shutil.copytree(source, copied)
+            elif zipfile.is_zipfile(source):
+                safe_extract_zip(source, temp)
+            else:
+                raise GameServiceError("仅支持世界目录或 ZIP 文件", "UNSUPPORTED_WORLD_IMPORT")
+            candidates = [path.parent for path in temp.rglob("level.dat")]
+            if len(candidates) != 1:
+                raise GameServiceError("导入内容必须且只能包含一个有效存档", "INVALID_WORLD_ARCHIVE")
+            candidate = candidates[0]
+            self._read_world(candidate)
+            destination = resolve_relative_id(root, candidate.name, must_exist=False)
+            if destination.exists():
+                raise GameServiceError("同名存档已存在", "WORLD_ALREADY_EXISTS")
+            if context is not None:
+                context.check_cancelled()
+            shutil.move(str(candidate), destination)
+            return {"worldId": destination.name}
 
     def _backup_root(self, target: Any, world_id: str) -> Path:
         return target.game_path / "ECLBackups" / target.version_id / world_id
@@ -287,7 +301,12 @@ class WorldCoordinator:
                 if path.is_file():
                     archive.write(path, path.relative_to(world))
         temp.replace(archive_path)
-        metadata = {"id": backup_id, "createdAt": datetime.now(UTC).isoformat(), "locked": False, "automatic": automatic}
+        metadata = {
+            "id": backup_id,
+            "createdAt": datetime.now(UTC).isoformat(),
+            "locked": False,
+            "automatic": automatic,
+        }
         atomic_write_text(backup_root / f"{backup_id}.json", json.dumps(metadata, ensure_ascii=False, indent=2))
         unlocked = [item for item in self.list_world_backups(game_path, version_id, world.name) if not item["locked"]]
         keep_count = 10
@@ -325,18 +344,22 @@ class WorldCoordinator:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
             except (OSError, ValueError):
                 metadata = {}
-            results.append({
-                "id": archive.stem,
-                "createdAt": metadata.get("createdAt"),
-                "locked": bool(metadata.get("locked")),
-                "automatic": bool(metadata.get("automatic")),
-                "size": archive.stat().st_size,
-                "path": str(archive),
-                "metadataPath": str(metadata_path),
-            })
+            results.append(
+                {
+                    "id": archive.stem,
+                    "createdAt": metadata.get("createdAt"),
+                    "locked": bool(metadata.get("locked")),
+                    "automatic": bool(metadata.get("automatic")),
+                    "size": archive.stat().st_size,
+                    "path": str(archive),
+                    "metadataPath": str(metadata_path),
+                }
+            )
         return sorted(results, key=lambda item: item["id"], reverse=True)
 
-    def lock_world_backup(self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any, locked: bool) -> dict[str, Any]:
+    def lock_world_backup(
+        self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any, locked: bool
+    ) -> dict[str, Any]:
         target = self.resolve_instance(game_path, version_id)
         root = self._backup_root(target, str(world_id))
         archive = resolve_relative_id(root, f"{backup_id}.zip")
@@ -393,15 +416,19 @@ class WorldCoordinator:
         manifest_path = target.instance_path / f"{target.version_id}.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            game_args = ((manifest.get("arguments") or {}).get("game") or [])
+            game_args = (manifest.get("arguments") or {}).get("game") or []
             supported = any("quickPlaySingleplayer" in str(item) for item in game_args)
         except (OSError, UnicodeDecodeError, ValueError):
             supported = False
         return {"supported": supported, "reason": None if supported else "该版本不支持 --quickPlaySingleplayer"}
 
-    def chunkbase_url(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> dict[str, str]:
+    def chunkbase_url(
+        self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
+    ) -> dict[str, str]:
         world = self.world_detail(game_path, version_id, world_id, version_isolation)
         version = str(world.get("version") or "")
         if not version or any(char.isalpha() for char in version.replace("Java", "")):
             raise GameServiceError("快照或未知版本无法映射到 Chunkbase", "CHUNKBASE_VERSION_UNSUPPORTED")
-        return {"url": f"https://www.chunkbase.com/apps/seed-map#seed={quote_plus(world['seed'])}&platform=java_{quote_plus(version)}"}
+        return {
+            "url": f"https://www.chunkbase.com/apps/seed-map#seed={quote_plus(world['seed'])}&platform=java_{quote_plus(version)}"
+        }

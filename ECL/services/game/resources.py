@@ -46,6 +46,15 @@ _CURSEFORGE_CLASS_ID = {
     "resourcepack": 12,
     "shaderpack": 6552,
     "datapack": 6945,
+    "world": 17,
+}
+
+_CURSEFORGE_WEB_PATH = {
+    "mod": "mc-mods",
+    "resourcepack": "texture-packs",
+    "shaderpack": "shaders",
+    "datapack": "data-packs",
+    "world": "worlds",
 }
 
 # CurseForge 排序 sortField 映射；默认采用 HMCL 的人气排序（2=Popularity）
@@ -214,15 +223,17 @@ class ResourceCoordinator:
                 if "fabric.mod.json" in names:
                     data = _safe_json(archive.read("fabric.mod.json"))
                     depends = data.get("depends") or {}
-                    result.update({
-                        "loader": "fabric",
-                        "projectId": data.get("id"),
-                        "name": data.get("name") or data.get("id") or result["name"],
-                        "version": data.get("version"),
-                        "author": _join_authors(data.get("authors")),
-                        "gameVersion": str(depends.get("minecraft")) if depends.get("minecraft") else None,
-                        "dependencies": list(depends.keys()),
-                    })
+                    result.update(
+                        {
+                            "loader": "fabric",
+                            "projectId": data.get("id"),
+                            "name": data.get("name") or data.get("id") or result["name"],
+                            "version": data.get("version"),
+                            "author": _join_authors(data.get("authors")),
+                            "gameVersion": str(depends.get("minecraft")) if depends.get("minecraft") else None,
+                            "dependencies": list(depends.keys()),
+                        }
+                    )
                 elif "quilt.mod.json" in names:
                     data = _safe_json(archive.read("quilt.mod.json"))
                     quilt = data.get("quilt_loader") or {}
@@ -230,20 +241,30 @@ class ResourceCoordinator:
                     contributors = metadata.get("contributors") or {}
                     depends = quilt.get("depends") or []
                     minecraft = next(
-                        (item.get("versions") for item in depends if isinstance(item, dict) and item.get("id") == "minecraft"),
+                        (
+                            item.get("versions")
+                            for item in depends
+                            if isinstance(item, dict) and item.get("id") == "minecraft"
+                        ),
                         None,
                     )
-                    result.update({
-                        "loader": "quilt",
-                        "projectId": quilt.get("id"),
-                        "name": metadata.get("name") or quilt.get("id") or result["name"],
-                        "version": quilt.get("version"),
-                        "author": ", ".join(contributors.keys()) if isinstance(contributors, dict) else "",
-                        "gameVersion": str(minecraft) if minecraft else None,
-                        "dependencies": [item.get("id") for item in depends if isinstance(item, dict)],
-                    })
+                    result.update(
+                        {
+                            "loader": "quilt",
+                            "projectId": quilt.get("id"),
+                            "name": metadata.get("name") or quilt.get("id") or result["name"],
+                            "version": quilt.get("version"),
+                            "author": ", ".join(contributors.keys()) if isinstance(contributors, dict) else "",
+                            "gameVersion": str(minecraft) if minecraft else None,
+                            "dependencies": [item.get("id") for item in depends if isinstance(item, dict)],
+                        }
+                    )
                 else:
-                    toml_name = "META-INF/neoforge.mods.toml" if "META-INF/neoforge.mods.toml" in names else "META-INF/mods.toml"
+                    toml_name = (
+                        "META-INF/neoforge.mods.toml"
+                        if "META-INF/neoforge.mods.toml" in names
+                        else "META-INF/mods.toml"
+                    )
                     if toml_name in names:
                         data = tomllib.loads(archive.read(toml_name).decode("utf-8-sig"))
                         mods = data.get("mods") or []
@@ -259,15 +280,17 @@ class ResourceCoordinator:
                                 minecraft_range = str(dep.get("versionRange") or "")
                             elif dep.get("mandatory"):
                                 dependencies.append(str(dep["modId"]))
-                        result.update({
-                            "loader": "neoforge" if "neoforge" in toml_name else "forge",
-                            "projectId": mod_id or None,
-                            "name": first.get("displayName") or mod_id or result["name"],
-                            "version": first.get("version"),
-                            "author": str(first.get("authors") or ""),
-                            "gameVersion": minecraft_range,
-                            "dependencies": dependencies,
-                        })
+                        result.update(
+                            {
+                                "loader": "neoforge" if "neoforge" in toml_name else "forge",
+                                "projectId": mod_id or None,
+                                "name": first.get("displayName") or mod_id or result["name"],
+                                "version": first.get("version"),
+                                "author": str(first.get("authors") or ""),
+                                "gameVersion": minecraft_range,
+                                "dependencies": dependencies,
+                            }
+                        )
         except (OSError, ValueError, KeyError, zipfile.BadZipFile):
             pass
         return result
@@ -304,26 +327,36 @@ class ResourceCoordinator:
         manifest = self._read_resource_manifest(game_path, version_id).get("resources") or {}
         resources: list[dict[str, Any]] = []
         for path in root.iterdir():
-            if path.name.startswith(".") or not (path.is_file() or (resource_type in {"resourcepack", "datapack"} and path.is_dir())):
+            if path.name.startswith(".") or not (
+                path.is_file() or (resource_type in {"resourcepack", "datapack"} and path.is_dir())
+            ):
                 continue
             if resource_type == "mod" and path.suffix.casefold() not in {".jar", ".disabled"}:
                 continue
-            metadata = self._parse_mod(path) if resource_type == "mod" else self._parse_pack(path) if resource_type in {"resourcepack", "datapack"} else {"name": path.stem}
+            metadata = (
+                self._parse_mod(path)
+                if resource_type == "mod"
+                else self._parse_pack(path)
+                if resource_type in {"resourcepack", "datapack"}
+                else {"name": path.stem}
+            )
             digest = _sha512(path) if path.is_file() else None
             recorded = manifest.get(f"{resource_type}:{path.name}") or {}
-            resources.append({
-                "id": path.name,
-                "type": resource_type,
-                "path": str(path),
-                "enabled": not path.name.endswith(".disabled"),
-                "size": path.stat().st_size if path.is_file() else 0,
-                "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
-                "sha512": digest,
-                "source": recorded.get("source") or "local",
-                "sourceProjectId": recorded.get("projectId"),
-                "sourceVersionId": recorded.get("versionId"),
-                **metadata,
-            })
+            resources.append(
+                {
+                    "id": path.name,
+                    "type": resource_type,
+                    "path": str(path),
+                    "enabled": not path.name.endswith(".disabled"),
+                    "size": path.stat().st_size if path.is_file() else 0,
+                    "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
+                    "sha512": digest,
+                    "source": recorded.get("source") or "local",
+                    "sourceProjectId": recorded.get("projectId"),
+                    "sourceVersionId": recorded.get("versionId"),
+                    **metadata,
+                }
+            )
         hashes: dict[str, int] = {}
         ids: dict[str, int] = {}
         for item in resources:
@@ -339,7 +372,8 @@ class ResourceCoordinator:
             key = str(item.get("projectId") or "").casefold()
             item["duplicateProjectId"] = bool(key and ids.get(key, 0) > 1)
             item["missingDependencies"] = [
-                dependency for dependency in item.get("dependencies") or []
+                dependency
+                for dependency in item.get("dependencies") or []
                 if str(dependency).casefold() not in installed_ids | ignored_dependencies
             ]
         return sorted(resources, key=lambda item: str(item.get("name") or item["id"]).casefold())
@@ -397,7 +431,7 @@ class ResourceCoordinator:
             if not line.startswith(prefix):
                 continue
             found = True
-            value = line[len(prefix):]
+            value = line[len(prefix) :]
             entries = re.findall(r'"(?:\\.|[^"\\])*"', value)
             entries = [entry for entry in entries if entry != encoded]
             if enabled:
@@ -487,7 +521,9 @@ class ResourceCoordinator:
         output = Path(str(output_path)).expanduser().resolve(strict=False)
         output.parent.mkdir(parents=True, exist_ok=True)
         if output_format == "json":
-            content = json.dumps({"schemaVersion": 1, "type": resource_type, "resources": resources}, ensure_ascii=False, indent=2)
+            content = json.dumps(
+                {"schemaVersion": 1, "type": resource_type, "resources": resources}, ensure_ascii=False, indent=2
+            )
         elif output_format == "csv":
             stream = io.StringIO(newline="")
             fields = ["id", "name", "version", "enabled", "source", "sourceProjectId", "sha512"]
@@ -507,6 +543,12 @@ class ResourceCoordinator:
         :return: 已配置时返回 True，未配置时返回 False
         """
         return bool(os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key)
+
+    def _curseforge_headers(self) -> dict[str, str]:
+        key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key
+        if not key:
+            raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
+        return {"x-api-key": key, "Accept": "application/json"}
 
     def search_online_resources(
         self,
@@ -599,6 +641,7 @@ class ResourceCoordinator:
                 "source": source,
                 "items": data.get("data", []),
                 "total": (data.get("pagination") or {}).get("totalCount", 0),
+                "resource_type": resource_type,
             }
         raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
 
@@ -626,7 +669,8 @@ class ResourceCoordinator:
             hit = _normalize_curseforge_hit(raw) if source == "curseforge" else raw
             slug = str(hit.get("slug") or "")
             if source == "curseforge":
-                project_url = f"https://www.curseforge.com/minecraft/mc-mods/{slug}"
+                section = _CURSEFORGE_WEB_PATH.get(resource_type, "mc-mods")
+                project_url = f"https://www.curseforge.com/minecraft/{section}/{slug}"
             else:
                 project_url = f"https://modrinth.com/{project_type}/{slug}"
             dto = _ModrinthSearchHit.model_validate(hit)
@@ -634,12 +678,14 @@ class ResourceCoordinator:
             dto.source = source
             dto.project_url = project_url
             dto.resource_type = resource_type
-            dto.alternatives = [{
-                "source": source,
-                "projectId": dto.project_id,
-                "slug": slug,
-                "projectUrl": project_url,
-            }]
+            dto.alternatives = [
+                {
+                    "source": source,
+                    "projectId": dto.project_id,
+                    "slug": slug,
+                    "projectUrl": project_url,
+                }
+            ]
             if resource_type in {"mod", "datapack"}:
                 lookup = (
                     self._mcmod.lookup_by_curseforge_slug
@@ -668,6 +714,46 @@ class ResourceCoordinator:
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），用于兜底项目页 URL
         :return: 项目详情字典
         """
+        if source == "curseforge":
+            response = httpx.get(
+                f"https://api.curseforge.com/v1/mods/{project_id}",
+                headers=self._curseforge_headers(),
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                raise GameServiceError("CurseForge 项目详情无效", "CURSEFORGE_PROJECT_INVALID")
+            authors = data.get("authors") or []
+            logo = data.get("logo") or {}
+            latest_files = data.get("latestFiles") or []
+            game_versions = sorted(
+                {
+                    str(version)
+                    for item in latest_files
+                    if isinstance(item, dict)
+                    for version in (item.get("gameVersions") or [])
+                    if re.fullmatch(r"\d+(?:\.\d+){1,2}", str(version))
+                }
+            )
+            slug = str(data.get("slug") or "")
+            section = _CURSEFORGE_WEB_PATH.get(resource_type, "mc-mods")
+            links = data.get("links") or {}
+            return {
+                "id": str(data.get("id") or project_id),
+                "slug": slug,
+                "title": str(data.get("name") or slug),
+                "description": str(data.get("summary") or ""),
+                "author": str(authors[0].get("name") or "") if authors and isinstance(authors[0], dict) else "",
+                "body": str(data.get("summary") or ""),
+                "iconUrl": logo.get("url") if isinstance(logo, dict) else None,
+                "source": "curseforge",
+                "resourceType": resource_type,
+                "loaders": [],
+                "gameVersions": game_versions,
+                "projectUrl": str(links.get("websiteUrl") or f"https://www.curseforge.com/minecraft/{section}/{slug}"),
+            }
         if source != "modrinth":
             raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         response = httpx.get(
@@ -701,6 +787,41 @@ class ResourceCoordinator:
         :param loader: 兼容的加载器筛选
         :return: 版本字典列表
         """
+        if source == "curseforge":
+            params: dict[str, Any] = {"pageSize": 50, "index": 0}
+            if game_version:
+                params["gameVersion"] = game_version
+            response = httpx.get(
+                f"https://api.curseforge.com/v1/mods/{project_id}/files",
+                params=params,
+                headers=self._curseforge_headers(),
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            files = payload.get("data") if isinstance(payload, dict) else []
+            release_types = {1: "release", 2: "beta", 3: "alpha"}
+            return [
+                {
+                    "id": str(item.get("id") or ""),
+                    "projectId": str(item.get("modId") or project_id),
+                    "name": str(item.get("displayName") or item.get("fileName") or ""),
+                    "versionNumber": str(item.get("displayName") or item.get("fileName") or ""),
+                    "gameVersions": [
+                        str(version)
+                        for version in (item.get("gameVersions") or [])
+                        if re.fullmatch(r"\d+(?:\.\d+){1,2}", str(version))
+                    ],
+                    "loaders": [],
+                    "filename": str(item.get("fileName") or ""),
+                    "datePublished": item.get("fileDate"),
+                    "downloads": item.get("downloadCount") or 0,
+                    "releaseType": release_types.get(item.get("releaseType"), "release"),
+                    "dependencies": [],
+                }
+                for item in (files or [])
+                if isinstance(item, dict) and item.get("id") and item.get("fileName")
+            ]
         if source != "modrinth":
             raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         params: dict[str, Any] = {}
@@ -725,18 +846,30 @@ class ResourceCoordinator:
                 (file for file in files if isinstance(file, dict) and file.get("primary")),
                 files[0] if files else None,
             )
-            result.append({
-                "id": item.get("id"),
-                "projectId": item.get("project_id"),
-                "name": item.get("name"),
-                "versionNumber": item.get("version_number"),
-                "gameVersions": item.get("game_versions") or [],
-                "loaders": item.get("loaders") or [],
-                "filename": primary.get("filename") if isinstance(primary, dict) else "",
-                "datePublished": item.get("date_published"),
-                "downloads": item.get("downloads"),
-                "releaseType": item.get("release_type"),
-            })
+            result.append(
+                {
+                    "id": item.get("id"),
+                    "projectId": item.get("project_id"),
+                    "name": item.get("name"),
+                    "versionNumber": item.get("version_number"),
+                    "gameVersions": item.get("game_versions") or [],
+                    "loaders": item.get("loaders") or [],
+                    "filename": primary.get("filename") if isinstance(primary, dict) else "",
+                    "datePublished": item.get("date_published"),
+                    "downloads": item.get("downloads"),
+                    "releaseType": item.get("release_type"),
+                    "dependencies": [
+                        {
+                            "versionId": dependency.get("version_id"),
+                            "projectId": dependency.get("project_id"),
+                            "filename": dependency.get("file_name"),
+                            "dependencyType": dependency.get("dependency_type"),
+                        }
+                        for dependency in (item.get("dependencies") or [])
+                        if isinstance(dependency, dict)
+                    ],
+                }
+            )
         return result
 
     def _fetch_online_version(self, version_id_str: str) -> dict[str, Any]:
@@ -756,6 +889,40 @@ class ResourceCoordinator:
             raise GameServiceError("该版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
         return selected
 
+    def _fetch_curseforge_file(self, project_id: str, file_id: str) -> dict[str, Any]:
+        """获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。"""
+        headers = self._curseforge_headers()
+        response = httpx.get(
+            f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}",
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not data.get("fileName"):
+            raise GameServiceError("CurseForge 文件详情无效", "CURSEFORGE_FILE_INVALID")
+        url = data.get("downloadUrl")
+        if not url:
+            download_response = httpx.get(
+                f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}/download-url",
+                headers=headers,
+                timeout=10,
+            )
+            download_response.raise_for_status()
+            download_payload = download_response.json()
+            url = download_payload.get("data") if isinstance(download_payload, dict) else None
+        if not url:
+            raise GameServiceError("该 CurseForge 文件不允许第三方下载", "CURSEFORGE_DOWNLOAD_UNAVAILABLE")
+        return {"filename": str(data["fileName"]), "url": str(url), "hashes": {}}
+
+    def _select_online_file(self, source: str, project_id: str, version_id_str: str) -> dict[str, Any]:
+        if source == "modrinth":
+            return self._fetch_online_version(version_id_str)
+        if source == "curseforge":
+            return self._fetch_curseforge_file(project_id, version_id_str)
+        raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+
     def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
         """流式下载在线资源到临时文件，并按需上报字节进度与实时速度。"""
         with httpx.stream("GET", url, timeout=15, follow_redirects=True) as stream:
@@ -768,8 +935,13 @@ class ResourceCoordinator:
                 last_bytes = 0
                 if task_id:
                     self._emit_install_progress(
-                        task_id, "download", f"正在下载 {filename}",
-                        done=0, total=total, progress_type="bytes", speed=0,
+                        task_id,
+                        "download",
+                        f"正在下载 {filename}",
+                        done=0,
+                        total=total,
+                        progress_type="bytes",
+                        speed=0,
                     )
                 for chunk in stream.iter_bytes(1024 * 1024):
                     output.write(chunk)
@@ -781,8 +953,13 @@ class ResourceCoordinator:
                         continue
                     speed = int((downloaded - last_bytes) / max(now - last_emit, 0.001))
                     self._emit_install_progress(
-                        task_id, "download", f"正在下载 {filename}",
-                        done=downloaded, total=total, progress_type="bytes", speed=speed,
+                        task_id,
+                        "download",
+                        f"正在下载 {filename}",
+                        done=downloaded,
+                        total=total,
+                        progress_type="bytes",
+                        speed=speed,
                     )
                     last_emit = now
                     last_bytes = downloaded
@@ -835,11 +1012,23 @@ class ResourceCoordinator:
         :param world_id: 目标存档 ID（仅数据包安装到指定世界，其他类型忽略）
         :return: 安装结果（文件名、来源、是否跳过）
         """
-        if source != "modrinth":
-            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        if resource_type == "world":
+            if source != "curseforge":
+                raise GameServiceError("存档在线下载仅支持 CurseForge", "INVALID_RESOURCE_SOURCE")
+            selected = self._select_online_file(source, project_id, version_id_str)
+            root = self._world_root(game_path, version_id, version_isolation)
+            root.mkdir(parents=True, exist_ok=True)
+            filename = str(selected["filename"])
+            with tempfile.TemporaryDirectory(prefix="ecl-world-download-", dir=root.parent) as temp_dir:
+                archive = Path(temp_dir) / filename
+                self._download_online_file(str(selected["url"]), archive, filename, task_id)
+                imported = self._import_world_source(root, archive)
+            if task_id:
+                self._emit_install_progress(task_id, "done", f"{filename} 已导入", done=1, total=1)
+            return {"filename": imported["worldId"], "source": source, "skipped": False}
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         root.mkdir(parents=True, exist_ok=True)
-        selected = self._fetch_online_version(version_id_str)
+        selected = self._select_online_file(source, project_id, version_id_str)
         destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
         if destination.exists():
             raise GameServiceError(f"模组已存在：{selected['filename']}", "RESOURCE_ALREADY_EXISTS")
@@ -860,13 +1049,22 @@ class ResourceCoordinator:
         except GameServiceError as exc:
             if task_id:
                 self._emit_install_progress(
-                    task_id, "error", str(exc), done=0, total=1, error_code=exc.error_code,
+                    task_id,
+                    "error",
+                    str(exc),
+                    done=0,
+                    total=1,
+                    error_code=exc.error_code,
                 )
             raise
         except Exception as exc:
             if task_id:
                 self._emit_install_progress(
-                    task_id, "error", f"下载 {filename} 失败: {exc}", done=0, total=1,
+                    task_id,
+                    "error",
+                    f"下载 {filename} 失败: {exc}",
+                    done=0,
+                    total=1,
                     error_code="RESOURCE_DOWNLOAD_FAILED",
                 )
             raise
@@ -891,12 +1089,10 @@ class ResourceCoordinator:
         :param task_id: 任务队列 ID，非空时上报字节进度与实时速度事件
         :return: 保存结果（文件名与来源）
         """
-        if source != "modrinth":
-            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         destination = Path(save_path)
         if not destination.parent.exists():
             raise GameServiceError("保存目录不存在", "INVALID_SAVE_PATH")
-        selected = self._fetch_online_version(version_id_str)
+        selected = self._select_online_file(source, project_id, version_id_str)
         filename = str(selected["filename"])
         temp = destination.with_name(f".{destination.name}.ecl-download")
         try:
@@ -915,16 +1111,18 @@ class ResourceCoordinator:
         except Exception as exc:
             if task_id:
                 self._emit_install_progress(
-                    task_id, "error", f"保存 {filename} 失败: {exc}", done=0, total=1,
+                    task_id,
+                    "error",
+                    f"保存 {filename} 失败: {exc}",
+                    done=0,
+                    total=1,
                     error_code="RESOURCE_DOWNLOAD_FAILED",
                 )
             raise
         finally:
             temp.unlink(missing_ok=True)
 
-    def identify_resource_hash(
-        self, sha512: str, curseforge_key: str | None = None
-    ) -> dict[str, Any]:
+    def identify_resource_hash(self, sha512: str, curseforge_key: str | None = None) -> dict[str, Any]:
         """
         用完整文件哈希查询 Modrinth 和 CurseForge，歧义时不猜测来源。
         """
@@ -940,7 +1138,9 @@ class ResourceCoordinator:
             )
             response.raise_for_status()
             if version := response.json().get(sha512):
-                candidates.append({"source": "modrinth", "projectId": version.get("project_id"), "versionId": version.get("id")})
+                candidates.append(
+                    {"source": "modrinth", "projectId": version.get("project_id"), "versionId": version.get("id")}
+                )
         except httpx.HTTPError:
             pass
         key = os.getenv("CURSEFORGE_API_KEY") or curseforge_key
@@ -981,17 +1181,19 @@ class ResourceCoordinator:
                 latest = versions[0]
                 if latest.get("id") == item.get("sourceVersionId"):
                     continue
-                updates.append({
-                    "resourceId": item["id"],
-                    "source": "modrinth",
-                    "projectId": item["sourceProjectId"],
-                    "versionId": latest.get("id"),
-                    "versionNumber": latest.get("version_number"),
-                    "publishedAt": latest.get("date_published"),
-                    "dependencies": latest.get("dependencies") or [],
-                    "changelog": re.sub(r"<[^>]+>", "", str(latest.get("changelog") or ""))[:12000],
-                    "files": latest.get("files") or [],
-                })
+                updates.append(
+                    {
+                        "resourceId": item["id"],
+                        "source": "modrinth",
+                        "projectId": item["sourceProjectId"],
+                        "versionId": latest.get("id"),
+                        "versionNumber": latest.get("version_number"),
+                        "publishedAt": latest.get("date_published"),
+                        "dependencies": latest.get("dependencies") or [],
+                        "changelog": re.sub(r"<[^>]+>", "", str(latest.get("changelog") or ""))[:12000],
+                        "files": latest.get("files") or [],
+                    }
+                )
         return updates
 
     def update_resource(
@@ -1010,7 +1212,9 @@ class ResourceCoordinator:
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         old = resolve_relative_id(root, resource_id)
         files = update.get("files") if isinstance(update.get("files"), list) else []
-        selected = next((item for item in files if isinstance(item, dict) and item.get("primary")), files[0] if files else None)
+        selected = next(
+            (item for item in files if isinstance(item, dict) and item.get("primary")), files[0] if files else None
+        )
         if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
             raise GameServiceError("更新版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
 
@@ -1098,11 +1302,44 @@ class ResourceCoordinator:
                             checksums[str(archive_name).replace("\\", "/")] = _sha512(path)
                             context.progress(index * 85 / max(1, len(files)), "正在导出整合包")
                     if pack_format == "modrinth":
-                        archive.writestr("modrinth.index.json", json.dumps({"formatVersion": 1, "game": "minecraft", "versionId": 1, "name": target.version_id, "summary": "Exported by ECL", "files": [], "dependencies": {"minecraft": target.version_id}}))
+                        archive.writestr(
+                            "modrinth.index.json",
+                            json.dumps(
+                                {
+                                    "formatVersion": 1,
+                                    "game": "minecraft",
+                                    "versionId": 1,
+                                    "name": target.version_id,
+                                    "summary": "Exported by ECL",
+                                    "files": [],
+                                    "dependencies": {"minecraft": target.version_id},
+                                }
+                            ),
+                        )
                     elif pack_format == "curseforge":
-                        archive.writestr("manifest.json", json.dumps({"minecraft": {"version": target.version_id}, "manifestType": "minecraftModpack", "manifestVersion": 1, "name": target.version_id, "version": "1.0.0", "author": "ECL", "files": [], "overrides": "overrides"}))
+                        archive.writestr(
+                            "manifest.json",
+                            json.dumps(
+                                {
+                                    "minecraft": {"version": target.version_id},
+                                    "manifestType": "minecraftModpack",
+                                    "manifestVersion": 1,
+                                    "name": target.version_id,
+                                    "version": "1.0.0",
+                                    "author": "ECL",
+                                    "files": [],
+                                    "overrides": "overrides",
+                                }
+                            ),
+                        )
                     else:
-                        archive.writestr("ecl-pack.json", json.dumps({"schemaVersion": 1, "versionId": target.version_id, "checksums": checksums}, ensure_ascii=False))
+                        archive.writestr(
+                            "ecl-pack.json",
+                            json.dumps(
+                                {"schemaVersion": 1, "versionId": target.version_id, "checksums": checksums},
+                                ensure_ascii=False,
+                            ),
+                        )
                 temp.replace(output)
                 return {"path": str(output), "format": pack_format}
             finally:
@@ -1110,9 +1347,7 @@ class ResourceCoordinator:
 
         return self._game_operations.submit("instance_export", worker)
 
-    def import_instance_pack(
-        self, game_path: Any, source_path: Any, new_version_id: Any
-    ) -> dict[str, str]:
+    def import_instance_pack(self, game_path: Any, source_path: Any, new_version_id: Any) -> dict[str, str]:
         """
         安全导入 mrpack、CurseForge ZIP 或 ECL ZIP 的 overrides/实例内容。
         """
@@ -1150,7 +1385,9 @@ class ResourceCoordinator:
                 if base_version:
                     atomic_write_text(
                         destination_temp / f"{target.version_id}.json",
-                        json.dumps({"id": target.version_id, "inheritsFrom": base_version}, ensure_ascii=False, indent=2),
+                        json.dumps(
+                            {"id": target.version_id, "inheritsFrom": base_version}, ensure_ascii=False, indent=2
+                        ),
                     )
                 else:
                     manifests = list(destination_temp.glob("*.json"))
