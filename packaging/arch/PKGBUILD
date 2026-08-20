@@ -13,7 +13,7 @@ url="https://github.com/ECLteam/EuoraCraft-Launcher"
 license=('MIT')
 depends=(
     'gtk3'
-    'webkit2gtk'
+    'webkit2gtk-4.1'
     'librsvg'
     'libayatana-appindicator'
 )
