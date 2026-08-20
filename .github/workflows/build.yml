@@ -368,12 +368,37 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE/packaging/arch"
           su builder -s /bin/bash -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg -f -c --noconfirm --skipinteg"
 
-      - name: Upload package as artifact
+      - name: Locate main Arch package
+        id: arch_package
+        working-directory: packaging/arch
+        shell: bash
+        run: |
+          mapfile -t packages < <(
+            find . -maxdepth 1 -type f \
+              -name 'euoracraft-launcher-*.pkg.tar.zst' \
+              ! -name 'euoracraft-launcher-debug-*.pkg.tar.zst' \
+              -printf '%f\n' | sort
+          )
+          if [ "${#packages[@]}" -ne 1 ]; then
+            printf '预期找到 1 个 Arch 主包，实际找到 %s 个：%s\n' \
+              "${#packages[@]}" "${packages[*]}" >&2
+            exit 1
+          fi
+          echo "filename=${packages[0]}" >> "$GITHUB_OUTPUT"
+          echo "path=packaging/arch/${packages[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Arch package as artifact
         uses: actions/upload-artifact@v7
         with:
-          path: |
-            packaging/arch/euoracraft-launcher-*.pkg.tar.zst
-            packaging/arch/EuoraCraft-Launcher-Arch-X64.zip
+          name: ${{ steps.arch_package.outputs.filename }}
+          path: ${{ steps.arch_package.outputs.path }}
+          archive: false
+
+      - name: Upload Arch binary as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: EuoraCraft-Launcher-Arch-X64.zip
+          path: packaging/arch/EuoraCraft-Launcher-Arch-X64.zip
           archive: false
 
       - name: Upload package to Release
@@ -384,6 +409,7 @@ jobs:
           TAG: ${{ steps.ver.outputs.tagname }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG_FILE=$(ls euoracraft-launcher-*.pkg.tar.zst | head -n1)
+          PKG_FILE="${{ steps.arch_package.outputs.filename }}"
+          [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
           echo "uploading $PKG_FILE and Arch binary to $TAG"
           gh release upload "$TAG" "$PKG_FILE" EuoraCraft-Launcher-Arch-X64.zip --clobber
