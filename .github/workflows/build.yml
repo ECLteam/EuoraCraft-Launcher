@@ -199,14 +199,16 @@ jobs:
   # Arch Linux 打包：GitHub 无原生 Arch hosted runner，因此在 Arch 容器中
   # 原生构建 PyInstaller 产物，避免将 Ubuntu/WebKitGTK 的编译期路径带入 Arch 包。
   build-arch-pkg:
-    name: Build Arch Linux package
-    # 等待后端矩阵仅为确保 tag Release 已创建；Arch job 不下载或复用其 Linux 二进制。
-    needs: [build-frontend, build-backend]
+    name: Build Frontend(Arch-x64)
+    # 只等待共用前端产物，随后与其他平台的后端矩阵并行构建。
+    needs: build-frontend
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
+    outputs:
+      package_artifact: ${{ steps.arch_package.outputs.filename }}
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Bootstrap Git for checkout
         # archlinux:base-devel 不包含 Git；checkout 的 REST 回退模式不支持子模块。
@@ -255,7 +257,7 @@ jobs:
             uv \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
             xorg-server-xvfb xorg-xauth dbus \
-            patchelf zip curl github-cli
+            patchelf zip curl
 
       - name: Install Python dependencies
         shell: bash
@@ -401,15 +403,35 @@ jobs:
           path: packaging/arch/EuoraCraft-Launcher-Arch-X64.zip
           archive: false
 
-      - name: Upload package to Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        working-directory: packaging/arch
+  publish-arch:
+    name: Publish Arch-x64
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-backend, build-arch-pkg]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Arch package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-arch-pkg.outputs.package_artifact }}
+          path: release-assets
+
+      - name: Download Arch binary
+        uses: actions/download-artifact@v8
+        with:
+          name: EuoraCraft-Launcher-Arch-X64.zip
+          path: release-assets
+
+      - name: Upload Arch artifacts to Release
         shell: bash
         env:
-          TAG: ${{ steps.ver.outputs.tagname }}
+          TAG: ${{ github.ref_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG_FILE="${{ steps.arch_package.outputs.filename }}"
+          PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
+          ARCH_ZIP="release-assets/EuoraCraft-Launcher-Arch-X64.zip"
           [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
-          echo "uploading $PKG_FILE and Arch binary to $TAG"
-          gh release upload "$TAG" "$PKG_FILE" EuoraCraft-Launcher-Arch-X64.zip --clobber
+          [ -f "$ARCH_ZIP" ] || { echo "未找到 Arch 二进制：$ARCH_ZIP" >&2; exit 1; }
+          echo "uploading $PKG_FILE and $ARCH_ZIP to $TAG"
+          gh release upload "$TAG" "$PKG_FILE" "$ARCH_ZIP" --clobber
