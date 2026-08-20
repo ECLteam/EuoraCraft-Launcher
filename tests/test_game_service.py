@@ -426,11 +426,38 @@ def test_install_version_rejects_incomplete_loader_options(tmp_path) -> None:
 
     with pytest.raises(GameServiceError) as error:
         service.install_version(
-            {"version_id": "1.21.8", "loader_type": "fabric"},
+            {"version_id": "1.21.8", "loader_type": "forge"},
             game_path=tmp_path,
         )
 
     assert error.value.error_code == "LOADER_VERSION_REQUIRED"
+    assert service._install_tasks == {}
+
+
+def test_install_version_fabric_allows_empty_loader_version(tmp_path, monkeypatch) -> None:
+    service = _build_service()
+    service.logger = Mock()
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(
+            games=SimpleNamespace(
+                build_fabric_download_list=lambda *_args: [
+                    ("https://example.com/client.jar", str(tmp_path / "client.jar"))
+                ]
+            )
+        ),
+    )
+
+    async def install():
+        result = service.install_version(
+            {"version_id": "1.21.8", "loader_type": "fabric", "task_id": "fabric-empty"},
+            game_path=tmp_path,
+        )
+        await service._install_tasks[result["taskId"]]
+
+    asyncio.run(install())
+
     assert service._install_tasks == {}
 
 
@@ -1216,3 +1243,38 @@ def test_local_mod_lifecycle_stays_inside_mods_directory(tmp_path) -> None:
     assert service.list_mods(game_path) == []
     with pytest.raises(GameServiceError, match="路径超出允许范围"):
         service.remove_mod(game_path, "../outside.jar")
+
+
+def test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> None:
+    service = _build_service()
+    destination = tmp_path / "sodium.jar"
+    downloaded = []
+
+    def fake_fetch(_version_id: str) -> dict:
+        return {"filename": "sodium.jar", "url": "https://example.com/sodium.jar", "hashes": {}}
+
+    def fake_download(url: str, temp, filename: str, _task_id) -> None:
+        downloaded.append((url, filename))
+        temp.write_bytes(b"JAR-CONTENT")
+
+    monkeypatch.setattr(service, "_fetch_online_version", fake_fetch)
+    monkeypatch.setattr(service, "_download_online_file", fake_download)
+
+    result = service.download_resource_to_path("modrinth", "project-1", "version-1", str(destination))
+
+    assert result == {"filename": "sodium.jar", "source": "modrinth", "skipped": False}
+    assert downloaded == [("https://example.com/sodium.jar", "sodium.jar")]
+    assert destination.read_bytes() == b"JAR-CONTENT"
+    assert not list(tmp_path.glob("*.ecl-download"))
+
+
+def test_download_resource_to_path_rejects_unsupported_source_and_missing_dir(tmp_path) -> None:
+    service = _build_service()
+    with pytest.raises(GameServiceError) as error:
+        service.download_resource_to_path("curseforge", "p", "v", str(tmp_path / "mod.jar"))
+    assert error.value.error_code == "INVALID_RESOURCE_SOURCE"
+
+    missing_dir = tmp_path / "not-exists" / "mod.jar"
+    with pytest.raises(GameServiceError) as error:
+        service.download_resource_to_path("modrinth", "p", "v", str(missing_dir))
+    assert error.value.error_code == "INVALID_SAVE_PATH"
