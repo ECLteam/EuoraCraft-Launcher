@@ -228,7 +228,9 @@ jobs:
           echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Install build toolchain
-        run: pacman -Syu --noconfirm curl github-cli unzip zip
+        # Arch 容器内默认 root，先同步并安装打包工具链与 PKGBUILD 声明的运行时依赖，
+        # 否则非 root 的 builder 调用 makepkg 校验依赖时会直接失败。
+        run: pacman -Syu --noconfirm curl github-cli unzip zip gtk3 webkit2gtk librsvg libayatana-appindicator
 
       - name: Download Linux binary artifact
         uses: actions/download-artifact@v8
