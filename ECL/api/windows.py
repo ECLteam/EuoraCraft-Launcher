@@ -28,20 +28,7 @@ from ECL.api.contracts import failure, success
 from ECL.api.models import WindowBoundsRequest, WindowLabelRequest, WindowOpenRequest
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
 
-BUILTIN_WINDOW_DESCRIPTORS: dict[str, dict[str, Any]] = {
-    "theme-studio": {
-        "id": "theme-studio",
-        "type": "theme-studio",
-        "title": "ECL Theme Studio",
-        "width": 460,
-        "height": 720,
-        "minWidth": 380,
-        "minHeight": 560,
-        "singleton": True,
-        "followMain": True,
-        "dataSchema": {"read": ["theme.designSession"], "write": ["theme.designSession.draft"]},
-    }
-}
+BUILTIN_WINDOW_DESCRIPTORS: dict[str, dict[str, Any]] = {}
 
 
 def _create_child_window_icon() -> Any | None:

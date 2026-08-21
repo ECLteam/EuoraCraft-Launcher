@@ -17,7 +17,6 @@ class PermissionScope(Enum):
     FILESYSTEM = "filesystem"
     NETWORK = "network"
     UI = "ui"
-    THEME = "theme"
     INSTANCES = "instances"
     CONNECTOR = "connector"
     LAUNCH = "launch"

@@ -13,7 +13,6 @@ from ECL.api.mods import ModHandlers
 from ECL.api.plugins import PluginHandlers
 from ECL.api.settings import SettingsHandlers
 from ECL.api.system import SystemHandlers
-from ECL.api.themes import ThemeHandlers
 from ECL.api.windows import WindowHandlers
 from ECL.api.workspace import WorkspaceHandlers
 
@@ -28,7 +27,6 @@ class FrontendApi(
     GameHandlers,
     SettingsHandlers,
     SystemHandlers,
-    ThemeHandlers,
     WindowHandlers,
 ):
     """

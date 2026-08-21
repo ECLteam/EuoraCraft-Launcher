@@ -71,7 +71,6 @@ class FileSelectionPurpose(StrEnum):
     RESOURCE_FILES = "resource-files"
     MODPACK = "modpack"
     WORLD_IMPORT = "world-import"
-    THEME_PRESET = "theme-preset"
 
 
 class FileSavePurpose(StrEnum):
@@ -82,91 +81,6 @@ class FileSavePurpose(StrEnum):
     RESOURCE_MANIFEST = "resource-manifest"
     SCREENSHOT = "screenshot"
     MOD_FILE = "mod-file"
-    THEME_PRESET = "theme-preset"
-
-
-class ThemeIdRequest(RequestModel):
-    preset_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
-
-
-class ThemeSaveRequest(RequestModel):
-    preset: dict[str, JsonValue]
-
-
-class ThemeAssetRequest(ThemeIdRequest):
-    asset_path: str = Field(min_length=1, max_length=300)
-
-
-class ThemeDesignStartRequest(RequestModel):
-    preset_id: str | None = Field(default=None, max_length=80, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
-    restore: bool = True
-
-
-class ThemeDesignSessionRequest(RequestModel):
-    session_id: str = Field(min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
-
-
-class ThemeDesignRevisionRequest(ThemeDesignSessionRequest):
-    expected_revision: int = Field(ge=0)
-
-
-class ThemeSelection(RequestModel):
-    node_id: str = Field(alias="nodeId", min_length=1, max_length=240)
-    page: str | None = Field(default=None, max_length=240)
-    component_type: str | None = Field(default=None, alias="componentType", max_length=160)
-    instance_key: str | None = Field(default=None, alias="instanceKey", max_length=240)
-    scope: Literal["global", "component", "node", "instance"]
-    path: list[str] = Field(default_factory=list, max_length=32)
-
-    @field_validator("path")
-    @classmethod
-    def validate_path(cls, value: list[str]) -> list[str]:
-        if any(not item or len(item) > 240 for item in value):
-            raise ValueError("主题节点路径包含无效片段")
-        return value
-
-
-class ThemeDesignSelectRequest(ThemeDesignSessionRequest):
-    selection: ThemeSelection | None = None
-
-
-class ThemeSlotHostSnapshot(RequestModel):
-    slot_id: str = Field(alias="slotId", min_length=1, max_length=160, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
-    context_key: str | None = Field(default=None, alias="contextKey", max_length=240)
-    occupied: bool = False
-
-
-class ThemeDesignOverlayRequest(ThemeDesignSessionRequest):
-    show_slots: bool
-    slot_hosts: list[ThemeSlotHostSnapshot] | None = Field(default=None, max_length=256)
-
-
-class ThemePatchOperation(RequestModel):
-    op: Literal["set", "remove"]
-    path: str = Field(min_length=2, max_length=500)
-    value: JsonValue | None = None
-
-
-class ThemeDesignPatchRequest(ThemeDesignRevisionRequest):
-    operations: list[ThemePatchOperation] = Field(min_length=1, max_length=100)
-
-
-class ThemeDesignDiscardRequest(ThemeDesignSessionRequest):
-    keep_recovery: bool = False
-
-
-class ThemeDesignSaveAsRequest(ThemeDesignSessionRequest):
-    name: str = Field(min_length=1, max_length=120)
-
-
-class ThemeImportRequest(RequestModel):
-    source_path: SafePath
-    replace: bool = False
-
-
-class ThemeExportRequest(ThemeIdRequest):
-    output_path: SafePath
-    include_instance_overrides: bool = False
 
 
 class WindowOpenRequest(RequestModel):
@@ -677,23 +591,6 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "settings_get": SettingsQuery,
     "settings_set": SettingsUpdate,
     "frontend_log": FrontendLogRequest,
-    "theme_get": ThemeIdRequest,
-    "theme_save": ThemeSaveRequest,
-    "theme_asset": ThemeAssetRequest,
-    "theme_delete": ThemeIdRequest,
-    "theme_activate": ThemeIdRequest,
-    "theme_import": ThemeImportRequest,
-    "theme_export": ThemeExportRequest,
-    "theme_design_start": ThemeDesignStartRequest,
-    "theme_design_get": ThemeDesignSessionRequest,
-    "theme_design_select": ThemeDesignSelectRequest,
-    "theme_design_overlay": ThemeDesignOverlayRequest,
-    "theme_design_patch": ThemeDesignPatchRequest,
-    "theme_design_undo": ThemeDesignRevisionRequest,
-    "theme_design_redo": ThemeDesignRevisionRequest,
-    "theme_design_commit": ThemeDesignSessionRequest,
-    "theme_design_discard": ThemeDesignDiscardRequest,
-    "theme_design_save_as": ThemeDesignSaveAsRequest,
     "window_open": WindowOpenRequest,
     "window_focus": WindowLabelRequest,
     "window_close": WindowLabelRequest,
@@ -804,22 +701,6 @@ __all__ = [
     "SettingsQuery",
     "SettingsUpdate",
     "SkinModel",
-    "ThemeAssetRequest",
-    "ThemeDesignDiscardRequest",
-    "ThemeDesignOverlayRequest",
-    "ThemeDesignPatchRequest",
-    "ThemeDesignRevisionRequest",
-    "ThemeDesignSaveAsRequest",
-    "ThemeDesignSelectRequest",
-    "ThemeDesignSessionRequest",
-    "ThemeDesignStartRequest",
-    "ThemeExportRequest",
-    "ThemeIdRequest",
-    "ThemeImportRequest",
-    "ThemePatchOperation",
-    "ThemeSaveRequest",
-    "ThemeSelection",
-    "ThemeSlotHostSnapshot",
     "WardrobeApplySkinRequest",
     "WardrobeImportRequest",
     "WardrobeItemRequest",

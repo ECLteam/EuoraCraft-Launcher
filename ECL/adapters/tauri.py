@@ -229,20 +229,6 @@ class Adapter:
                 },
             ),
         )
-        for event_name in (
-            "theme:library_changed",
-            "theme:activated",
-            "theme:design_changed",
-            "theme:selection_changed",
-            "theme:overlay_changed",
-            "theme:preview_changed",
-            "theme:design_committed",
-            "theme:design_discarded",
-        ):
-            bus.subscribe(
-                event_name,
-                lambda payload, event_name=event_name: api.emit_to_frontend(event_name, payload),
-            )
         logger.debug("后端到前端的事件转发注册完成")
 
     def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:

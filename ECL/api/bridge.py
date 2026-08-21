@@ -31,7 +31,6 @@ from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
-from ECL.services.themes import ThemeService
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.config import default_config
@@ -342,7 +341,6 @@ class _FrontendState:
         self.processes = context.processes
         self.app_path: Path = self.launcher.app_path
         self.data_path: Path = self.launcher.data_path
-        self.themes = ThemeService(self.data_path, self.config, self.events, self.plugins)
         self._webview: WebviewWindow | None = None
         self._webviews: dict[str, WebviewWindow] = {}
         self._window_metadata: dict[str, dict[str, Any]] = {}
@@ -425,8 +423,6 @@ class _FrontendState:
         window_type = metadata.get("windowType", "main")
         if window_type == "main":
             return True
-        if window_type == "theme-studio":
-            return event.startswith("theme:") or event.startswith("window:") or event == "plugin:status_changed"
         if window_type != "plugin":
             return False
         allowed = metadata.get("allowedEvents") or []
@@ -453,28 +449,6 @@ class _FrontendState:
         window_type = metadata.get("windowType")
         common = {"frontend_ready", "window_close", "window_focus", "window_update_bounds"}
         if operation in common:
-            return None
-        if window_type == "theme-studio":
-            allowed = {
-                "theme_active",
-                "theme_asset",
-                "theme_design_get",
-                "theme_design_select",
-                "theme_design_overlay",
-                "theme_design_patch",
-                "theme_design_undo",
-                "theme_design_redo",
-                "theme_design_commit",
-                "theme_design_discard",
-                "theme_design_save_as",
-                "plugin_get_slots",
-                "plugin_get_vue_slots",
-            }
-            if operation not in allowed:
-                return failure("主题控制台无权调用该宿主命令", "WINDOW_COMMAND_DENIED")
-            request_session = body.get("session_id")
-            if request_session is not None and request_session != metadata.get("sessionId"):
-                return failure("窗口不能访问其他主题设计会话", "WINDOW_SESSION_DENIED")
             return None
         if window_type != "plugin":
             return failure("未知窗口类型", "WINDOW_COMMAND_DENIED")
