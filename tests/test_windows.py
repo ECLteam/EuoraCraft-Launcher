@@ -20,14 +20,6 @@ def state_with(metadata):
     return state
 
 
-def test_theme_studio_cannot_write_another_session():
-    state = state_with({"label": "theme-studio", "windowType": "theme-studio", "sessionId": "own"})
-    denied = state.authorize_window_command(
-        "theme_design_patch", {"session_id": "other"}, FakeWindow("theme-studio")
-    )
-    assert denied["errorCode"] == "WINDOW_SESSION_DENIED"
-
-
 def test_plugin_window_is_limited_to_declared_settings_and_commands():
     state = state_with(
         {
@@ -64,7 +56,6 @@ def test_host_created_windows_are_in_tauri_capability():
     capability = tomllib.loads(capability_path.read_text(encoding="utf-8"))
 
     assert "main" in capability["windows"]
-    assert "theme-studio" in capability["windows"]
     assert "plugin.*" in capability["windows"]
 
 

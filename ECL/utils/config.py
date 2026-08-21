@@ -36,8 +36,8 @@ default_config: dict[str, Any] = {
     "ui": {
         "locale": "zh-CN",
         "theme": {
+            "theme_id": "classic",
             "mode": "system",
-            "scheme": "light",
             "primary_color": "#6f8cff",
             "blur_amount": 18,
             "sidebar_collapsed": True,
@@ -46,9 +46,11 @@ default_config: dict[str, Any] = {
             "transparent_bg": False,
             "background_opacity": 1.0,
             "appearance": {
-                "reduce_motion": False,
-                "compact_density": False,
-                "custom_css_enabled": False,
+                "radius_card": 8,
+                "radius_control": 6,
+                "radius_dialog": 10,
+                "card_opacity": 100,
+                "font_family": "",
             },
             "schedule": {"enabled": False, "dark_start": "20:00", "dark_end": "07:00"},
         },
