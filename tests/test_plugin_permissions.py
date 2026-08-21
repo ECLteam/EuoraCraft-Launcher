@@ -248,9 +248,18 @@ def test_system_plugin_ignores_permission_declaration(tmp_path) -> None:
         "    @Plugin.on_command('hello')\n"
         "    def cmd_hello(self): ...\n",
     )
+    state_path = data_path / "plugin_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"disabled": ["sysdemo"]}), encoding="utf-8")
 
     framework = PluginFramework()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("sysdemo") == "enabled"
     assert framework.get_plugin("sysdemo") is not None
+    assert "sysdemo" not in {plugin["name"] for plugin in framework.list_plugins()}
+    disabled = framework.disable("sysdemo")
+    assert disabled.success is False
+    assert disabled.status == "forbidden"
+    assert framework._status.get("sysdemo") == "enabled"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"disabled": []}

@@ -1,6 +1,10 @@
 identifier = "default"
-description = "Capability for the main window"
-windows = ["main"]
+description = "Capability for host-created ECL windows"
+# Child WebViews are created by the Python host. They still need a Tauri
+# capability match before they can invoke PyTauri IPC or the native window
+# APIs used by the custom title bar. Host-side command authorization remains
+# the final, resource-granular security boundary for these windows.
+windows = ["main", "theme-studio", "plugin.*"]
 permissions = [
     "core:default",
     "core:window:allow-minimize",

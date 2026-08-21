@@ -49,7 +49,7 @@
 
 | 文档 | GitHub | Wiki | Issues |
 |:----:|:----:|:----:|:----:|
-| 链接 | [GitHub](https://github.com/ECLTeam/EuoraCraft-Launcher) | [Wiki](https://github.com/ECLTeam/EuoraCraft-Launcher/wiki) | [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) |
+| [主题设计指南](docs/theme-designer-guide.zh-CN.md) · [联机扩展协议](docs/plugin-connector-extensions.md) | [GitHub](https://github.com/ECLTeam/EuoraCraft-Launcher) | [Wiki](https://github.com/ECLTeam/EuoraCraft-Launcher/wiki) | [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) |
 
 ---
 

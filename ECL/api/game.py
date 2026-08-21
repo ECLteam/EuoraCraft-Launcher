@@ -120,12 +120,16 @@ class GameHandlers(_FrontendState):
             game_config = self._get_effective_config().get("game") or {}
         scan_paths = [str(path) for path in paths if path]
         qomicex_path = game_config.get("qomicex_instances_path")
-        if qomicex_path:
-            versions = await to_thread.run_sync(
-                lambda: self.game.scan_versions(scan_paths, force=request.force, qomicex_path=qomicex_path)
+        compatibility_options = {
+            "qomicex": {"instances_path": qomicex_path},
+        }
+        versions = await to_thread.run_sync(
+            lambda: self.game.scan_versions(
+                scan_paths,
+                force=request.force,
+                compatibility_options=compatibility_options,
             )
-        else:
-            versions = await to_thread.run_sync(lambda: self.game.scan_versions(scan_paths, force=request.force))
+        )
         return success(versions)
 
     @_ipc_handler("VERSION_INSTALL_FAILED")

@@ -1,5 +1,4 @@
 from ECL.api.accounts import AccountHandlers
-from ECL.api.connector import ConnectorHandlers
 from ECL.api.bridge import (
     _Emitter,
     _FrontendState,
@@ -7,12 +6,15 @@ from ECL.api.bridge import (
     _mime_to_ext,
     _normalize_image_url,
 )
+from ECL.api.connector import ConnectorHandlers
 from ECL.api.files import FileHandlers
 from ECL.api.game import GameHandlers
 from ECL.api.mods import ModHandlers
 from ECL.api.plugins import PluginHandlers
 from ECL.api.settings import SettingsHandlers
 from ECL.api.system import SystemHandlers
+from ECL.api.themes import ThemeHandlers
+from ECL.api.windows import WindowHandlers
 from ECL.api.workspace import WorkspaceHandlers
 
 
@@ -26,6 +28,8 @@ class FrontendApi(
     GameHandlers,
     SettingsHandlers,
     SystemHandlers,
+    ThemeHandlers,
+    WindowHandlers,
 ):
     """
     聚合正式 IPC 域处理器，并共享唯一的前端事件桥接状态。

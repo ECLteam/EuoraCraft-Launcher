@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -30,6 +31,7 @@ from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
 from ECL.services.maintenance import DebugMaintenanceError
+from ECL.services.themes import ThemeService
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.config import default_config
@@ -367,7 +369,12 @@ class _FrontendState:
         self.processes = context.processes
         self.app_path: Path = self.launcher.app_path
         self.data_path: Path = self.launcher.data_path
+        self.themes = ThemeService(self.data_path, self.config, self.events, self.plugins)
         self._webview: WebviewWindow | None = None
+        self._webviews: dict[str, WebviewWindow] = {}
+        self._window_metadata: dict[str, dict[str, Any]] = {}
+        self._plugins_frontend_ready = False
+        self._main_window_event_bound = False
         self._pending_frontend_events: list[tuple[str, Any]] = []
         self._pending_error_presentations: dict[str, dict[str, Any]] = {}
         self._frontend_event_lock = RLock()
@@ -395,22 +402,38 @@ class _FrontendState:
             if len(self._pending_frontend_events) > _max_pending_frontend_events:
                 self._pending_frontend_events.pop(0)
 
-    def emit_to_frontend(self, event: str, payload: Any) -> None:
+    def emit_to_frontend(self, event: str, payload: Any, *, target_label: str | None = None) -> None:
         """
         向前端发送事件。
 
         :param event: 事件名称，如 ``config:updated``
         :param payload: 事件或请求携带的数据
         """
-        if self._webview is None:
+        if target_label is None and self._window_metadata:
+            labels = [
+                label
+                for label, metadata in self._window_metadata.items()
+                if label in self._webviews and self._window_event_allowed(metadata, event, payload)
+            ]
+            if labels:
+                for label in labels:
+                    self.emit_to_frontend(event, payload, target_label=label)
+                return
+        if self._webview is None and not self._webviews:
             self._queue_frontend_event(event, payload)
             return
-        webview = self._webview
+        webview = self._webviews.get(target_label) if target_label else self._webview
+        webview = webview or self._webview or next(iter(self._webviews.values()))
+        if webview is None:
+            self._queue_frontend_event(event, payload)
+            return
         serialized = json.dumps(payload, ensure_ascii=False)
 
         def emit_on_main_thread() -> None:
             try:
-                _Emitter.emit_str_to(webview, EventTarget.Any(), event, serialized)
+                targeted = getattr(EventTarget, "WebviewWindow", None)
+                target = targeted(target_label) if target_label and callable(targeted) else EventTarget.Any()
+                _Emitter.emit_str_to(webview, target, event, serialized)
             except (OSError, TypeError, ValueError, RuntimeError):
                 self.logger.exception("向前端推送事件失败: %s", event)
                 self._queue_frontend_event(event, payload)
@@ -421,8 +444,87 @@ class _FrontendState:
             webview.run_on_main_thread(emit_on_main_thread)
         except (OSError, TypeError, ValueError, RuntimeError):
             # 前端窗口已关闭时停止发送，避免关闭期间反复报错
-            self._webview = None
+            failed_label = target_label
+            if failed_label:
+                self._webviews.pop(failed_label, None)
+                self._window_metadata.pop(failed_label, None)
+            elif self._webview is webview:
+                self._webview = None
             self.logger.warning("前端已关闭，停止推送事件: %s", event)
+
+    @staticmethod
+    def _window_event_allowed(metadata: dict[str, Any], event: str, payload: Any) -> bool:
+        window_type = metadata.get("windowType", "main")
+        if window_type == "main":
+            return True
+        if window_type == "theme-studio":
+            return event.startswith("theme:") or event.startswith("window:") or event == "plugin:status_changed"
+        if window_type != "plugin":
+            return False
+        allowed = metadata.get("allowedEvents") or []
+        if event in allowed:
+            return True
+        plugin = metadata.get("plugin")
+        return event.startswith("plugin:") and isinstance(payload, dict) and payload.get("plugin") == plugin
+
+    def authorize_window_command(  # noqa: C901
+        self, operation: str, body: dict[str, Any], webview_window: WebviewWindow
+    ) -> dict[str, Any] | None:
+        """
+        Reject capabilities not granted to the invoking registered WebView.
+        """
+        label_getter = getattr(webview_window, "label", None)
+        if not callable(label_getter):
+            return None
+        label = str(label_getter())
+        if label == "main":
+            return None
+        metadata = self._window_metadata.get(label)
+        if metadata is None:
+            return None if operation == "frontend_ready" else failure("窗口尚未由宿主注册", "WINDOW_NOT_REGISTERED")
+        window_type = metadata.get("windowType")
+        common = {"frontend_ready", "window_close", "window_focus", "window_update_bounds"}
+        if operation in common:
+            return None
+        if window_type == "theme-studio":
+            allowed = {
+                "theme_active",
+                "theme_asset",
+                "theme_design_get",
+                "theme_design_select",
+                "theme_design_overlay",
+                "theme_design_patch",
+                "theme_design_undo",
+                "theme_design_redo",
+                "theme_design_commit",
+                "theme_design_discard",
+                "theme_design_save_as",
+                "plugin_get_slots",
+                "plugin_get_vue_slots",
+            }
+            if operation not in allowed:
+                return failure("主题控制台无权调用该宿主命令", "WINDOW_COMMAND_DENIED")
+            request_session = body.get("session_id")
+            if request_session is not None and request_session != metadata.get("sessionId"):
+                return failure("窗口不能访问其他主题设计会话", "WINDOW_SESSION_DENIED")
+            return None
+        if window_type != "plugin":
+            return failure("未知窗口类型", "WINDOW_COMMAND_DENIED")
+        plugin = metadata.get("plugin")
+        if operation in {"plugin_get_settings", "plugin_update_setting"}:
+            if body.get("plugin_name") != plugin:
+                return failure("插件窗口不能访问其他插件设置", "WINDOW_DATA_DENIED")
+            allowed_settings = metadata.get("allowedSettings") or []
+            if operation == "plugin_update_setting" and body.get("key") not in allowed_settings:
+                return failure("插件设置字段未在窗口 schema 中授权", "WINDOW_DATA_DENIED")
+            return None
+        if operation == "plugin_call_command":
+            command = body.get("command")
+            allowed_commands = metadata.get("allowedCommands") or []
+            if not isinstance(command, str) or not command.startswith(f"{plugin}:") or command.split(":", 1)[1] not in allowed_commands:
+                return failure("插件命令未在窗口 schema 中授权", "WINDOW_COMMAND_DENIED")
+            return None
+        return failure("插件窗口无权调用该宿主命令", "WINDOW_COMMAND_DENIED")
 
     def emit_popup_to_frontend(self, payload: dict[str, Any]) -> None:
         """
@@ -464,7 +566,7 @@ class _FrontendState:
 
     def focus_window(self) -> bool:
         """在前端主线程激活并置顶启动器窗口。"""
-        webview = self._webview
+        webview = self._webview or self._webviews.get("main")
         if webview is None:
             return False
 
@@ -683,17 +785,61 @@ class _FrontendState:
         options["version_isolation"] = bool(body.get("version_isolation", False))
         return options
 
-    async def frontend_ready(self, body: dict[str, Any], webview_window: WebviewWindow) -> dict[str, Any]:
+    async def frontend_ready(  # noqa: C901
+        self, body: dict[str, Any], webview_window: WebviewWindow
+    ) -> dict[str, Any]:
         """
         处理前端就绪。
 
         :param body: 经过边界校验的 IPC 请求数据
         :param webview_window: 前端 WebView 窗口实例
         """
-        self._webview = webview_window
+        label_getter = getattr(webview_window, "label", None)
+        label = str(label_getter()) if callable(label_getter) else "main"
+        known_metadata = self._window_metadata.get(label)
+        # 非主窗口身份只能来自后端 window_open 创建的注册项，不能信任前端自报。
+        window_type = str(known_metadata.get("windowType", "main")) if known_metadata else "main"
+        session_id = known_metadata.get("sessionId") if known_metadata else None
+        self._webviews[label] = webview_window
+        metadata = dict(known_metadata or {"label": label, "descriptorId": "main", "windowType": "main"})
+        metadata.update({"label": label, "sessionId": session_id, "ready": True})
+        self._window_metadata[label] = metadata
+        self.logger.info("前端窗口已就绪: label=%s, type=%s", label, window_type)
+        if window_type != "main":
+            self.emit_to_frontend("window:ready", metadata)
+        if window_type == "main" or label == "main" or self._webview is None:
+            self._webview = webview_window
+        if window_type == "main" and not self._main_window_event_bound:
+            on_window_event = getattr(webview_window, "on_window_event", None)
+            if callable(on_window_event):
+                def handle_main_window_event(*args: Any) -> None:
+                    event = args[-1] if args else None
+                    event_name = type(event).__name__.lower()
+                    if "destroy" not in event_name and "close" not in event_name:
+                        return
+                    for child_label, child_metadata in list(self._window_metadata.items()):
+                        if child_label == label or not child_metadata.get("followMain"):
+                            continue
+                        child = self._webviews.pop(child_label, None)
+                        self._window_metadata.pop(child_label, None)
+                        if child is not None:
+                            with suppress(OSError, RuntimeError):
+                                child.run_on_main_thread(child.close)
+
+                on_window_event(handle_main_window_event)
+                self._main_window_event_bound = True
         webview_window.show()
-        self._flush_pending_frontend_events()
-        self.plugins.on_frontend_ready()
+        if window_type != "main":
+            with suppress(OSError, RuntimeError):
+                webview_window.unminimize()
+                webview_window.set_focus()
+        if self._webview is webview_window:
+            self._flush_pending_frontend_events()
+        if not self._plugins_frontend_ready:
+            self.plugins.on_frontend_ready()
+            self._plugins_frontend_ready = True
+        if window_type != "main":
+            return {"success": True, "data": self._window_metadata[label]}
         if bool(self.launcher.debug) and (self.is_dev_mode_tips is False):
             self.is_dev_mode_tips = True
             self.emit_popup_to_frontend(

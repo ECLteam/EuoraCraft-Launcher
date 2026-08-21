@@ -4,7 +4,9 @@ from time import perf_counter
 from typing import Any
 
 from ECL.events import EventBus
+from ECL.plugins.connector import ConnectorExtensionRegistry
 from ECL.plugins.dependencies import DependencyResolution
+from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
 from ECL.utils import get_logger
@@ -17,17 +19,29 @@ class _PluginState:
     该内部基类以 Mixin 形式经组合被 ``PluginManager`` 继承复用，不作为第二套公开插件 API 暴露。
     """
 
-    def __init__(self, event_bus: EventBus | None = None, processes: Any = None):
+    def __init__(
+        self,
+        event_bus: EventBus | None = None,
+        processes: Any = None,
+        instance_compatibility: InstanceCompatibilityRegistry | None = None,
+        connector_extensions: ConnectorExtensionRegistry | None = None,
+    ):
         """
         创建相互隔离的插件状态与命令执行器。
 
         :param event_bus: 当前应用上下文拥有的事件总线
         :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
+        :param instance_compatibility: 与游戏服务共享的实例兼容提供者注册表
+        :param connector_extensions: 与联机服务共享的扩展协议注册表
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
         self.processes = processes  # 插件可经 framework.processes 启动子进程实例
-        self._command_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="plugin_cmd")  # 插件命令执行的线程池
+        self.instance_compatibility = instance_compatibility or InstanceCompatibilityRegistry()
+        self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
+        self._command_executor = ThreadPoolExecutor(
+            max_workers=8, thread_name_prefix="plugin_cmd"
+        )  # 插件命令执行的线程池
         self._plugins: dict[str, Plugin] = {}  # name → Plugin 实例
         self._status: dict[str, str] = {}  # name → unloaded | loaded | enabled | disabled
         self._routes: list[dict[str, str]] = []  # 所有插件注册的路由
@@ -97,6 +111,9 @@ class _PluginState:
             perf_counter() - phase_started,
         )
         self._candidate_map = {c["name"]: c for c in candidates}
+        # 禁用状态只属于当前仍安装的插件；插件目录被删除后不应留下幽灵列表项。
+        system_plugins = {candidate["name"] for candidate in candidates if candidate["is_system"]}
+        self._prune_plugin_state(set(self._candidate_map), non_disableable_plugins=system_plugins)
         phase_started = perf_counter()
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
         self.logger.debug(

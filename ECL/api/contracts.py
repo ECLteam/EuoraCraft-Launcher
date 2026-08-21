@@ -26,6 +26,7 @@ class ApiFailure(TypedDict):
     errorId: NotRequired[str]
     title: NotRequired[str]
     detail: NotRequired[str]
+    data: NotRequired[Any]
 
 
 ApiResponse = ApiSuccess[Any] | ApiFailure

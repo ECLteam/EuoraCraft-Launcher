@@ -64,6 +64,8 @@ class PluginLifecycle(_PluginState):
             return False, reason
         self._status[name] = "enabling"
         if not self._call_plugin_hook(plugin, "on_enable", fail_status="loaded"):
+            self.instance_compatibility.unregister_owner(name)
+            self.connector_extensions.unregister_owner(name)
             reason = self._plugin_errors.get(name, f"插件 {name} on_enable 钩子执行失败")
             return False, reason
         self._status[name] = "enabled"
@@ -86,6 +88,8 @@ class PluginLifecycle(_PluginState):
         :param _persist_state: 是否将状态变化写入持久化文件
         """
         plugin = self._plugins.get(name)
+        if plugin is not None and getattr(plugin, "is_system", False) is True:
+            return PluginActionResult(name, PluginAction.DISABLE, "forbidden", "系统插件不能禁用")
         if plugin is None or self._status.get(name) != "enabled":
             reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
             return PluginActionResult(
@@ -110,6 +114,8 @@ class PluginLifecycle(_PluginState):
             if component["plugin"] != name
         }
         self.events.remove_handlers_by_owner(name)
+        self.instance_compatibility.unregister_owner(name)
+        self.connector_extensions.unregister_owner(name)
         # 持久化禁用状态，下次启动时跳过该插件；关闭流程中不写入，避免把所有插件标为禁用
         if _persist_state:
             self._disabled_plugins.add(name)
@@ -151,11 +157,56 @@ class PluginLifecycle(_PluginState):
         self._vue_components = {k: v for k, v in self._vue_components.items() if v["plugin"] != name}
         # 清理事件处理器
         self.events.remove_handlers_by_owner(name)
+        self.instance_compatibility.unregister_owner(name)
+        self.connector_extensions.unregister_owner(name)
         self._plugins.pop(name, None)
         self._status.pop(name, None)
         self.events.emit("plugin:unloaded", name)
         self.logger.info("插件已卸载: %s", name)
         return PluginActionResult(name, PluginAction.UNLOAD, "unloaded")
+
+    def uninstall(self, name: str) -> PluginActionResult:
+        """
+        卸载并删除用户插件的安装目录。
+
+        :param name: 插件名称
+        """
+        candidate = self._candidate_map.get(name)
+        if candidate is None:
+            return PluginActionResult(name, PluginAction.UNINSTALL, "not_found", f"插件不存在: {name}")
+        if candidate.get("is_system", False):
+            return PluginActionResult(name, PluginAction.UNINSTALL, "forbidden", "系统插件不能卸载")
+
+        plugin_dir = Path(candidate["plugin_dir"])
+        plugin_root = self._plugin_dir.resolve()
+        resolved_plugin_dir = plugin_dir.resolve()
+        if resolved_plugin_dir.parent != plugin_root:
+            return PluginActionResult(name, PluginAction.UNINSTALL, "invalid", "插件目录超出用户插件路径")
+
+        if name in self._plugins:
+            unloaded = self.unload(name, _persist_state=False)
+            if not unloaded.success:
+                return PluginActionResult(name, PluginAction.UNINSTALL, "failed", unloaded.message)
+
+        try:
+            if resolved_plugin_dir.exists():
+                shutil.rmtree(resolved_plugin_dir)
+        except OSError as exc:
+            self._status[name] = "error"
+            self._plugin_errors[name] = f"删除插件目录失败: {exc}"
+            return PluginActionResult(name, PluginAction.UNINSTALL, "failed", self._plugin_errors[name])
+
+        self._candidate_map.pop(name, None)
+        self._status.pop(name, None)
+        self._plugin_errors.pop(name, None)
+        self._config_paths.pop(name, None)
+        self._permission_manager.unregister_plugin(name)
+        if name in self._disabled_plugins:
+            self._disabled_plugins.discard(name)
+            self._save_plugin_state()
+        self.events.emit("plugin:uninstalled", name)
+        self.logger.info("插件已删除: %s", name)
+        return PluginActionResult(name, PluginAction.UNINSTALL, "uninstalled")
 
     def reload(self, name: str) -> PluginActionResult:
         """

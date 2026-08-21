@@ -141,14 +141,20 @@ class Adapter:
         )
         bus.subscribe(
             "plugin:disabled",
-            lambda plugin: api.emit_to_frontend(
-                "plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True}
+            lambda plugin: (
+                api.close_plugin_windows(plugin.name),
+                api.emit_to_frontend(
+                    "plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True}
+                ),
             ),
         )
         bus.subscribe(
             "plugin:unloaded",
-            lambda name: api.emit_to_frontend(
-                "plugin:status_changed", {"name": name, "action": "unloaded", "result": True}
+            lambda name: (
+                api.close_plugin_windows(name),
+                api.emit_to_frontend(
+                    "plugin:status_changed", {"name": name, "action": "unloaded", "result": True}
+                ),
             ),
         )
         bus.subscribe(
@@ -163,8 +169,9 @@ class Adapter:
         )
         bus.subscribe(
             "plugin:html_injected",
-            lambda plugin, slot, html, key: api.emit_to_frontend(
-                "plugin:html_injected", {"plugin": plugin, "slot": slot, "html": html, "key": key}
+            lambda plugin, slot, html, key, context_key=None: api.emit_to_frontend(
+                "plugin:html_injected",
+                {"plugin": plugin, "slot": slot, "html": html, "key": key, "contextKey": context_key},
             ),
         )
         bus.subscribe(
@@ -193,7 +200,7 @@ class Adapter:
         )
         bus.subscribe(
             "plugin:vue_slot_registered",
-            lambda plugin, slot, component_name, template, script, style: api.emit_to_frontend(
+            lambda plugin, slot, component_name, template, script, style, context_key=None: api.emit_to_frontend(
                 "plugin:vue_slot_registered",
                 {
                     "plugin": plugin,
@@ -202,6 +209,7 @@ class Adapter:
                     "template": template,
                     "script": script,
                     "style": style,
+                    "contextKey": context_key,
                 },
             ),
         )
@@ -221,6 +229,20 @@ class Adapter:
                 },
             ),
         )
+        for event_name in (
+            "theme:library_changed",
+            "theme:activated",
+            "theme:design_changed",
+            "theme:selection_changed",
+            "theme:overlay_changed",
+            "theme:preview_changed",
+            "theme:design_committed",
+            "theme:design_discarded",
+        ):
+            bus.subscribe(
+                event_name,
+                lambda payload, event_name=event_name: api.emit_to_frontend(event_name, payload),
+            )
         logger.debug("后端到前端的事件转发注册完成")
 
     def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:

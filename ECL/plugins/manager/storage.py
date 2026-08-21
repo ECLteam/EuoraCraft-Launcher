@@ -60,3 +60,23 @@ class PluginStorage(_PluginState):
             return
         state = {"disabled": sorted(self._disabled_plugins)}
         atomic_write_text(self._plugin_state_path, json.dumps(state, ensure_ascii=False, indent=2))
+
+    def _prune_plugin_state(
+        self,
+        available_plugins: set[str],
+        non_disableable_plugins: set[str] | None = None,
+    ) -> None:
+        """
+        清理已不存在的插件所留下的禁用记录。
+
+        :param available_plugins: 当前扫描到的插件名集合
+        :param non_disableable_plugins: 不允许持久化为禁用状态的插件名集合
+        """
+        removed_plugins = (self._disabled_plugins - available_plugins) | (
+            self._disabled_plugins & (non_disableable_plugins or set())
+        )
+        if not removed_plugins:
+            return
+        self._disabled_plugins.difference_update(removed_plugins)
+        self._save_plugin_state()
+        self.logger.info("已清理无效的插件禁用记录: %s", sorted(removed_plugins))

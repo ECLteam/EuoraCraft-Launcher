@@ -10,6 +10,7 @@ class PluginAction(StrEnum):
     ENABLE = "enable"
     DISABLE = "disable"
     UNLOAD = "unload"
+    UNINSTALL = "uninstall"
     RELOAD = "reload"
     INSTALL = "install"
     UPDATE_SETTING = "update_setting"
@@ -27,4 +28,4 @@ class PluginActionResult:
     @property
     def success(self) -> bool:
         """判断操作是否成功。"""
-        return self.status in {"enabled", "disabled", "unloaded", "installed", "updated"}
+        return self.status in {"enabled", "disabled", "unloaded", "uninstalled", "installed", "updated"}

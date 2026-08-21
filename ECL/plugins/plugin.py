@@ -1,5 +1,5 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -369,6 +369,81 @@ class Plugin:
             "type": type_,
         }
 
+    def get_setting(self, key: str) -> Any:
+        """
+        读取插件设置当前值；尚未保存时返回声明的默认值。
+
+        :param key: 已注册的设置键
+        :return: 当前设置值
+        """
+        self._check_permission(PermissionScope.SETTINGS, PermissionAction.READ, key)
+        definition = self._settings.get(key)
+        if definition is None:
+            raise KeyError(f"插件设置未声明: {key}")
+        return self.framework._config_values.get(f"{self.name}.{key}", definition["default"])
+
+    def register_instance_compatibility(
+        self,
+        source: str,
+        title: str,
+        reader: Callable,
+        watch_paths: Callable[[Mapping[str, Any]], Any] | None = None,
+    ) -> None:
+        """
+        注册一个只读实例元数据兼容来源。
+
+        ``reader`` 接收 ``InstanceCompatibilityContext`` 并返回
+        ``ExternalInstanceMetadata`` 或 ``None``；``watch_paths`` 返回影响扫描
+        缓存的外部文件路径。插件禁用或卸载时注册项会由宿主自动清理。
+
+        :param source: 稳定的来源标识
+        :param title: 面向用户显示的来源名称
+        :param reader: 单实例元数据读取器
+        :param watch_paths: 可选的外部监听路径解析器
+        """
+        self._check_permission(PermissionScope.INSTANCES, PermissionAction.READ, source)
+        self.framework.instance_compatibility.register(
+            owner=self.name,
+            source=source,
+            title=title,
+            reader=reader,
+            watch_paths=watch_paths,
+        )
+
+    def register_connector_extension(
+        self,
+        name: str,
+        protocols: Mapping[str, Callable],
+        *,
+        on_guest_joined: Callable | None = None,
+        enrich_status: Callable | None = None,
+        before_leave: Callable | None = None,
+        on_reset: Callable | None = None,
+    ) -> None:
+        """注册 Scaffolding 扩展协议及其联机会话钩子。
+
+        ``protocols`` 的处理器接收 ``ConnectorProtocolRequest``；房客加入、
+        状态刷新、离开与会话清理钩子接收 ``ConnectorSessionContext``。插件
+        禁用或卸载时，宿主会自动移除其全部注册项。
+
+        :param name: 稳定的扩展标识
+        :param protocols: 协议名到处理器的映射
+        :param on_guest_joined: 房客完成基础连接后的回调
+        :param enrich_status: 补充联机状态的回调
+        :param before_leave: 断开连接前的回调
+        :param on_reset: 会话缓存清理回调
+        """
+        self._check_permission(PermissionScope.CONNECTOR, PermissionAction.WRITE, name)
+        self.framework.connector_extensions.register(
+            owner=self.name,
+            name=name,
+            protocols=protocols,
+            on_guest_joined=on_guest_joined,
+            enrich_status=enrich_status,
+            before_leave=before_leave,
+            on_reset=on_reset,
+        )
+
     def inject_css(self, css: str, key: str | None = None) -> None:
         """
         向宿主前端注入仅作用于当前插件内容的 CSS 样式。
@@ -378,15 +453,16 @@ class Plugin:
         self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:css_injected", self.name, css, key)
 
-    def inject_html(self, slot_id: str, html: str, key: str | None = None) -> None:
+    def inject_html(self, slot_id: str, html: str, key: str | None = None, context_key: str | None = None) -> None:
         """
         向宿主前端注入 HTML 片段。
         :param slot_id: 插槽 ID，对应前端 plugin-slot 组件
         :param html: HTML 字符串
         :param key: 更新已有条目时使用的稳定标识；不传则追加
+        :param context_key: 仅注入匹配的重复插槽上下文；不传时注入全部上下文
         """
         self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
-        self.framework.events.emit("plugin:html_injected", self.name, slot_id, html, key)
+        self.framework.events.emit("plugin:html_injected", self.name, slot_id, html, key, context_key)
 
     def inject_script(self, script: str) -> None:
         """
@@ -463,7 +539,13 @@ class Plugin:
         self.register_vue_route(path, title, component_name, icon=icon, **parts)
 
     def register_vue_slot(
-        self, slot_id: str, component_name: str, template: str, script: str = "", style: str = ""
+        self,
+        slot_id: str,
+        component_name: str,
+        template: str,
+        script: str = "",
+        style: str = "",
+        context_key: str | None = None,
     ) -> None:
         """
         注册 Vue 组件到指定插槽，前端收到后动态创建并挂载。
@@ -472,9 +554,10 @@ class Plugin:
         :param template: Vue 模板 HTML
         :param script: 组件选项 JS 代码（data/methods/computed 等，不含 export default）
         :param style: 组件 scoped CSS
+        :param context_key: 可选的重复插槽上下文 key
         """
         self.framework.events.emit(
-            "plugin:vue_slot_registered", self.name, slot_id, component_name, template, script, style
+            "plugin:vue_slot_registered", self.name, slot_id, component_name, template, script, style, context_key
         )
 
     def register_vue_route(

@@ -3,6 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+try:
+    from pytauri import AppHandle
+    from pytauri.ipc import WebviewWindow
+except ImportError:  # pragma: no cover - lightweight test doubles omit injected types
+    AppHandle = Any  # type: ignore[misc,assignment]
+    WebviewWindow = Any  # type: ignore[misc,assignment]
+
 from ECL.api.bridge import guard_ipc_handler
 from ECL.api.frontend import FrontendApi
 
@@ -29,6 +36,31 @@ COMMAND_NAMES = (
     "settings_get",
     "settings_set",
     "frontend_log",
+    "theme_list",
+    "theme_active",
+    "theme_extensions",
+    "theme_get",
+    "theme_save",
+    "theme_asset",
+    "theme_delete",
+    "theme_activate",
+    "theme_import",
+    "theme_export",
+    "theme_design_start",
+    "theme_design_get",
+    "theme_design_select",
+    "theme_design_overlay",
+    "theme_design_patch",
+    "theme_design_undo",
+    "theme_design_redo",
+    "theme_design_commit",
+    "theme_design_discard",
+    "theme_design_save_as",
+    "window_list",
+    "window_open",
+    "window_focus",
+    "window_close",
+    "window_update_bounds",
     "game_versions",
     "game_loader_versions",
     "game_fabric_api_versions",
@@ -196,7 +228,29 @@ def command_handlers(api: FrontendApi) -> dict[str, Callable[..., Any]]:
     :param api: 已连接应用上下文的前端 API 门面
     :return: 命令名到处理器的稳定映射
     """
-    return {name: guard_ipc_handler(api, name, getattr(api, name)) for name in COMMAND_NAMES}
+    def build_dispatch(operation: str) -> Callable[..., Any]:
+        handler = getattr(api, operation)
+        parameters = handler.__annotations__
+
+        async def dispatch(
+            body: dict[str, Any], app_handle: AppHandle = None, webview_window: WebviewWindow = None
+        ) -> Any:
+            if webview_window is not None:
+                denied = api.authorize_window_command(operation, body, webview_window)
+                if denied is not None:
+                    return denied
+            kwargs: dict[str, Any] = {}
+            if "app_handle" in parameters and app_handle is not None:
+                kwargs["app_handle"] = app_handle
+            if "webview_window" in parameters and webview_window is not None:
+                kwargs["webview_window"] = webview_window
+            return await handler(body, **kwargs)
+
+        dispatch.__name__ = operation
+        dispatch.__qualname__ = operation
+        return guard_ipc_handler(api, operation, dispatch)
+
+    return {name: build_dispatch(name) for name in COMMAND_NAMES}
 
 
 __all__ = ["COMMAND_NAMES", "command_handlers"]

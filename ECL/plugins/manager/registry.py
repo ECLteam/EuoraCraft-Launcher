@@ -40,18 +40,21 @@ def _plugin_entry(
         services = list(metadata._commands.keys())
         settings = list(metadata._settings.keys())
         is_system = getattr(metadata, "is_system", False)
+        contributes = metadata.metadata.get("contributes", {})
     elif isinstance(metadata, dict):
         title = metadata.get("title", name)
         version = metadata.get("version", "")
         description = metadata.get("description", "")
         author = metadata.get("author", "")
         dependencies = metadata.get("dependencies", {})
+        contributes = metadata.get("contributes", {})
     else:
         title = name
         version = ""
         description = ""
         author = ""
         dependencies = {}
+        contributes = {}
     return {
         "name": name,
         "title": title,
@@ -62,6 +65,7 @@ def _plugin_entry(
         "status": status,
         "error": error,
         "dependencies": dependencies,
+        "contributes": contributes if isinstance(contributes, dict) else {},
         "permissions": permissions or [],
         "services": services or [],
         "settings": settings or [],
@@ -104,6 +108,8 @@ class PluginRegistry(_PluginState):
         """
         result = []
         for name, plugin in self._plugins.items():
+            if getattr(plugin, "is_system", False) is True:
+                continue
             result.append(
                 _plugin_entry(
                     name,
@@ -116,6 +122,8 @@ class PluginRegistry(_PluginState):
         # 补充因依赖错误未被加载的插件条目，便于前端展示
         loaded_names = set(self._plugins.keys())
         for name in sorted(self._dependency_resolution.skipped - loaded_names - self._disabled_plugins):
+            if self._candidate_map.get(name, {}).get("is_system", False):
+                continue
             result.append(
                 _plugin_entry(
                     name,
@@ -125,8 +133,10 @@ class PluginRegistry(_PluginState):
                 )
             )
         # 补充被禁用且未实例化的插件条目，仍从 plugin.json 读取元数据供前端展示
-        for name in sorted(self._disabled_plugins - loaded_names):
-            candidate = self._candidate_map.get(name, {})
+        for name in sorted((self._disabled_plugins & self._candidate_map.keys()) - loaded_names):
+            candidate = self._candidate_map[name]
+            if candidate.get("is_system", False):
+                continue
             result.append(
                 _plugin_entry(
                     name,
@@ -140,6 +150,8 @@ class PluginRegistry(_PluginState):
         # 补充实例化失败的插件条目
         for name in sorted(set(self._plugin_errors.keys()) - loaded_names):
             candidate = self._candidate_map.get(name, {})
+            if candidate.get("is_system", False):
+                continue
             result.append(
                 _plugin_entry(
                     name,
@@ -172,10 +184,14 @@ class PluginRegistry(_PluginState):
         """获取已注册的 Vue 路由列表。"""
         return list(self._vue_routes)
 
-    def _on_html_injected(self, plugin_name: str, slot_id: str, html: str, key: str | None) -> None:
+    def _on_html_injected(
+        self, plugin_name: str, slot_id: str, html: str, key: str | None, context_key: str | None = None
+    ) -> None:
         """收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。"""
         entries = self._slots.setdefault(slot_id, [])
         entry = {"plugin": plugin_name, "html": html}
+        if context_key is not None:
+            entry["contextKey"] = context_key
         if key is None:
             entries.append(entry)
             return
@@ -187,7 +203,14 @@ class PluginRegistry(_PluginState):
         entries.append(entry)
 
     def _on_vue_slot_registered(
-        self, plugin_name: str, slot_id: str, component_name: str, template: str, script: str, style: str
+        self,
+        plugin_name: str,
+        slot_id: str,
+        component_name: str,
+        template: str,
+        script: str,
+        style: str,
+        context_key: str | None = None,
     ) -> None:
         """收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。"""
         entries = self._vue_slots.setdefault(slot_id, [])
@@ -198,6 +221,8 @@ class PluginRegistry(_PluginState):
             "script": script,
             "style": style,
         }
+        if context_key is not None:
+            entry["contextKey"] = context_key
         for index, current in enumerate(entries):
             if current["plugin"] == plugin_name and current["component_name"] == component_name:
                 entries[index] = entry

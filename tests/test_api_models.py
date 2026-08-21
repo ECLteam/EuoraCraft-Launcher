@@ -12,6 +12,7 @@ from ECL.api.models import (
     LaunchRequest,
     LoaderCatalogRequest,
     SettingsQuery,
+    ThemeDesignSelectRequest,
     WardrobeImportRequest,
     request_schemas,
 )
@@ -49,6 +50,15 @@ def test_request_models_reject_invalid_payloads(model, payload) -> None:
         model.model_validate(payload)
 
 
+def test_theme_selection_rejects_unknown_scope_and_fields() -> None:
+    payload = {
+        "session_id": "a" * 32,
+        "selection": {"nodeId": "card", "scope": "business", "event": "run()"},
+    }
+    with pytest.raises(ValidationError):
+        ThemeDesignSelectRequest.model_validate(payload)
+
+
 def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 
@@ -56,6 +66,27 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "settings_get",
         "settings_set",
         "frontend_log",
+        "theme_get",
+        "theme_save",
+        "theme_asset",
+        "theme_delete",
+        "theme_activate",
+        "theme_import",
+        "theme_export",
+        "theme_design_start",
+        "theme_design_get",
+        "theme_design_select",
+        "theme_design_overlay",
+        "theme_design_patch",
+        "theme_design_undo",
+        "theme_design_redo",
+        "theme_design_commit",
+        "theme_design_discard",
+        "theme_design_save_as",
+        "window_open",
+        "window_focus",
+        "window_close",
+        "window_update_bounds",
         "game_versions",
         "game_loader_versions",
         "game_scan",
@@ -97,6 +128,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "connector_host_port",
         "connector_join",
         "connector_kick",
+        "connector_search_mc_port",
     }
     assert all(schema["type"] == "object" for schema in schemas.values())
 

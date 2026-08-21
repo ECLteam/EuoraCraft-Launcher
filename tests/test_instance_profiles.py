@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import struct
+import sys
+from pathlib import Path
 
 import pytest
 
-from ECL.services.game import instance_compat
+from ECL.plugins import InstanceCompatibilityRegistry, PluginFramework
 from ECL.services.game.instance_compat import InstanceCompatibilityReader
 from ECL.services.game.instance_profiles import InstanceProfileStore
 from ECL.services.game.version_stats import VersionStatsStore
@@ -29,6 +31,19 @@ def _base_version(version_id: str = "1.21.8") -> dict:
         "primaryLoader": "Vanilla",
         "vanillaName": version_id,
     }
+
+
+def _store_with_qomicex_plugin(tmp_path):
+    registry = InstanceCompatibilityRegistry()
+    framework = PluginFramework(instance_compatibility=registry)
+    framework.initialize(tmp_path / "data", Path(__file__).parent.parent)
+    assert framework._status.get("qomicex-compat") == "enabled"
+    store = InstanceProfileStore(
+        tmp_path / "profiles",
+        VersionStatsStore(),
+        compatibility_reader=InstanceCompatibilityReader(registry),
+    )
+    return store, framework
 
 
 def test_profile_keeps_explicit_false_and_resets_single_field(tmp_path) -> None:
@@ -135,15 +150,21 @@ def test_qomicex_manual_index_maps_metadata_without_writing(tmp_path) -> None:
         encoding="utf-8",
     )
     original = qomicex_path.read_bytes()
-    store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
+    store, framework = _store_with_qomicex_plugin(tmp_path)
 
-    result = store.enrich_version(game_path, _base_version(), qomicex_path=qomicex_path)
+    result = store.enrich_version(
+        game_path,
+        _base_version(),
+        compatibility_options={"qomicex": {"instances_path": qomicex_path}},
+    )
 
     assert result["hidden"] is True
     assert result["pinned"] is True
     assert result["totalRunDurationSeconds"] == 720
     assert result["lastLaunchedAt"] == "2026-08-13T12:00:00Z"
+    assert result["availableSources"] == ["qomicex"]
     assert qomicex_path.read_bytes() == original
+    framework.close()
 
 
 def test_qomicex_index_is_parsed_once_for_unchanged_scan(tmp_path, monkeypatch) -> None:
@@ -153,7 +174,11 @@ def test_qomicex_index_is_parsed_once_for_unchanged_scan(tmp_path, monkeypatch) 
         json.dumps([{"name": "1.21.8", "gameDir": str(instance_path)}]),
         encoding="utf-8",
     )
-    original_read_text = instance_compat._read_text
+    store, framework = _store_with_qomicex_plugin(tmp_path)
+    plugin = framework.get_plugin("qomicex-compat")
+    assert plugin is not None
+    plugin_module = sys.modules[plugin.__class__.__module__]
+    original_read_text = plugin_module._read_text
     read_count = 0
 
     def counted_read_text(path):
@@ -161,16 +186,14 @@ def test_qomicex_index_is_parsed_once_for_unchanged_scan(tmp_path, monkeypatch) 
         read_count += 1
         return original_read_text(path)
 
-    monkeypatch.setattr(instance_compat, "_read_text", counted_read_text)
-    reader = InstanceCompatibilityReader()
+    monkeypatch.setattr(plugin_module, "_read_text", counted_read_text)
 
     for _ in range(2):
-        reader.read_instance(
+        store.enrich_version(
             game_path,
-            "1.21.8",
-            vanilla_name="1.21.8",
-            primary_loader="Vanilla",
-            qomicex_path=qomicex_path,
+            _base_version(),
+            compatibility_options={"qomicex": {"instances_path": qomicex_path}},
         )
 
     assert read_count == 1
+    framework.close()

@@ -186,14 +186,16 @@ class FakeGame:
         self.launch_call = None
         self.requested_paths = None
         self.scan_force = False
+        self.compatibility_options = None
         self.crash_call = None
 
     def curseforge_available(self):
         return True
 
-    def scan_versions(self, paths, *, force=False):
+    def scan_versions(self, paths, *, force=False, compatibility_options=None):
         self.requested_paths = paths
         self.scan_force = force
+        self.compatibility_options = compatibility_options
         return [{"id": "1.20.1", "versionId": "1.20.1"}]
 
     def scan_java(self, user_paths):
@@ -359,6 +361,7 @@ def test_scan_versions_delegates_to_registered_service(tmp_path) -> None:
         "data": [{"id": "1.20.1", "versionId": "1.20.1"}],
     }
     assert [Path(path) for path in api.game.requested_paths] == [Path("D:/Games/.minecraft")]
+    assert api.game.compatibility_options == {"qomicex": {"instances_path": None}}
 
     forced_result = asyncio.run(api.game_scan({"paths": ["D:/Games/.minecraft"], "force": True}))
     assert forced_result["success"] is True

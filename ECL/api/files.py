@@ -58,6 +58,7 @@ _SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
     FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
     FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
     FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
+    FileSavePurpose.THEME_PRESET: ("导出 ECL 主题", "theme.ecltheme", ["ecltheme"]),
 }
 
 
@@ -537,6 +538,8 @@ class FileHandlers(_FrontendState):
             return invalid
         if request.purpose == FileSelectionPurpose.CRASH_ANALYSIS:
             path = await self._pick_path(False, "选择 Minecraft 崩溃日志", ["log", "txt", "zip"])
+        elif request.purpose == FileSelectionPurpose.THEME_PRESET:
+            path = await self._pick_path(False, "导入 ECL 主题", ["ecltheme"])
         else:
             path = await self._pick_path(False, "选择文件")
         self.logger.info("文件选择结果: %s", path)
@@ -581,7 +584,13 @@ class FileHandlers(_FrontendState):
         )
         if request.default_name:
             default_name = request.default_name
-        filter_label = "JAR 文件" if request.purpose == FileSavePurpose.MOD_FILE else "ZIP 压缩包"
+        filter_label = (
+            "JAR 文件"
+            if request.purpose == FileSavePurpose.MOD_FILE
+            else "ECL 主题包"
+            if request.purpose == FileSavePurpose.THEME_PRESET
+            else "ZIP 压缩包"
+        )
         selected = await self._pick_save_path(
             title,
             default_name,
@@ -592,10 +601,17 @@ class FileHandlers(_FrontendState):
         if (
             selected
             and request.purpose
-            not in {FileSavePurpose.RESOURCE_MANIFEST, FileSavePurpose.SCREENSHOT, FileSavePurpose.MOD_FILE}
+            not in {
+                FileSavePurpose.RESOURCE_MANIFEST,
+                FileSavePurpose.SCREENSHOT,
+                FileSavePurpose.MOD_FILE,
+                FileSavePurpose.THEME_PRESET,
+            }
             and Path(selected).suffix.casefold() != ".zip"
         ):
             selected = str(Path(selected).with_suffix(".zip"))
+        if selected and request.purpose == FileSavePurpose.THEME_PRESET and Path(selected).suffix.casefold() != ".ecltheme":
+            selected = str(Path(selected).with_suffix(".ecltheme"))
         self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
         return success({"path": selected})
 

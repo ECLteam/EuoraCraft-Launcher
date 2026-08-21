@@ -1,4 +1,4 @@
-# 维护者: EuoraCraft Team
+# 维护者: ECLTeam
 # Arch Linux 原生打包，基于发布在 GitHub Release 上的 Arch 预编译产物构建。
 # 版本由 CI 通过 `_tag` 与 `pkgver` 注入，单独改动此处即可本地验证打包。
 
@@ -7,7 +7,7 @@ pkgname=euoracraft-launcher
 _tag=v1.0.0
 pkgver=1.0.0
 pkgrel=1
-pkgdesc="基于 Tauri 的 Minecraft 启动器（EuoraCraft Launcher）"
+pkgdesc="基于 PyTauri 的 Minecraft 启动器（EuoraCraft Launcher）"
 arch=('x86_64')
 url="https://github.com/ECLteam/EuoraCraft-Launcher"
 license=('MIT')

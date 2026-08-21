@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import logging
 import os
@@ -41,6 +42,48 @@ def _apply_ssl_verify(ssl_context: ssl.SSLContext, verify: bool) -> None:
     else:
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
+
+
+def _build_local_player_icon_provider(account_manager: AccountManager, http_client: httpx.Client) -> Callable[[], str | None]:
+    """
+    构造本机玩家完整皮肤的 base64 解析器，供联机头像上传复用。
+
+    离线默认皮肤直接取本地 data URL 载荷；在线账户在首次解析时下载并缓存，
+    避免联机状态轮询期间反复请求网络。无皮肤或解析失败时返回 None。
+    """
+    cache: dict[str, str | None] = {}
+    cache_lock = RLock()
+
+    def resolve() -> str | None:
+        account = account_manager.current_account()
+        if account is None:
+            return None
+        account_id = str(account.get("id") or "")
+        if not account_id:
+            return None
+        with cache_lock:
+            if account_id in cache:
+                return cache[account_id]
+            try:
+                skin_url = account_manager.texture_urls(account_id).get("skinUrl")
+            except Exception:
+                skin_url = None
+            icon: str | None = None
+            if skin_url and skin_url.startswith("data:image/"):
+                icon = skin_url.split(",", 1)[1] if "," in skin_url else None
+            elif skin_url:
+                try:
+                    with http_client.stream("GET", skin_url) as response:
+                        response.raise_for_status()
+                        data = b"".join(response.iter_bytes(64 * 1024))
+                    if data:
+                        icon = base64.b64encode(data).decode("ascii")
+                except Exception:
+                    icon = None
+            cache[account_id] = icon
+            return icon
+
+    return resolve
 
 
 @dataclass
@@ -211,11 +254,15 @@ def create_application(
 
         phase_started = perf_counter()
         logger.debug("正在初始化联机服务 ConnectorService")
+        from ECL.plugins.connector import ConnectorExtensionRegistry
         from ECL.services.connector import ConnectorService
+
         current_account = accounts.current_account()
+        connector_extensions = ConnectorExtensionRegistry()
         connector = ConnectorService(
             player_name=(current_account or {}).get("alias") or "Player",
-            http_client=http,
+            extensions=connector_extensions,
+            local_player_icon_provider=_build_local_player_icon_provider(accounts, http),
         )
         logger.debug(
             "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",
@@ -232,7 +279,12 @@ def create_application(
         created.append(processes)
         logger.debug("子进程实例服务已初始化，duration=%.2fs", perf_counter() - phase_started)
 
-        plugins = PluginManager(events, processes=processes)
+        plugins = PluginManager(
+            events,
+            processes=processes,
+            instance_compatibility=game.instance_compatibility,
+            connector_extensions=connector_extensions,
+        )
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
         logger.debug("插件管理器已初始化，duration=%.2fs", perf_counter() - phase_started)

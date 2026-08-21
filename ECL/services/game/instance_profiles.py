@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +28,8 @@ PROFILE_FIELDS = frozenset(
         "pinOrder",
     }
 )
-EXTERNAL_SOURCES = frozenset({"auto", "pcl", "hmcl", "qomicex"})
+EXTERNAL_SOURCES = frozenset({"auto", "pcl", "hmcl"})
+_EXTERNAL_SOURCE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 BUILTIN_CATEGORIES = (
     {"id": "unclassified", "name": "未分类", "color": "#8b95a5", "order": 0, "builtin": True},
     {"id": "vanilla", "name": "原版", "color": "#69a84f", "order": 10, "builtin": True},
@@ -39,6 +41,13 @@ BUILTIN_CATEGORIES = (
 
 def _default_profile() -> dict[str, Any]:
     return {"schemaVersion": 1, "preferredExternalSource": "auto"}
+
+
+def _normalize_external_source(value: Any) -> str:
+    normalized = str(value or "auto").strip().casefold()
+    if normalized != "auto" and not _EXTERNAL_SOURCE_PATTERN.fullmatch(normalized):
+        raise ValueError("未知的第三方元数据来源")
+    return normalized
 
 
 def _normalize_tags(value: Any) -> list[str]:
@@ -177,8 +186,10 @@ class InstanceProfileStore:
         for key in PROFILE_FIELDS:
             if key in data:
                 profile[key] = data[key]
-        source = str(data.get("preferredExternalSource") or "auto").casefold()
-        profile["preferredExternalSource"] = source if source in EXTERNAL_SOURCES else "auto"
+        try:
+            profile["preferredExternalSource"] = _normalize_external_source(data.get("preferredExternalSource"))
+        except ValueError:
+            profile["preferredExternalSource"] = "auto"
         try:
             if "tags" in profile:
                 profile["tags"] = _normalize_tags(profile["tags"])
@@ -236,10 +247,7 @@ class InstanceProfileStore:
                 raise ValueError("pinOrder 必须是整数")
             return max(0, int(value))
         if key == "preferredExternalSource":
-            normalized = str(value).casefold()
-            if normalized not in EXTERNAL_SOURCES:
-                raise ValueError("未知的第三方元数据来源")
-            return normalized
+            return _normalize_external_source(value)
         if key == "icon":
             return cls._normalize_icon(value)
         return value
@@ -479,14 +487,14 @@ class InstanceProfileStore:
         game_path: Path,
         version: dict[str, Any],
         *,
-        qomicex_path: str | Path | None = None,
+        compatibility_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         将 ECL 覆盖、第三方来源和运行统计合并进扫描结果。
 
         :param game_path: Minecraft 游戏根目录
         :param version: Core 扫描得到的基础版本信息
-        :param qomicex_path: 可选的 Qomicex 手动数据路径
+        :param compatibility_options: 按来源标识分组的插件兼容配置
         :return: 可直接供前端展示、筛选和排序的完整实例模型
         """
         result = dict(version)
@@ -497,7 +505,7 @@ class InstanceProfileStore:
             version_id,
             vanilla_name=str(version.get("vanillaName") or version_id),
             primary_loader=str(version.get("primaryLoader") or "Vanilla"),
-            qomicex_path=qomicex_path,
+            options=compatibility_options,
         )
         source_by_name = {source.source: source for source in sources}
         preferred = str(profile.get("preferredExternalSource") or "auto")
@@ -567,9 +575,27 @@ class InstanceProfileStore:
         result["profileOverrides"] = profile_overrides
         result["preferredExternalSource"] = preferred
         result["availableSources"] = sorted(source_by_name)
+        result["externalSourceOptions"] = self._compatibility.describe_sources()
         result["sourceWarnings"] = warnings
         result.update(stats)
         return result
+
+    def compatibility_watch_paths(
+        self, options: dict[str, Any] | None = None
+    ) -> list[tuple[str, Path]]:
+        """
+        返回插件兼容来源要求加入版本缓存快照的外部文件。
+
+        :param options: 按来源标识分组的插件兼容配置
+        """
+        return self._compatibility.resolve_watch_paths(options)
+
+    @property
+    def compatibility_revision(self) -> int:
+        """
+        返回实例兼容插件注册表的变更序号。
+        """
+        return self._compatibility.revision
 
 
 __all__ = ["BUILTIN_CATEGORIES", "PROFILE_FIELDS", "InstanceProfileStore"]

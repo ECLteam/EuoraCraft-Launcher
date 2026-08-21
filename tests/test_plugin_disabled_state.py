@@ -94,6 +94,47 @@ def test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None:
     assert info["is_system"] is False
 
 
+def test_deleted_disabled_plugin_is_pruned_from_state_and_list(tmp_path) -> None:
+    """插件目录已删除时，不应因为历史禁用记录继续显示幽灵条目。"""
+    data_path = tmp_path / "data"
+    resource_path = tmp_path / "resources"
+    state_path = data_path / "plugin_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"disabled": ["deleted_plugin"]}), encoding="utf-8")
+
+    framework = PluginFramework()
+    framework.initialize(data_path, resource_path)
+
+    assert "deleted_plugin" not in {plugin["name"] for plugin in framework.list_plugins()}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state == {"disabled": []}
+
+
+def test_uninstall_disabled_plugin_removes_files_state_and_list(tmp_path) -> None:
+    """从界面卸载已禁用插件时，应同时删除目录与禁用记录。"""
+    data_path = tmp_path / "data"
+    resource_path = tmp_path / "resources"
+    plugin_dir = data_path / "plugins" / "demo"
+    _write_plugin(
+        plugin_dir,
+        {"name": "demo", "version": "1.0.0", "entry_point": "main:DemoPlugin"},
+        "from ECL.plugins import Plugin\nclass DemoPlugin(Plugin): pass\n",
+    )
+
+    framework = PluginFramework()
+    framework.initialize(data_path, resource_path)
+    assert framework.disable("demo").success is True
+
+    result = framework.uninstall("demo")
+
+    assert result.success is True
+    assert result.status == "uninstalled"
+    assert not plugin_dir.exists()
+    assert "demo" not in {plugin["name"] for plugin in framework.list_plugins()}
+    state = json.loads((data_path / "plugin_state.json").read_text(encoding="utf-8"))
+    assert state == {"disabled": []}
+
+
 def test_disable_persists_to_state_file(tmp_path) -> None:
     """从前端禁用插件后，状态应写入 plugin_state.json。"""
     data_path = tmp_path / "data"

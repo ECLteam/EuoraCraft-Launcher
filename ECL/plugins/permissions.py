@@ -17,6 +17,9 @@ class PermissionScope(Enum):
     FILESYSTEM = "filesystem"
     NETWORK = "network"
     UI = "ui"
+    THEME = "theme"
+    INSTANCES = "instances"
+    CONNECTOR = "connector"
 
 
 class PermissionAction(Enum):
@@ -130,6 +133,14 @@ class PermissionManager:
         :param plugin_name: 插件名称
         """
         return list(self._plugin_permissions.get(plugin_name, set()))
+
+    def unregister_plugin(self, plugin_name: str) -> None:
+        """
+        移除指定插件已注册的权限声明。
+
+        :param plugin_name: 插件名称
+        """
+        self._plugin_permissions.pop(plugin_name, None)
 
     def has_permission(self, plugin_name: str, permission: Permission) -> bool:
         """

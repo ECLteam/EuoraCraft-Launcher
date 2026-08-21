@@ -17,6 +17,11 @@ import easytier_pyo3
 import httpx
 import psutil
 
+from ECL.plugins.connector import (
+    ConnectorExtensionRegistry,
+    ConnectorProtocolRequest,
+    ConnectorSessionContext,
+)
 from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 
@@ -29,6 +34,7 @@ _NODE_FETCH_TIMEOUT_SECONDS = 10.0
 _NODE_CACHE_TTL_SECONDS = 30 * 60.0
 _MAX_AGGREGATE_WORKERS = 8
 _PLAYER_LIST_FETCH_TIMEOUT_SECONDS = 5
+_EXTENSION_REQUEST_TIMEOUT_SECONDS = 5
 _MAX_STATUS_PACKET_BYTES = 1_048_576
 _MAX_TCP_PORT = 65535
 _STATUS_PROBE_TIMEOUT_SECONDS = 0.5
@@ -53,11 +59,16 @@ class ConnectorService:
         player_name: str | None = None,
         http_client: httpx.Client | None = None,
         node_cache_ttl: float = _NODE_CACHE_TTL_SECONDS,
+        extensions: ConnectorExtensionRegistry | None = None,
+        local_player_icon_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self._launcher_info = launcher_info
         self._player_name = player_name or "Player"
         self._http = http_client
+        self.extensions = extensions or ConnectorExtensionRegistry()
+        self._local_player_icon_provider = local_player_icon_provider
         if log_callback is None:
+
             def _default_log(level: str, msg: str) -> None:
                 log_func = getattr(logger, level.lower(), logger.info)
                 log_func(msg)
@@ -81,6 +92,7 @@ class ConnectorService:
         self._node_cache_lock = RLock()
         self._error: str | None = None
         self._started: bool = False
+        self._game_info: dict[str, Any] | None = None
 
         # 易用性
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -271,16 +283,73 @@ class ConnectorService:
 
         :returns: 包含 mode, roomCode, mcHost, mcPort, gameInfo, players, error 的字典
         """
-        return {
+        status = {
             "mode": self._mode,
             "roomCode": self._room_code,
             "mcHost": self._mc_host,
             "mcPort": self._mc_port,
-            "gameInfo": None,
+            "gameInfo": dict(self._game_info) if self._game_info is not None else None,
             "players": self._current_players(),
             "nodes": self._nodes,
             "error": self._error,
         }
+        return self.extensions.enrich_status(self._session_context(), status)
+
+    def _session_context(self) -> ConnectorSessionContext:
+        """
+        构造不暴露底层 socket 的插件联机会话上下文。
+        """
+        client = self._client
+        machine_id = getattr(client, "machine_id", None)
+        request = self._send_extension_request if client is not None else None
+        return ConnectorSessionContext(
+            mode=self._mode,
+            room_code=self._room_code,
+            machine_id=str(machine_id) if machine_id else None,
+            game_info=dict(self._game_info) if self._game_info is not None else None,
+            _request=request,
+            _local_icon_provider=self._local_player_icon_provider,
+        )
+
+    def _send_extension_request(self, protocol: str, body: bytes = b"") -> tuple[int, bytes]:
+        """
+        在线程安全边界内向当前房主发送扩展协议请求。
+        """
+        client = self._client
+        if client is None:
+            raise RuntimeError("当前不是房客会话")
+        loop = getattr(client, "loop", None)
+        if loop is None or loop.is_closed() or not loop.is_running():
+            raise RuntimeError("联机协议客户端尚未就绪")
+        return asyncio.run_coroutine_threadsafe(client.send_request(protocol, body), loop).result(
+            timeout=_EXTENSION_REQUEST_TIMEOUT_SECONDS
+        )
+
+    def _extension_protocol_handlers(self) -> dict[str, Callable[..., Any]]:
+        """
+        把插件注册表适配为 Florolding 服务端处理器。
+        """
+        handlers: dict[str, Callable[..., Any]] = {}
+        for protocol in self.extensions.protocol_names():
+
+            async def handle(request_body: bytes, writer: Any, protocol_name: str = protocol) -> tuple[int, bytes]:
+                server = self._room_server
+                peer_machine_id = None
+                remove_player = None
+                if server is not None:
+                    peer_machine_id = server.machine_ids.get(writer)
+                    remove_player = server.remove_player
+                request = ConnectorProtocolRequest(
+                    protocol=protocol_name,
+                    body=request_body,
+                    peer_machine_id=peer_machine_id,
+                    game_info=dict(self._game_info) if self._game_info is not None else None,
+                    _remove_player=remove_player,
+                )
+                return await self.extensions.dispatch(request)
+
+            handlers[protocol] = handle
+        return handlers
 
     def get_easytier_status(self) -> dict[str, Any]:
         """
@@ -467,10 +536,13 @@ class ConnectorService:
             room_code, server, easy_tier_node = florolding.create_room(
                 player_name=self._player_name,
                 minecraft_port=port,
+                protocol_handlers=self._extension_protocol_handlers(),
             )
             logger.debug(
                 "房间已创建: room_code=%s, server=%s, easytier_id=%s",
-                room_code, type(server).__name__, easy_tier_node.peer_id() if easy_tier_node else "N/A",
+                room_code,
+                type(server).__name__,
+                easy_tier_node.peer_id() if easy_tier_node else "N/A",
             )
 
             self._mode = "host"
@@ -563,13 +635,19 @@ class ConnectorService:
         :param conn_timeout: 发现房主大厅的超时秒数
         :returns: (easytier_node, 本地 Minecraft 映射端口)
         """
-        client, node = florolding.join_room(room_code, player_name, conn_timeout)
+        client, node = florolding.join_room(
+            room_code,
+            player_name,
+            conn_timeout,
+            supported_protocols=self.extensions.protocol_names(),
+        )
         self._client = client
 
         bind_mc_port = find_free_port()
         if not florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout):
             node.stop()
             raise ConnectorError("绑定 Minecraft 端口失败")
+        self.extensions.guest_joined(self._session_context())
         return node, bind_mc_port
 
     def leave(self) -> dict[str, Any]:
@@ -578,6 +656,9 @@ class ConnectorService:
 
         :returns: 包含 status 的字典
         """
+        previous_context = self._session_context()
+        if self._mode != "idle":
+            self.extensions.before_leave(previous_context)
         self._stop_async_thread_client()
         server = self._room_server
         if server is not None and hasattr(server, "sync_stop"):
@@ -600,7 +681,16 @@ class ConnectorService:
         self._room_server = None
         self._easy_tier_node = None
         self._client = None
+        self._game_info = None
         self._error = None
+        self.extensions.reset(
+            ConnectorSessionContext(
+                mode="idle",
+                room_code=None,
+                machine_id=previous_context.machine_id,
+                game_info=None,
+            )
+        )
         return {"status": "left"}
 
     def close(self) -> None:
@@ -631,12 +721,14 @@ class ConnectorService:
         if loop is None or loop.is_closed() or not loop.is_running():
             self._client = None
             return
+
         async def _stop() -> None:
             task = getattr(client, "heartbeat_task", None)
             if task is not None:
                 task.cancel()
             if getattr(client, "writer", None) is not None:
                 await client.disconnect()
+
         try:
             asyncio.run_coroutine_threadsafe(_stop(), loop)
         except (RuntimeError, TypeError):

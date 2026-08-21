@@ -55,12 +55,12 @@ class PluginHandlers(_FrontendState):
 
     async def plugin_unload(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        卸载插件。
+        卸载并删除用户插件。
 
         :param body: 经过边界校验的 IPC 请求数据
         """
         plugin_name = body.get("plugin_name")
-        result = self.plugins.unload(plugin_name)
+        result = self.plugins.uninstall(plugin_name)
         if not result.success:
             return failure(result.message or f"卸载插件失败: {plugin_name}", "PLUGIN_UNLOAD_FAILED")
         return {"success": True}
