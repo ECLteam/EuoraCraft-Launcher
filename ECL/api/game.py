@@ -38,12 +38,7 @@ class GameHandlers(_FrontendState):
     """
 
     def _download_source(self, requested_source: str | None) -> str:
-        """
-        选择请求显式指定的下载源，缺失时使用启动器配置。
-
-        :param requested_source: 请求模型中的可选下载源
-        :return: Game Service 可识别的下载源名称
-        """
+        # 选择请求显式指定的下载源，缺失时使用启动器配置。
         if requested_source:
             return requested_source
         return str((self._get_effective_config().get("download") or {}).get("mirror_source") or "official")

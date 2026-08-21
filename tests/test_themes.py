@@ -73,6 +73,50 @@ def test_patch_rejects_readonly_and_dangerous_root(tmp_path):
         )
 
 
+def test_folia_is_a_readonly_builtin_and_copies_as_an_editable_skin(tmp_path):
+    service = create_service(tmp_path)
+
+    summaries = {item["id"]: item for item in service.list_presets()}
+    assert summaries["builtin.folia"]["readonly"] is True
+    assert service.get_preset("builtin.folia")["uiSkin"] == "folia"
+
+    service.activate("builtin.folia")
+    started = service.start_session(restore=False)
+    assert started["draft"]["id"].startswith("user.")
+    assert started["draft"]["uiSkin"] == "folia"
+
+
+def test_theme_skin_defaults_to_classic_and_rejects_unknown_values():
+    legacy = {
+        "schemaVersion": 1,
+        "id": "user.legacy",
+        "meta": {"name": "Legacy"},
+        "schemes": {},
+        "tokens": {},
+        "background": {},
+        "componentOverrides": {},
+        "nodeOverrides": {},
+        "effects": [],
+        "assets": {},
+        "pluginDependencies": [],
+        "extensions": {},
+    }
+    assert normalize_preset(legacy)["uiSkin"] == "classic"
+    legacy["uiSkin"] = "untrusted"
+    with pytest.raises(ValueError, match="skin"):
+        normalize_preset(legacy)
+
+
+def test_exporting_and_importing_folia_creates_a_local_copy(tmp_path):
+    service = create_service(tmp_path)
+    archive = service.export_preset("builtin.folia", tmp_path / "folia.ecltheme")
+
+    imported = service.import_preset(archive)
+    assert imported["originalId"] == "builtin.folia"
+    assert imported["importedId"].startswith("user.")
+    assert imported["preset"]["uiSkin"] == "folia"
+
+
 @pytest.mark.parametrize("property_name", ["position", "zIndex", "pointerEvents", "width", "height"])
 def test_theme_protocol_rejects_dangerous_style_properties(property_name):
     value = {

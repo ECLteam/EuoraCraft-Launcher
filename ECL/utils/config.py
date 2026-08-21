@@ -12,7 +12,13 @@ from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
 
 default_config: dict[str, Any] = {
-    "launcher": {"debug": False, "disable_ssl_verify": False, "ignore_proxy": True},
+    "launcher": {
+        "debug": False,
+        "disable_ssl_verify": False,
+        "ignore_proxy": True,
+        "request_timeout": 15,
+        "request_retries": 2,
+    },
     "game": {
         "minecraft_paths": [],
         "java_auto": True,
@@ -31,6 +37,7 @@ default_config: dict[str, Any] = {
         "locale": "zh-CN",
         "theme": {
             "mode": "system",
+            "scheme": "light",
             "primary_color": "#6f8cff",
             "blur_amount": 18,
             "sidebar_collapsed": True,
@@ -38,6 +45,12 @@ default_config: dict[str, Any] = {
             "titlebar_hidden": False,
             "transparent_bg": False,
             "background_opacity": 1.0,
+            "appearance": {
+                "reduce_motion": False,
+                "compact_density": False,
+                "custom_css_enabled": False,
+            },
+            "schedule": {"enabled": False, "dark_start": "20:00", "dark_end": "07:00"},
         },
         "background": {"type": "default", "path": "", "opacity": 1.0, "blur": 18},
     },
@@ -52,11 +65,11 @@ class ConfigStore:
     """
 
     def __init__(self, data_path: Path, event_bus: EventBus | None = None) -> None:
-        self.logger = get_logger("config")
-        self.data_path = Path(data_path)
-        self.config_path = self.data_path / "setting.json"
-        self.config_data: dict[str, Any] | None = None
-        self.events = event_bus or EventBus()
+        self.logger = get_logger("config")  # 配置读写日志器。
+        self.data_path = Path(data_path)  # 应用数据目录。
+        self.config_path = self.data_path / "setting.json"  # 配置文件路径。
+        self.config_data: dict[str, Any] | None = None  # 内存中的配置快照。
+        self.events = event_bus or EventBus()  # 配置变更事件总线。
 
     @property
     def default_minecraft_path(self) -> Path:
@@ -67,13 +80,13 @@ class ConfigStore:
         return (self.data_path.parent / ".minecraft").resolve()
 
     def _create_default_config(self) -> dict[str, Any]:
-        """深拷贝默认配置并填充 Minecraft 路径。"""
+        # 深拷贝默认值，避免调用方共享可变配置。
         config_data = deepcopy(default_config)
         self._ensure_default_minecraft_path(config_data)
         return config_data
 
     def _ensure_default_minecraft_path(self, config_data: dict[str, Any]) -> bool:
-        """未配置 Minecraft 路径时创建默认目录并回填相关字段，返回是否产生变更。"""
+        # 缺少游戏目录时创建默认目录并回填相关字段。
         game_config = config_data.get("game")
         if not isinstance(game_config, dict):
             return False
@@ -90,7 +103,7 @@ class ConfigStore:
         return True
 
     def _initialize_file(self) -> None:
-        """创建数据目录，并用默认配置初始化缺失的配置文件。"""
+        # 创建数据目录，并在首次启动时写入默认配置。
         self.data_path.mkdir(parents=True, exist_ok=True)
         if self.config_path.exists():
             return
@@ -98,7 +111,7 @@ class ConfigStore:
         self._write_config(self._create_default_config())
 
     def _write_config(self, config_data: dict[str, Any]) -> None:
-        """以原子替换方式写入配置，失败时抛 ConfigError。"""
+        # 以原子替换方式写入配置，避免写入中断造成文件损坏。
         try:
             serialized_config = json.dumps(config_data, ensure_ascii=False, indent=4)
             atomic_write_text(self.config_path, serialized_config)
@@ -107,7 +120,7 @@ class ConfigStore:
         self.config_data = deepcopy(config_data)
 
     def _load_config(self) -> dict[str, Any]:
-        """从磁盘加载配置，必要时回写默认路径或恢复损坏的配置。"""
+        # 从磁盘加载配置，必要时补全默认路径或恢复损坏文件。
         try:
             self._initialize_file()
             loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -120,7 +133,7 @@ class ConfigStore:
             return self._restore_default_config(exc)
 
     def _restore_default_config(self, cause: Exception) -> dict[str, Any]:
-        """备份损坏配置并恢复为默认配置。"""
+        # 备份损坏配置后恢复默认值。
         backup_path = self.config_path.with_suffix(".json.bak")
         self.logger.warning("配置文件无效，将恢复默认配置: %s", cause)
         with suppress(OSError):
@@ -172,7 +185,3 @@ class ConfigStore:
         self._write_config(config_data)
         # 广播配置变更事件，通知订阅组件。
         self.events.emit("config:updated", normalized_section, deepcopy(data))
-
-
-# 为迁移期调用方保留的兼容名称。
-ConfigManager = ConfigStore

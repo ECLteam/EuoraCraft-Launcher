@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from ECL.events import EventBus
-from ECL.plugins import Plugin, PluginFramework
+from ECL.plugins import Plugin, PluginManager
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionManager, PermissionScope
 
 
@@ -147,7 +147,7 @@ def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
         "        self.emit('demo:hello')\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("demo") == "enabled"
@@ -172,7 +172,7 @@ def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
         "    def on_hello(self, name): ...\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("bad") == "permission_denied"
@@ -200,7 +200,7 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
         "        raise RuntimeError('插件配置内容无效')\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     info = {plugin["name"]: plugin for plugin in framework.list_plugins()}["broken"]
@@ -215,7 +215,7 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
 
 def test_sidebar_state_is_emitted_after_frontend_is_ready() -> None:
     event_bus = EventBus()
-    framework = PluginFramework(event_bus)
+    framework = PluginManager(event_bus)
     states = []
     event_bus.subscribe("frontend:sidebar_changed", states.append)
 
@@ -252,7 +252,7 @@ def test_system_plugin_ignores_permission_declaration(tmp_path) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"disabled": ["sysdemo"]}), encoding="utf-8")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("sysdemo") == "enabled"

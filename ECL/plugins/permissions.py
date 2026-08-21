@@ -20,6 +20,9 @@ class PermissionScope(Enum):
     THEME = "theme"
     INSTANCES = "instances"
     CONNECTOR = "connector"
+    LAUNCH = "launch"
+    ACCOUNTS = "accounts"
+    CRASH = "crash"
 
 
 class PermissionAction(Enum):
@@ -68,7 +71,9 @@ class Permission:
         return cls(scope, action, resource)
 
     def to_dict(self) -> dict[str, Any]:
-        """转换为字典表示。"""
+        """
+        转换为字典表示。
+        """
         return {
             "scope": self.scope.value,
             "action": self.action.value,

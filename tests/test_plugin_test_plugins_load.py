@@ -3,7 +3,7 @@
 import shutil
 from pathlib import Path
 
-from ECL.plugins import PluginFramework
+from ECL.plugins import PluginManager
 
 # 需要验证的测试插件名称列表
 _TEST_PLUGIN_NAMES = [
@@ -34,7 +34,7 @@ def test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) ->
     source_plugins = Path(__file__).parent.parent / "ECL_data" / "plugins"
     _copy_plugins(source_plugins, data_path / "plugins")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     # test_permissions 插件内部故意声明了越权命令，用于测试权限拒绝场景

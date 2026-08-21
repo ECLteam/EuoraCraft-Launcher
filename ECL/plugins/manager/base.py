@@ -1,15 +1,23 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from ECL.events import EventBus
+from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
+from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.dependencies import DependencyResolution
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
+from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
 from ECL.utils import get_logger
+
+if TYPE_CHECKING:
+    pass
 
 
 class _PluginState:
@@ -25,6 +33,10 @@ class _PluginState:
         processes: Any = None,
         instance_compatibility: InstanceCompatibilityRegistry | None = None,
         connector_extensions: ConnectorExtensionRegistry | None = None,
+        launch_hooks: LaunchHookRegistry | None = None,
+        http_client: httpx.Client | None = None,
+        auth_providers: AuthProviderRegistry | None = None,
+        crash_extensions: CrashAnalysisExtensionRegistry | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -33,12 +45,20 @@ class _PluginState:
         :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
         :param instance_compatibility: 与游戏服务共享的实例兼容提供者注册表
         :param connector_extensions: 与联机服务共享的扩展协议注册表
+        :param launch_hooks: 与游戏服务共享的启动钩子注册表
+        :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
+        :param auth_providers: 与账户服务共享的自定义认证提供方注册表
+        :param crash_extensions: 与游戏服务共享的崩溃分析富化注册表
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
         self.processes = processes  # 插件可经 framework.processes 启动子进程实例
         self.instance_compatibility = instance_compatibility or InstanceCompatibilityRegistry()
         self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
+        self.launch_hooks = launch_hooks or LaunchHookRegistry()
+        self.http_client = http_client
+        self.auth_providers = auth_providers or AuthProviderRegistry()
+        self.crash_extensions = crash_extensions or CrashAnalysisExtensionRegistry()
         self._command_executor = ThreadPoolExecutor(
             max_workers=8, thread_name_prefix="plugin_cmd"
         )  # 插件命令执行的线程池

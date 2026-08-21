@@ -68,7 +68,7 @@ _CURSEFORGE_SORT_FIELD = {
 
 
 class _ModrinthSearchHit(BaseModel):
-    """Modrinth 搜索命中 → 前端 ``ModSearchItem`` 的字段映射模型。"""
+    # Modrinth 搜索命中 → 前端 ``ModSearchItem`` 的字段映射模型。
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -96,7 +96,7 @@ class _ModrinthSearchHit(BaseModel):
 
 
 class _ModrinthProjectInfo(BaseModel):
-    """Modrinth 项目详情 → 前端 ``ModInfo`` 的字段映射模型。"""
+    # Modrinth 项目详情 → 前端 ``ModInfo`` 的字段映射模型。
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -117,12 +117,7 @@ class _ModrinthProjectInfo(BaseModel):
 
 
 def _normalize_curseforge_hit(hit: dict[str, Any]) -> dict[str, Any]:
-    """
-    将 CurseForge 搜索命中转换为 Modrinth 风格字段，供 ``_ModrinthSearchHit`` 复用。
-
-    :param hit: CurseForge ``/v1/mods/search`` 返回的单个命中
-    :return: 归一化后的命中字典
-    """
+    # 将 CurseForge 搜索命中转换为 Modrinth 风格字段，供 ``_ModrinthSearchHit`` 复用。
     authors = hit.get("authors") or []
     logo = hit.get("logo") or {}
     return {
@@ -153,12 +148,7 @@ def _safe_json(data: bytes) -> dict[str, Any]:
 
 
 def _join_authors(authors: Any) -> str:
-    """
-    将 fabric/quilt 的 authors 结构（字符串或含 name 的对象）合并为逗号分隔文本。
-
-    :param authors: 元数据中的作者列表
-    :return: 逗号分隔的作者名
-    """
+    # 将 fabric/quilt 的 authors 结构（字符串或含 name 的对象）合并为逗号分隔文本。
     if not isinstance(authors, list):
         return ""
     names: list[str] = []
@@ -873,7 +863,7 @@ class ResourceCoordinator:
         return result
 
     def _fetch_online_version(self, version_id_str: str) -> dict[str, Any]:
-        """获取 Modrinth 版本详情并返回主下载文件，无可用文件时抛出错误。"""
+        # 获取 Modrinth 版本详情并返回主下载文件，无可用文件时抛出错误。
         response = httpx.get(
             f"https://api.modrinth.com/v2/version/{version_id_str}",
             headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
@@ -890,7 +880,7 @@ class ResourceCoordinator:
         return selected
 
     def _fetch_curseforge_file(self, project_id: str, file_id: str) -> dict[str, Any]:
-        """获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。"""
+        # 获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。
         headers = self._curseforge_headers()
         response = httpx.get(
             f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}",
@@ -924,7 +914,7 @@ class ResourceCoordinator:
         raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
 
     def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
-        """流式下载在线资源到临时文件，并按需上报字节进度与实时速度。"""
+        # 流式下载在线资源到临时文件，并按需上报字节进度与实时速度。
         with httpx.stream("GET", url, timeout=15, follow_redirects=True) as stream:
             stream.raise_for_status()
             total = int(stream.headers.get("content-length") or 0)
@@ -974,7 +964,7 @@ class ResourceCoordinator:
         project_id: str,
         version_id_str: str,
     ) -> None:
-        """在资源清单中记录已安装的在线资源来源信息。"""
+        # 在资源清单中记录已安装的在线资源来源信息。
         manifest = self._read_resource_manifest(game_path, version_id)
         records = manifest.setdefault("resources", {})
         records[f"{resource_type}:{destination.name}"] = {

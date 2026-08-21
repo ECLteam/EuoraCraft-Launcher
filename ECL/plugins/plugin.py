@@ -3,6 +3,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ECL.plugins.auth_providers import AuthField
+from ECL.plugins.launch_hooks import LaunchContext
+from ECL.plugins.network import _MAX_HTTP_BODY_BYTES, PluginHttpError, PluginHttpResponse, _action_for_method
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
 from ECL.utils import get_logger
 
@@ -11,27 +14,27 @@ if TYPE_CHECKING:
 
 
 def _register_event(cls, name: str, args: tuple) -> None:
-    """注册事件处理器条目：事件名 + 方法名。"""
+    # 注册事件处理器条目：事件名 + 方法名。
     cls._event_handlers.append((args[0], name))
 
 
 def _register_command(cls, name: str, args: tuple) -> None:
-    """注册命令条目：命令名 + 方法名 + 描述。"""
+    # 注册命令条目：命令名 + 方法名 + 描述。
     cls._command_handlers.append((args[0], name, args[1]))
 
 
 def _register_setting(cls, name: str, args: tuple) -> None:
-    """注册设置项定义条目。"""
+    # 注册设置项定义条目。
     cls._setting_definitions.append((args[0], args[1], args[2], args[3]))
 
 
 def _register_route(cls, name: str, args: tuple) -> None:
-    """注册侧边栏路由条目：路径 + 标题 + 图标。"""
+    # 注册侧边栏路由条目：路径 + 标题 + 图标。
     cls._route_definitions.append((args[0], args[1], args[2]))
 
 
 def _register_frontend_injection(kind: str) -> Callable[[type, str, tuple], None]:
-    """生成前端注入类装饰器的注册函数，条目直接复用装饰器参数元组。"""
+    # 生成前端注入类装饰器的注册函数，条目直接复用装饰器参数元组。
 
     def registrar(cls, name: str, args: tuple) -> None:
         cls._frontend_injections.append((kind, args))
@@ -53,9 +56,7 @@ _DECORATOR_REGISTRARS: dict[str, Callable[[type, str, tuple], None]] = {
 
 
 def _register_decorated(cls) -> None:
-    """
-    扫描类的 __dict__，将装饰器在函数对象上留下的标记转换为注册表条目。
-    """
+    # 扫描类的 __dict__，将装饰器在函数对象上留下的标记转换为注册表条目。
     for name, value in cls.__dict__.items():
         meta = getattr(value, "_ecl_decorator", None)
         if meta is None:
@@ -150,19 +151,13 @@ class Plugin:
         self._apply_decorators()
 
     def _check_permission(self, scope: PermissionScope, action: PermissionAction, resource: str = "*") -> None:
-        """
-        系统插件跳过权限校验，普通插件必须声明对应权限。
-
-        :param scope: 权限允许访问的资源范围
-        :param action: 需要执行的操作类型
-        :param resource: 插件准备访问的资源
-        """
+        # 系统插件跳过权限校验，普通插件必须声明对应权限。
         if self.is_system:
             return
         self.framework._permission_manager.check_permission(self.name, Permission(scope, action, resource))
 
     def _apply_decorators(self) -> None:
-        """将类级别的装饰器注册表绑定到当前实例。"""
+        # 将类级别的装饰器注册表绑定到当前实例。
         for event, method_name in self._event_handlers:
             handler = getattr(self, method_name)
             self.subscribe(event, handler)
@@ -306,15 +301,21 @@ class Plugin:
         return wrapper
 
     def on_load(self) -> None:
-        """生命周期钩子：加载资源，此时不应注册路由或命令。"""
+        """
+        生命周期钩子：加载资源，此时不应注册路由或命令。
+        """
 
     def on_enable(self) -> None:
-        """生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。"""
+        """
+        生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
+        """
         for path, title, icon in self._routes_to_register:
             self.register_route(path, title, icon)
 
     def on_frontend_ready(self) -> None:
-        """生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。"""
+        """
+        生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
+        """
         for inj_type, args in self._injections_to_apply:
             if inj_type == "css":
                 self.register_css_file(*args)
@@ -328,10 +329,14 @@ class Plugin:
                 self.register_vue_route_file(*args)
 
     def on_disable(self) -> None:
-        """生命周期钩子：清理运行时状态。"""
+        """
+        生命周期钩子：清理运行时状态。
+        """
 
     def on_unload(self) -> None:
-        """生命周期钩子：释放资源。"""
+        """
+        生命周期钩子：释放资源。
+        """
 
     def register_route(self, path: str, title: str, icon: str = "") -> None:
         """
@@ -443,6 +448,187 @@ class Plugin:
             before_leave=before_leave,
             on_reset=on_reset,
         )
+
+    def register_launch_hook(
+        self,
+        name: str,
+        *,
+        on_prepare: Callable[[LaunchContext], Any] | None = None,
+        pre_launch: Callable[[LaunchContext], Any] | None = None,
+        post_launch: Callable[[LaunchContext], Any] | None = None,
+        on_exit: Callable[[LaunchContext], Any] | None = None,
+    ) -> None:
+        """
+        注册启动钩子，参与 Minecraft 启动参数准备与进程生命周期。
+
+        ``on_prepare`` 可追加/修改 ``jvm_args``、``game_args`` 与 ``env``；
+        ``pre_launch`` / ``post_launch`` 在进程创建前后调用；``on_exit``
+        在游戏进程退出时调用。插件禁用或卸载时宿主自动撤销全部钩子。
+
+        :param name: 稳定的钩子标识
+        :param on_prepare: 启动参数准备阶段回调
+        :param pre_launch: 进程创建前回调
+        :param post_launch: 进程创建后回调
+        :param on_exit: 游戏进程退出回调
+        """
+        self._check_permission(PermissionScope.LAUNCH, PermissionAction.WRITE, name)
+        registry = self.framework.launch_hooks
+        if registry is None:
+            raise RuntimeError("当前环境未提供启动钩子能力")
+        registry.register(
+            owner=self.name,
+            name=name,
+            on_prepare=on_prepare,
+            pre_launch=pre_launch,
+            post_launch=post_launch,
+            on_exit=on_exit,
+        )
+
+    def http_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        json: Any = None,
+        data: Any = None,
+        timeout: float = 15.0,
+    ) -> PluginHttpResponse:
+        """
+        发起受控的 HTTP 请求。
+
+        只允许 ``http`` / ``https`` URL，并按主机名校验权限：只读方法
+        （GET/HEAD/OPTIONS）要求 ``network/read/<host>``，其余方法要求
+        ``network/write/<host>``。响应体上限 8 MiB，超出部分被截断标记。
+
+        :param method: HTTP 方法
+        :param url: 完整请求地址
+        :param params: 查询参数
+        :param headers: 附加请求头
+        :param json: JSON 请求体
+        :param data: 原始请求体
+        :param timeout: 请求超时秒数
+        :return: 受限的响应视图
+        :raises PluginHttpError: URL 非法、权限不足、网络失败或环境未提供客户端
+        """
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(url))
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise PluginHttpError(f"仅支持 http/https URL: {url}")
+        host = parsed.hostname or parsed.netloc
+        action = _action_for_method(str(method))
+        self._check_permission(PermissionScope.NETWORK, PermissionAction(action), host)
+
+        client = self.framework.http_client
+        if client is None:
+            raise PluginHttpError("当前环境未提供网络能力")
+        try:
+            response = client.request(
+                str(method).upper(),
+                str(url),
+                params=dict(params or {}),
+                headers=dict(headers or {}) or None,
+                json=json,
+                data=data,
+                timeout=min(max(float(timeout), 0.1), 120.0),
+            )
+        except Exception as exc:
+            raise PluginHttpError(f"网络请求失败: {exc}") from exc
+
+        body = response.content or b""
+        truncated = len(body) > _MAX_HTTP_BODY_BYTES
+        content = body[:_MAX_HTTP_BODY_BYTES]
+        content_type = str(response.headers.get("content-type", "")).lower()
+        text = ""
+        content_b64 = ""
+        if content_type.startswith("text/") or "json" in content_type or not content:
+            text = content.decode("utf-8", errors="replace")
+        else:
+            import base64
+
+            content_b64 = base64.b64encode(content).decode("ascii")
+        return PluginHttpResponse(
+            status_code=response.status_code,
+            url=str(response.url),
+            headers={str(key): str(value) for key, value in response.headers.items()},
+            text=text,
+            content_b64=content_b64,
+            truncated=truncated,
+        )
+
+    def http_get(self, url: str, **kwargs: Any) -> PluginHttpResponse:
+        """
+        受控的 GET 请求，参数与 ``http_request`` 一致。
+        """
+        return self.http_request("GET", url, **kwargs)
+
+    def http_post(self, url: str, **kwargs: Any) -> PluginHttpResponse:
+        """
+        受控的 POST 请求，参数与 ``http_request`` 一致。
+        """
+        return self.http_request("POST", url, **kwargs)
+
+    def register_auth_provider(
+        self,
+        provider_id: str,
+        title: str,
+        fields: list[AuthField],
+        authenticate: Callable[[Mapping[str, Any]], dict[str, Any]],
+        resolve_credentials: Callable[[dict[str, Any]], dict[str, str]],
+        description: str = "",
+    ) -> None:
+        """
+        注册自定义账户认证提供方。
+
+        ``authenticate`` 接收表单字段值字典并返回账户信息
+        （``id``/``alias``/``uuid`` 必填，``data`` 保存不透明令牌负载）；
+        ``resolve_credentials`` 在启动时返回
+        ``{"player_name", "uuid", "user_type", "access_token", "auth_server"?}``。
+        插件禁用或卸载时，宿主会移除该提供方且已存账户无法再启动。
+
+        :param provider_id: 稳定标识，最终账户 ID 为 ``plugin:<provider_id>:<account_id>``
+        :param title: 面向用户的显示名称
+        :param fields: 动态登录表单字段
+        :param authenticate: 认证回调
+        :param resolve_credentials: 启动凭据解析回调
+        :param description: 可选描述
+        """
+        self._check_permission(PermissionScope.ACCOUNTS, PermissionAction.WRITE, provider_id)
+        registry = self.framework.auth_providers
+        if registry is None:
+            raise RuntimeError("当前环境未提供账户扩展能力")
+        registry.register(
+            owner=self.name,
+            provider_id=provider_id,
+            title=title,
+            fields=fields,
+            authenticate=authenticate,
+            resolve_credentials=resolve_credentials,
+            description=description,
+        )
+
+    def register_crash_analyzer(
+        self,
+        name: str,
+        enrich: Callable[..., Any],
+    ) -> None:
+        """
+        注册崩溃分析富化回调。
+
+        ``enrich(context, result)`` 返回的字典浅合并进崩溃分析结果；键
+        ``reasons`` 追加到已有原因列表。回调异常会被隔离。插件禁用或卸载时
+        宿主自动撤销该回调。
+
+        :param name: 稳定的回调标识
+        :param enrich: 接收崩溃上下文与分析结果快照的回调
+        """
+        self._check_permission(PermissionScope.CRASH, PermissionAction.WRITE, name)
+        registry = self.framework.crash_extensions
+        if registry is None:
+            raise RuntimeError("当前环境未提供崩溃分析扩展能力")
+        registry.register(owner=self.name, name=name, enrich=enrich)
 
     def inject_css(self, css: str, key: str | None = None) -> None:
         """
@@ -638,7 +824,7 @@ class Plugin:
 
     @staticmethod
     def _parse_vue_sfc(content: str) -> dict[str, str]:
-        """解析 .vue 单文件组件内容，拆分为 template/script/style 三部分。"""
+        # 解析 .vue 单文件组件内容，拆分为 template/script/style 三部分。
         result: dict[str, str] = {"template": "", "script": "", "style": ""}
         for tag in ("template", "script", "style"):
             match = re.search(rf"<{tag}.*?>(.*?)</{tag}>", content, re.DOTALL)

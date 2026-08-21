@@ -250,7 +250,7 @@ class WorldCoordinator:
         source: Path,
         context: OperationContext | None = None,
     ) -> dict[str, str]:
-        """校验并导入单个世界目录或 ZIP，供本地导入与在线存档下载共用。"""
+        # 校验并导入单个世界目录或 ZIP，供本地导入与在线存档下载共用。
         root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="ecl-world-import-", dir=root.parent) as temp_dir:
             temp = Path(temp_dir)

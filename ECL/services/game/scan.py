@@ -133,12 +133,7 @@ class ScanCoordinator(_GameState):
         game_path: Path,
         compatibility_options: dict[str, Any] | None = None,
     ) -> tuple[tuple[str, int, int], ...]:
-        """
-        生成轻量版本目录快照，只跟踪目录项和直接 JSON 文件。
-
-        :param game_path: Minecraft 游戏根目录
-        :param compatibility_options: 按来源标识分组的插件兼容配置
-        """
+        # 生成轻量版本目录快照，只跟踪目录项和直接 JSON 文件。
         versions_path = game_path / "versions"
         records: list[tuple[str, int, int]] = []
 
@@ -314,11 +309,7 @@ class ScanCoordinator(_GameState):
         return path / self._ECL_JSON_NAME
 
     def _ensure_ecl_config(self, game_path: Any) -> None:
-        """
-        如果游戏路径下不存在 ecl.json，则创建默认配置文件。
-
-        :param game_path: Minecraft 游戏根目录
-        """
+        # 如果游戏路径下不存在 ecl.json，则创建默认配置文件。
         ecl_path = self._ecl_json_path(game_path)
         with self._lock:
             if ecl_path.is_file():

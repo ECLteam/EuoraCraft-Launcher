@@ -21,7 +21,9 @@ class DependencyRequirement:
 
     @property
     def version_constraint(self) -> str:
-        """返回该依赖的版本约束表达式。"""
+        """
+        返回该依赖的版本约束表达式。
+        """
         return str(self.specifier) or "*"
 
 
@@ -87,9 +89,7 @@ def parse_version(version: str) -> Version | None:
 
 
 def _detect_cycles(graph: dict[str, set[str]]) -> list[str] | None:
-    """
-    使用 DFS 检测有向图中的环，返回环上任意一个节点或 None。
-    """
+    # 使用 DFS 检测有向图中的环，返回环上任意一个节点或 None。
     white, gray, black = 0, 1, 2
     color = dict.fromkeys(graph, white)
     parent: dict[str, str | None] = dict.fromkeys(graph)
@@ -126,14 +126,7 @@ def _validated_edges(
     info_map: dict[str, PluginDependencyInfo],
     result: DependencyResolution,
 ) -> dict[str, set[str]]:
-    """
-    校验必需依赖和版本约束，并构造插件指向其依赖的边。
-
-    :param plugins: 插件依赖信息列表
-    :param info_map: 按插件名索引的依赖信息
-    :param result: 用于记录校验错误和跳过项的解析结果
-    :return: 通过校验的必需依赖边
-    """
+    # 校验必需依赖和版本约束，并构造插件指向其依赖的边。
     required_edges: dict[str, set[str]] = {name: set() for name in info_map}
     for info in plugins:
         for requirement in info.dependencies:
@@ -160,13 +153,7 @@ def _validated_edges(
 
 
 def _topological_order(active_names: set[str], required_edges: dict[str, set[str]]) -> list[str]:
-    """
-    使用 Kahn 算法生成稳定的插件加载顺序。
-
-    :param active_names: 未因校验错误而跳过的插件名
-    :param required_edges: 插件指向其依赖的边
-    :return: 依赖先于使用者的插件名列表
-    """
+    # 使用 Kahn 算法生成稳定的插件加载顺序。
     in_degree = dict.fromkeys(active_names, 0)
     dependents: dict[str, list[str]] = {name: [] for name in active_names}
     for name in active_names:

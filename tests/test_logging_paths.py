@@ -1,13 +1,13 @@
 import logging
 from pathlib import Path
 
-from ECL.utils import LoggerManager
+from ECL.utils import LoggingRuntime
 
 
 def test_logger_files_are_created_under_data_path(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
 
-    manager = LoggerManager(colored=False, data_path=data_path)
+    manager = LoggingRuntime(colored=False, data_path=data_path)
 
     assert manager.log_dir == data_path / "logs"
     file_paths = {
@@ -24,7 +24,7 @@ def test_logger_files_are_created_under_data_path(tmp_path) -> None:
 
 def test_debug_records_remain_in_complete_log_when_console_is_info(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
-    manager = LoggerManager(colored=False, data_path=data_path)
+    manager = LoggingRuntime(colored=False, data_path=data_path)
     manager.set_level(logging.INFO)
 
     manager.get_logger("Diagnostics").debug("debug-diagnostic-record")

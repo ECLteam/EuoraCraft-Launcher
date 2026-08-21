@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from ECL.plugins import PluginFramework
+from ECL.plugins import PluginManager
 
 
 def _write_plugin(plugin_dir: Path, metadata: dict, source: str) -> None:
@@ -37,7 +37,7 @@ def test_disabled_plugin_is_skipped_on_initialize(tmp_path) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"disabled": ["disabled_plugin"]}), encoding="utf-8")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("disabled_plugin") == "disabled"
@@ -79,7 +79,7 @@ def test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"disabled": ["meta_plugin"]}), encoding="utf-8")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework.get_plugin("meta_plugin") is None
@@ -102,7 +102,7 @@ def test_deleted_disabled_plugin_is_pruned_from_state_and_list(tmp_path) -> None
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"disabled": ["deleted_plugin"]}), encoding="utf-8")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert "deleted_plugin" not in {plugin["name"] for plugin in framework.list_plugins()}
@@ -121,7 +121,7 @@ def test_uninstall_disabled_plugin_removes_files_state_and_list(tmp_path) -> Non
         "from ECL.plugins import Plugin\nclass DemoPlugin(Plugin): pass\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
     assert framework.disable("demo").success is True
 
@@ -156,7 +156,7 @@ def test_disable_persists_to_state_file(tmp_path) -> None:
         "    def cmd_hello(self): return {'ok': True}\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("demo") == "enabled"
@@ -190,7 +190,7 @@ def test_enable_removes_from_state_file(tmp_path) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"disabled": ["demo"]}), encoding="utf-8")
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("demo") == "disabled"
@@ -224,7 +224,7 @@ def test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -
         "        self.ready_count += 1\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     plugin = framework.get_plugin("demo")
@@ -269,7 +269,7 @@ def test_register_route_is_idempotent(tmp_path) -> None:
         "        self.register_route('/page', 'Page', 'plugin')\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
     routes = [r for r in framework.get_routes() if r["plugin"] == "demo"]
@@ -298,7 +298,7 @@ def test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None:
         "    def cmd_hello(self): return {'ok': True}\n",
     )
 
-    framework = PluginFramework()
+    framework = PluginManager()
     framework.initialize(data_path, resource_path)
     assert framework._status.get("demo") == "enabled"
 

@@ -149,12 +149,7 @@ class AuthlibAccountManager:
 
     @classmethod
     def _selected_profile(cls, response: dict, username: str | None = None) -> dict:
-        """
-        返回皮肤站指定的默认角色，兼容只在访问令牌中声明角色的实现。
-
-        :param response: 需要校验的 HTTP 响应
-        :param username: 登录或离线账户用户名
-        """
+        # 返回皮肤站指定的默认角色，兼容只在访问令牌中声明角色的实现。
         selected_profile = response.get("selectedProfile")
         if isinstance(selected_profile, dict) and selected_profile.get("id") and selected_profile.get("name"):
             return deepcopy(selected_profile)

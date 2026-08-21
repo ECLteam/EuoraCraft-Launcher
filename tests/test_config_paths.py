@@ -1,20 +1,12 @@
 import json
 
-import pytest
-
-from ECL.utils import ConfigManager
+from ECL.utils import ConfigStore
 from ECL.utils.config import default_config
 
 
-@pytest.fixture(autouse=True)
-def reset_config_manager():
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-    yield
-
 def test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
-    manager = ConfigManager(data_path)
+    manager = ConfigStore(data_path)
 
     config = manager.get_config()
     minecraft_path = (tmp_path / ".minecraft").resolve()
@@ -37,7 +29,7 @@ def test_existing_empty_game_paths_are_initialized(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    config = ConfigManager(data_path).get_config()
+    config = ConfigStore(data_path).get_config()
     minecraft_path = (tmp_path / ".minecraft").resolve()
 
     assert config["game"]["minecraft_paths"] == [{"name": "默认路径", "path": str(minecraft_path)}]

@@ -14,11 +14,11 @@ class Environment:
     """
 
     def __init__(self, app_path: Path) -> None:
-        """记录应用路径并准备 .env 文件与环境变量缓存。"""
-        self.logger = get_logger("EnvManager")
-        self.app_path = Path(app_path)
-        self.env_path = self.app_path / ".env"
-        self.env_data: dict[str, str | None] | None = None
+        # 记录应用路径并准备 .env 文件与环境变量缓存。
+        self.logger = get_logger("Environment")  # 环境读取日志器。
+        self.app_path = Path(app_path)  # 应用根目录。
+        self.env_path = self.app_path / ".env"  # 可选的环境变量文件。
+        self.env_data: dict[str, str | None] | None = None  # 合并后的环境变量缓存。
 
     def get_env(self) -> dict[str, str | None]:
         """
@@ -55,7 +55,7 @@ class Environment:
         return default
 
     def _convert_env_value(self, value: str) -> bool | int | float | str:
-        """将环境变量字符串转换为布尔、整数、浮点数或原字符串。"""
+        # 将环境变量字符串转换为最合适的标量类型。
         lower = value.lower()
         if lower == "true":
             return True
@@ -92,6 +92,3 @@ class Environment:
                         current[segment] = {}
                     current = current[segment]
         return result
-
-
-EnvManager = Environment

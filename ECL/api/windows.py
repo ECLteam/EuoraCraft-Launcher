@@ -45,13 +45,7 @@ BUILTIN_WINDOW_DESCRIPTORS: dict[str, dict[str, Any]] = {
 
 
 def _create_child_window_icon() -> Any | None:
-    """Create a known-valid RGBA icon instead of inheriting a malformed ICO.
-
-    Some Windows/PyTauri combinations report an ``invalid icon`` error while
-    constructing a second WebviewWindow from the packaged default ICO. A raw
-    RGBA image avoids the platform ICO decoder entirely and keeps window
-    creation independent from optional image libraries.
-    """
+    # Create a known-valid RGBA icon instead of inheriting a malformed ICO.
     if TauriImage is None:
         return None
     size = 32

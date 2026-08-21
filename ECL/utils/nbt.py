@@ -28,12 +28,16 @@ _TAG_LONG_ARRAY = 12
 
 
 class _Tag:
-    """NBT 标签基类，子类继承对应 Python 内置类型以复用其操作。"""
+    """
+    NBT 标签基类，子类继承对应 Python 内置类型以复用其操作。
+    """
 
     _id: int
 
     def unpack(self, json: bool = False) -> Any:
-        """转换为普通 Python 值。"""
+        """
+        转换为普通 Python 值。
+        """
         return self
 
 
@@ -132,9 +136,10 @@ class Compound(dict, _Tag):
     def unpack(self, json: bool = False) -> dict[str, Any]:
         return {key: value.unpack(json) if hasattr(value, "unpack") else value for key, value in self.items()}
 
-
 class File(Compound):
-    """根 NBT 文档，提供 save 与 load 入口。"""
+    """
+    根 NBT 文档，提供 save 与 load 入口。
+    """
 
     def __init__(self, value: dict | None = None, gzipped: bool = False) -> None:
         super().__init__(value or {})
@@ -145,9 +150,10 @@ class File(Compound):
             data = gzip.compress(data)
         Path(path).write_bytes(data)
 
-
 def load(path: Path | str) -> File:
-    """从文件读取 NBT 文档，自动识别 gzip 压缩。"""
+    """
+    从文件读取 NBT 文档，自动识别 gzip 压缩。
+    """
     data = Path(path).read_bytes()
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)

@@ -34,9 +34,7 @@ class McmodTranslator:
         self._loaded = False
 
     def _ensure_loaded(self) -> None:
-        """
-        首次调用时加载数据文件并构建索引，加载失败时保持空索引。
-        """
+        # 首次调用时加载数据文件并构建索引，加载失败时保持空索引。
         if self._loaded:
             return
         self._loaded = True
@@ -87,7 +85,9 @@ class McmodTranslator:
         return self._by_cf.get(str(slug or "").casefold())
 
     def lookup_by_alias(self, *aliases: str) -> dict[str, Any] | None:
-        """按英文名、平台 slug 或模组 ID 查询译名。"""
+        """
+        按英文名、平台 slug 或模组 ID 查询译名。
+        """
         self._ensure_loaded()
         for alias in aliases:
             key = self._normalize_alias(alias)
@@ -126,12 +126,7 @@ class McmodTranslator:
 
     @staticmethod
     def _entry_english(mod: dict[str, Any]) -> str:
-        """
-        提取单条译名条目的英文搜索词，优先英文名，其次 Modrinth/CurseForge slug。
-
-        :param mod: 译名条目字典
-        :return: 英文搜索词
-        """
+        # 提取单条译名条目的英文搜索词，优先英文名，其次 Modrinth/CurseForge slug。
         for source in (str(mod.get("english") or ""), str(mod.get("mr") or ""), str(mod.get("cf") or "")):
             words = [w for w in re.split(r"[\s\-_]+", source) if w and w.casefold() not in _STOPWORDS and not w.isdigit()]
             if words:

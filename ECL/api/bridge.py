@@ -81,14 +81,7 @@ _RUNTIME_OPTION_FIELDS = (
 
 @functools.lru_cache(maxsize=_image_cache_max)
 def _read_image_data_url(file_path: Path, mtime_ns: int, size: int) -> tuple[str, str, int]:
-    """
-    读取图片并编码为 Data URL（LRU 缓存），返回 Data URL、MIME 与 Base64 长度。
-
-    :param file_path: 图片文件路径
-    :param mtime_ns: 文件最后修改时间（纳秒），参与缓存键
-    :param size: 文件大小（字节），参与缓存键
-    :return: ``(data_url, mime, base64_len)`` 三元组
-    """
+    # 读取图片并编码为 Data URL（LRU 缓存），返回 Data URL、MIME 与 Base64 长度。
     ext = file_path.suffix.lower() or ".png"
     data_url, b64 = _encode_image_bytes(file_path.read_bytes(), ext)
     return data_url, _image_mime_map.get(ext, "image/jpeg"), len(b64)
@@ -131,13 +124,7 @@ _FILE_ERROR_MESSAGE = "启动器执行本地文件操作时遇到问题，请关
 
 
 def _is_http_url(url: str, *, scheme_lower: bool = False) -> bool:
-    """
-    校验 URL 是否为带主机的 HTTP(S) 地址。
-
-    :param url: 待校验的完整 URL
-    :param scheme_lower: 是否将协议比较小写化后再判断
-    :return: 合法时返回 ``True``
-    """
+    # 校验 URL 是否为带主机的 HTTP(S) 地址。
     try:
         parsed = urlsplit(url)
     except ValueError:
@@ -147,7 +134,7 @@ def _is_http_url(url: str, *, scheme_lower: bool = False) -> bool:
 
 
 def _normalize_image_url(value: Any) -> str | None:
-    """规整远程图片地址，校验 HTTP(S) 协议与主机并去除首尾标点。"""
+    # 规整远程图片地址，校验 HTTP(S) 协议与主机并去除首尾标点。
     if not isinstance(value, str):
         return None
     url = value.strip().rstrip(",.;:\n\r")
@@ -157,7 +144,7 @@ def _normalize_image_url(value: Any) -> str | None:
 
 
 def _extract_filename_from_header(header: str | None) -> str | None:
-    """从 Content-Disposition 响应头解析文件名，兼容 filename* 与 filename 两种格式。"""
+    # 从 Content-Disposition 响应头解析文件名，兼容 filename* 与 filename 两种格式。
     if not header:
         return None
     try:
@@ -175,7 +162,7 @@ def _extract_filename_from_header(header: str | None) -> str | None:
 
 
 def _guess_image_extension(response: httpx.Response, url: str) -> str:
-    """按响应头文件名、Content-Type 与 URL 后缀推断图片扩展名，未知时回退为 .jpg。"""
+    # 按响应头文件名、Content-Type 与 URL 后缀推断图片扩展名，未知时回退为 .jpg。
     filename = _extract_filename_from_header(response.headers.get("content-disposition"))
     if filename:
         ext = Path(filename).suffix.lower()
@@ -195,7 +182,7 @@ def _guess_image_extension(response: httpx.Response, url: str) -> str:
 
 
 async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
-    """使用独立客户端流式下载远程图片，并限制响应大小。"""
+    # 使用独立客户端流式下载远程图片，并限制响应大小。
     async with (
         httpx.AsyncClient(
             follow_redirects=True,
@@ -218,14 +205,14 @@ def _encode_image_bytes(
     image_bytes: bytes,
     ext: str,
 ) -> tuple[str, str]:
-    """将图片字节按扩展名编码为 Data URL 与 Base64 数据。"""
+    # 将图片字节按扩展名编码为 Data URL 与 Base64 数据。
     mime = _image_mime_map.get(ext, "image/jpeg")
     b64 = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}", b64
 
 
 def _open_folder(path: str) -> None:
-    """使用操作系统默认方式在文件管理器中打开指定路径。"""
+    # 使用操作系统默认方式在文件管理器中打开指定路径。
     target = Path(path).resolve()
     if not target.exists():
         raise FileNotFoundError(f"路径不存在: {target}")
@@ -238,7 +225,7 @@ def _open_folder(path: str) -> None:
 
 
 def _make_error_response(exc: Exception, fallback_code: str, events: Any | None = None) -> ApiResponse:
-    """根据异常与错误码构造失败响应，严重错误附带弹窗元数据并上报事件。"""
+    # 根据异常与错误码构造失败响应，严重错误附带弹窗元数据并上报事件。
     error_code = getattr(exc, "error_code", fallback_code)
     raw_message = str(exc).strip() or type(exc).__name__
     is_unexpected_file_error = isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError)
@@ -254,10 +241,7 @@ def _make_error_response(exc: Exception, fallback_code: str, events: Any | None 
 
 
 def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) -> ApiResponse:
-    """为未预期异常构造严重错误响应，记录堆栈并上报错误事件。
-
-    异常原文以 detail 字段随弹窗呈现，便于用户直接看到后端失败原因。
-    """
+    # 为未预期异常构造严重错误响应，记录堆栈并上报错误事件。
     error_id = uuid4().hex
     message = "启动器执行操作时发生内部错误，请导出日志以便排查"
     title = "启动器发生内部错误"
@@ -275,22 +259,13 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
 
 
 def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
-    """为操作超时构造失败响应，提示用户检查网络。"""
+    # 为操作超时构造失败响应，提示用户检查网络。
     state.logger.warning("%s 操作超时，已取消", operation)
     return failure("操作超时，请检查网络后重试", "OPERATION_TIMEOUT")
 
 
 async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitable: Any, timeout: float | None = None) -> Any:
-    """
-    统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
-
-    :param state: 拥有日志与应用事件总线的前端 API 门面
-    :param operation: 当前操作的名称，用于日志与错误编号
-    :param fallback_code: 已知错误映射失败时的兜底错误码
-    :param awaitable: 已构建的协程对象
-    :param timeout: 可选的总操作超时秒数，超时后取消任务
-    :return: ``ApiResponse``
-    """
+    # 统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
     try:
         if timeout is not None:
             return await asyncio.wait_for(awaitable, timeout)
@@ -325,7 +300,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
 
 
 def _ipc_handler(fallback_code: str = "INTERNAL_ERROR", timeout: float | None = None):
-    """装饰器，为 IPC 命令处理器补齐统一异常边界与错误呈现元数据。"""
+    # 装饰器，为 IPC 命令处理器补齐统一异常边界与错误呈现元数据。
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs):
@@ -337,13 +312,7 @@ def _ipc_handler(fallback_code: str = "INTERNAL_ERROR", timeout: float | None = 
 
 
 def _validate_body(model: Any, body: dict[str, Any]) -> tuple[Any, ApiResponse | None]:
-    """
-    将 IPC 请求体校验为 Pydantic 模型，失败时返回稳定的校验错误响应。
-
-    :param model: 请求模型类型
-    :param body: IPC 请求数据
-    :return: ``(模型实例或 None, 校验失败响应或 None)``
-    """
+    # 将 IPC 请求体校验为 Pydantic 模型，失败时返回稳定的校验错误响应。
     try:
         return model.model_validate(body), None
     except ValidationError as exc:
@@ -351,10 +320,14 @@ def _validate_body(model: Any, body: dict[str, Any]) -> tuple[Any, ApiResponse |
 
 
 class _FrontendState:
-    """前端 IPC 处理器的共享状态门面，聚合日志、应用事件与各服务句柄。"""
+    """
+    前端 IPC 处理器的共享状态门面，聚合日志、应用事件与各服务句柄。
+    """
 
     def __init__(self, context: ApplicationContext):
-        """收集应用上下文中的日志、事件与各服务句柄。"""
+        """
+        收集应用上下文中的日志、事件与各服务句柄。
+        """
         self.logger = get_logger("FrontendApi")
         self.events = context.events
         self.launcher = context.state
@@ -384,17 +357,12 @@ class _FrontendState:
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
-        """
-        将 Pydantic 边界校验错误转换为稳定 IPC 响应。
-
-        :param exc: 请求模型产生的校验异常
-        :return: 使用 ``INVALID_REQUEST`` 错误码的失败响应
-        """
+        # 将 Pydantic 边界校验错误转换为稳定 IPC 响应。
         message = exc.errors(include_url=False)[0].get("msg", "请求参数无效")
         return failure(str(message), "INVALID_REQUEST")
 
     def _queue_frontend_event(self, event: str, payload: Any) -> None:
-        """将需排队的前端事件追加到待发送缓冲，超过上限时丢弃最早的事件。"""
+        # 将需排队的前端事件追加到待发送缓冲，超过上限时丢弃最早的事件。
         if event not in _queued_frontend_events:
             return
         with self._frontend_event_lock:
@@ -565,7 +533,9 @@ class _FrontendState:
         self.emit_to_frontend("launcher:error", normalized)
 
     def focus_window(self) -> bool:
-        """在前端主线程激活并置顶启动器窗口。"""
+        """
+        在前端主线程激活并置顶启动器窗口。
+        """
         webview = self._webview or self._webviews.get("main")
         if webview is None:
             return False
@@ -583,7 +553,7 @@ class _FrontendState:
         return True
 
     def _flush_pending_frontend_events(self) -> None:
-        """将排队的前端事件全部转发给已就绪的 WebView。"""
+        # 将排队的前端事件全部转发给已就绪的 WebView。
         with self._frontend_event_lock:
             pending_events = self._pending_frontend_events
             self._pending_frontend_events = []
@@ -591,7 +561,7 @@ class _FrontendState:
             self.emit_to_frontend(event, payload)
 
     def _get_effective_config(self) -> dict[str, Any]:
-        """合并持久化配置与运行时覆盖，构造前端可见的有效配置。"""
+        # 合并持久化配置与运行时覆盖，构造前端可见的有效配置。
         config = dict(self.config.get_config())
         launcher_config = dict(config.get("launcher") or {})
         runtime_config = (self.launcher.config or {}).get("launcher") or {}
@@ -604,7 +574,7 @@ class _FrontendState:
 
     @staticmethod
     def _normalize_authlib_server_url(value: Any) -> str | None:
-        """规整外置登录服务器地址，缺少协议时补全为 HTTPS。"""
+        # 规整外置登录服务器地址，缺少协议时补全为 HTTPS。
         if not isinstance(value, str):
             return None
         server_url = value.strip()
@@ -619,7 +589,7 @@ class _FrontendState:
         return Path.home() / ".ECL" / "accounts" / "authlib" / "servers.json"
 
     def _load_authlib_servers(self) -> list[dict[str, str]]:
-        """从磁盘读取外置登录服务器历史。"""
+        # 从磁盘读取外置登录服务器历史。
         file = self._authlib_servers_file
         try:
             if file.is_file():
@@ -635,13 +605,13 @@ class _FrontendState:
         return []
 
     def _save_authlib_servers(self, servers: list[dict[str, str]]) -> None:
-        """原子写入外置登录服务器历史。"""
+        # 原子写入外置登录服务器历史。
         file = self._authlib_servers_file
         file.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(file, json.dumps(servers, ensure_ascii=False, indent=2))
 
     def _get_authlib_servers(self) -> list[dict[str, str]]:
-        """规整并去重外置登录服务器历史。"""
+        # 规整并去重外置登录服务器历史。
         servers: list[dict[str, str]] = []
         for item in self._load_authlib_servers():
             url = self._normalize_authlib_server_url(item.get("url"))
@@ -652,7 +622,7 @@ class _FrontendState:
         return servers
 
     def _remember_authlib_login(self, server_url: str, email: str) -> None:
-        """将一次成功登录的外置服务器置于历史队首并保存。"""
+        # 将一次成功登录的外置服务器置于历史队首并保存。
         servers = [server for server in self._get_authlib_servers() if server["url"] != server_url]
         servers.insert(0, {"url": server_url, "email": email})
         self._save_authlib_servers(servers[:20])
@@ -759,7 +729,7 @@ class _FrontendState:
         return {"success": True, "data": {"instanceId": instance_id}}
 
     def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
-        """汇总启动游戏所需的运行时参数，优先使用调用方显式指定的值。"""
+        # 汇总启动游戏所需的运行时参数，优先使用调用方显式指定的值。
         config = self._get_effective_config()
         game_config = config.get("game") or {}
         download_config = config.get("download") or {}

@@ -26,7 +26,9 @@ _SKIN_DIMENSIONS = (64, 64)
 
 
 class AccountHandlers(_FrontendState):
-    """提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。"""
+    """
+    提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。
+    """
 
     async def accounts_list(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -43,6 +45,29 @@ class AccountHandlers(_FrontendState):
         :param body: 经过边界校验的 IPC 请求数据
         """
         return {"success": True, "data": self.accounts.current_account()}
+
+    async def accounts_auth_providers(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取插件注册的全部认证提供方定义。
+
+        :param body: 空 IPC 请求数据
+        """
+        return {"success": True, "data": self.accounts.list_auth_providers()}
+
+    @_ipc_handler("AUTH_PROVIDER_LOGIN_FAILED")
+    async def accounts_add_plugin(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        通过插件认证提供方新增账户。
+
+        :param body: 包含提供方标识与登录字段值的 IPC 请求数据
+        """
+        values = body.get("values")
+        account = await to_thread.run_sync(
+            self.accounts.add_plugin_account,
+            body.get("provider_id"),
+            values if isinstance(values, dict) else {},
+        )
+        return {"success": True, "data": account}
 
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_add_offline(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -295,12 +320,7 @@ class AccountHandlers(_FrontendState):
         return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
 
     def _download_account_skin(self, url: str) -> bytes:
-        """
-        使用应用共享客户端流式下载账户皮肤，在写入衣柜前限制响应大小。
-
-        :param url: 由账户服务返回并完成 HTTP(S) 格式校验的皮肤地址
-        :return: 不超过衣柜上限的 PNG 原始字节
-        """
+        # 使用应用共享客户端流式下载账户皮肤，在写入衣柜前限制响应大小。
         data = bytearray()
         with self.http.stream("GET", url) as response:
             response.raise_for_status()

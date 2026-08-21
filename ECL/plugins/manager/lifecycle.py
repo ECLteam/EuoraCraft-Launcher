@@ -11,12 +11,12 @@ from .contracts import PluginAction, PluginActionResult
 
 
 class PluginLifecycle(_PluginState):
-    """负责插件的启用、禁用、卸载、重载与安装等生命周期管理。"""
+    """
+    负责插件的启用、禁用、卸载、重载与安装等生命周期管理。
+    """
 
     def _enable_all(self) -> None:
-        """
-        按依赖拓扑顺序启用已加载插件；被禁用的插件不参与启用。
-        """
+        # 按依赖拓扑顺序启用已加载插件；被禁用的插件不参与启用。
         started = perf_counter()
         enabled_count = 0
         for name in self._dependency_resolution.load_order:
@@ -42,7 +42,7 @@ class PluginLifecycle(_PluginState):
         )
 
     def _enable(self, name: str) -> tuple[bool, str]:
-        """启用单个插件；若因被禁用而未加载则先按候选信息加载。"""
+        # 启用单个插件；若因被禁用而未加载则先按候选信息加载。
         plugin = self._plugins.get(name)
         # 若插件因被禁用而未加载，先按候选信息加载
         if plugin is None and name in self._disabled_plugins and name in self._candidate_map:
@@ -66,6 +66,9 @@ class PluginLifecycle(_PluginState):
         if not self._call_plugin_hook(plugin, "on_enable", fail_status="loaded"):
             self.instance_compatibility.unregister_owner(name)
             self.connector_extensions.unregister_owner(name)
+            self.launch_hooks.unregister_owner(name)
+            self.auth_providers.unregister_owner(name)
+            self.crash_extensions.unregister_owner(name)
             reason = self._plugin_errors.get(name, f"插件 {name} on_enable 钩子执行失败")
             return False, reason
         self._status[name] = "enabled"
@@ -116,6 +119,9 @@ class PluginLifecycle(_PluginState):
         self.events.remove_handlers_by_owner(name)
         self.instance_compatibility.unregister_owner(name)
         self.connector_extensions.unregister_owner(name)
+        self.launch_hooks.unregister_owner(name)
+        self.auth_providers.unregister_owner(name)
+        self.crash_extensions.unregister_owner(name)
         # 持久化禁用状态，下次启动时跳过该插件；关闭流程中不写入，避免把所有插件标为禁用
         if _persist_state:
             self._disabled_plugins.add(name)
@@ -159,6 +165,9 @@ class PluginLifecycle(_PluginState):
         self.events.remove_handlers_by_owner(name)
         self.instance_compatibility.unregister_owner(name)
         self.connector_extensions.unregister_owner(name)
+        self.launch_hooks.unregister_owner(name)
+        self.auth_providers.unregister_owner(name)
+        self.crash_extensions.unregister_owner(name)
         self._plugins.pop(name, None)
         self._status.pop(name, None)
         self.events.emit("plugin:unloaded", name)
@@ -271,11 +280,7 @@ class PluginLifecycle(_PluginState):
         return PluginActionResult(target_name, PluginAction.INSTALL, "installed")
 
     def _are_dependencies_satisfied(self, metadata: dict[str, Any]) -> bool:
-        """
-        检查插件元数据中的依赖是否已被当前加载的插件满足。
-
-        :param metadata: 插件清单元数据
-        """
+        # 检查插件元数据中的依赖是否已被当前加载的插件满足。
         deps = metadata.get("dependencies", {})
         for dep_name, dep_value in deps.items():
             req = parse_dependency(dep_name, dep_value)

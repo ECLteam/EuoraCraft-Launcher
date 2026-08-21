@@ -17,10 +17,12 @@ from .base import _PluginState
 
 
 class PluginDiscovery(_PluginState):
-    """负责插件候选项的发现、依赖解析与实例化加载。"""
+    """
+    负责插件候选项的发现、依赖解析与实例化加载。
+    """
 
     def _collect_candidates(self, base_dir: Path, is_system: bool) -> list[dict[str, Any]]:
-        """扫描目录，读取各插件的 plugin.json 并构造候选条目列表。"""
+        # 扫描目录，读取各插件的 plugin.json 并构造候选条目列表。
         candidates: list[dict[str, Any]] = []
         if not base_dir.is_dir():
             return candidates
@@ -50,12 +52,7 @@ class PluginDiscovery(_PluginState):
         return candidates
 
     def _resolve_candidate_dependencies(self, candidates: list[dict[str, Any]]) -> DependencyResolution:
-        """
-        根据候选插件元数据解析依赖关系与加载顺序。
-
-        :param candidates: 等待解析的插件候选项
-        :return: 依赖解析结果（加载顺序、错误与跳过项）
-        """
+        # 根据候选插件元数据解析依赖关系与加载顺序。
         seen: set[str] = set()
         infos: list[PluginDependencyInfo] = []
         for candidate in candidates:
@@ -84,12 +81,7 @@ class PluginDiscovery(_PluginState):
         return resolve_dependencies(infos)
 
     def _load_plugins_in_order(self, candidates: list[dict[str, Any]], load_order: list[str]) -> None:
-        """
-        按依赖拓扑顺序实例化并加载插件；被禁用的插件直接跳过。
-
-        :param candidates: 等待解析的插件候选项
-        :param load_order: 依赖解析后的插件加载顺序
-        """
+        # 按依赖拓扑顺序实例化并加载插件；被禁用的插件直接跳过。
         candidate_map = {c["name"]: c for c in candidates}
         for name in self._disabled_plugins:
             candidate = candidate_map.get(name)
@@ -107,7 +99,7 @@ class PluginDiscovery(_PluginState):
             self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
 
     def _load_plugin(self, plugin_dir: Path, metadata_path: Path, is_system: bool) -> None:
-        """加载单个插件：先注册权限声明、读取配置，再实例化并调用 on_load 钩子。"""
+        # 加载单个插件：先注册权限声明、读取配置，再实例化并调用 on_load 钩子。
         started = perf_counter()
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -155,16 +147,7 @@ class PluginDiscovery(_PluginState):
     def _create_instance(
         self, name: str, plugin_dir: Path, metadata: dict[str, Any], entry_point: str, is_system: bool
     ) -> Plugin:
-        """
-        从 entry_point 创建插件实例，entry_point 格式为 "文件名:类名" 或纯 "文件名"。
-
-        :param name: 插件名称
-        :param plugin_dir: 插件根目录
-        :param metadata: 插件清单元数据
-        :param entry_point: 插件入口模块或文件
-        :param is_system: 是否为启动器内置系统插件
-        :return: 创建完成的插件实例
-        """
+        # 从 entry_point 创建插件实例，entry_point 格式为 "文件名:类名" 或纯 "文件名"。
         parts = entry_point.split(":", 1)
         module_name = parts[0]
         class_name = parts[1] if len(parts) > 1 else "Plugin"
@@ -180,14 +163,7 @@ class PluginDiscovery(_PluginState):
         return plugin_class(self, plugin_dir, metadata, is_system)
 
     def _call_plugin_hook(self, plugin: Plugin, method_name: str, *, fail_status: str | None = None) -> bool:
-        """
-        安全调用插件生命周期钩子；失败时记录日志并可选择恢复状态。
-
-        :param plugin: 插件实例
-        :param method_name: 需要调用的插件生命周期方法名
-        :param fail_status: 调用失败时记录的插件状态
-        :return: 钩子是否执行成功
-        """
+        # 安全调用插件生命周期钩子；失败时记录日志并可选择恢复状态。
         started = perf_counter()
         succeeded = False
         self.logger.debug("开始执行插件钩子: plugin=%s, hook=%s", plugin.name, method_name)

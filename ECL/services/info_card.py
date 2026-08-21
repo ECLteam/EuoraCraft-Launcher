@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from ECL.utils import atomic_write_text, get_logger
+from ECL.utils import atomic_write_text, get_logger, get_with_retries
 
 NOTICE_URL = "https://api.eclteam.top/raw/ECLteam/ECL-Api/main/notice.json"
 NOTICE_SCHEMA_VERSION = 1
@@ -43,6 +43,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _get_without_ssl_verify(url: str, **kwargs: Any) -> httpx.Response:
+    # 在未注入共享客户端时保留历史的宽松证书校验策略。
+    return httpx.get(url, verify=False, **kwargs)
+
+
 class InfoCardManager:
     """
     组装首页信息卡数据，并管理远程公告的拉取、校验与本地缓存。
@@ -61,6 +66,8 @@ class InfoCardManager:
         http_client: httpx.Client | None = None,
         clock: Clock = _utc_now,
         refresh_seconds: float = NOTICE_REFRESH_SECONDS,
+        request_timeout: float = NOTICE_TIMEOUT_SECONDS,
+        request_retries: int = 2,
     ):
         self.logger = get_logger("InfoCardManager")
         self.data_path = Path(data_path)
@@ -69,23 +76,30 @@ class InfoCardManager:
         self._notice_loader = notice_loader or self._download_notice
         self._clock = clock
         self._refresh_seconds = max(0.0, refresh_seconds)
+        self._request_timeout = max(1.0, float(request_timeout))
+        self._request_retries = max(0, int(request_retries))
         self._lock = RLock()
         self._last_refresh_at: float | None = None
         self._announcements: list[dict[str, str]] | None = None
         self.data_path.mkdir(parents=True, exist_ok=True)
 
     def _download_notice(self, url: str) -> Any:
-        timeout = httpx.Timeout(NOTICE_TIMEOUT_SECONDS, connect=3.0)
+        # 公告请求使用启动器的网络设置，并限制连接阶段不超过总超时。
+        timeout = httpx.Timeout(self._request_timeout, connect=min(3.0, self._request_timeout))
         headers = {
             "Accept": "application/json",
             "User-Agent": "EuoraCraft-Launcher",
         }
-        if self.http is not None:
-            # verify 仅可配置于 Client 构造；注入客户端已在共享连接上按其 SSL 策略创建
-            response = self.http.get(url, headers=headers, follow_redirects=True, timeout=timeout)
-        else:
-            # 无注入客户端时降级为模块级 get，逐次忽略 SSL 校验以免系统证书缺失阻塞公告
-            response = httpx.get(url, headers=headers, follow_redirects=True, timeout=timeout, verify=False)
+        # 注入客户端沿用其 SSL 策略；否则降级为历史的宽松证书校验请求。
+        request = self.http.get if self.http is not None else _get_without_ssl_verify
+        response = get_with_retries(
+            request,
+            url,
+            retries=self._request_retries,
+            headers=headers,
+            follow_redirects=True,
+            timeout=timeout,
+        )
         response.raise_for_status()
         return response.json()
 

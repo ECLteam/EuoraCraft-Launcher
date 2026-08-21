@@ -48,7 +48,7 @@ class ColoredFormatter(logging.Formatter):
 
 
 def _gzip_rotator(source: str, destination: str) -> None:
-    """将源日志文件压缩为 gzip 归档，并在压缩成功后删除源文件。"""
+    # 将轮转后的日志压缩为 gzip 归档。
     with Path(source).open("rb") as source_file, gzip.open(destination, "wb") as destination_file:
         shutil.copyfileobj(source_file, destination_file)
     Path(source).unlink()
@@ -73,7 +73,9 @@ class FrontendLogHandler(logging.Handler):
         self.setFormatter(logging.Formatter())
 
     def emit(self, record: logging.LogRecord) -> None:
-        """序列化一条日志记录到环形缓冲并发布到事件总线。"""
+        """
+        序列化一条日志记录到环形缓冲并发布到事件总线。
+        """
         entry = {
             "time": self.formatter.formatTime(record, "%Y-%m-%d %H:%M:%S"),
             "level": record.levelname,
@@ -100,26 +102,17 @@ class LoggingRuntime:
     """
 
     def __init__(self, data_path: Path, colored: bool = True) -> None:
-        """
-        创建日志目录并安装本次运行独占的处理器。
-
-        :param data_path: 启动器数据目录
-        :param colored: 控制台是否使用 ANSI 颜色
-        """
-        self.data_path = Path(data_path)
-        self.log_dir = self.data_path / "logs"
+        # 创建日志目录并安装本次运行独占的处理器。
+        self.data_path = Path(data_path)  # 启动器数据目录。
+        self.log_dir = self.data_path / "logs"  # 当前运行的日志目录。
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.root_logger = logging.getLogger(LOGGER_NAME)
+        self.root_logger = logging.getLogger(LOGGER_NAME)  # 应用根日志器。
         self.root_logger.setLevel(logging.DEBUG)
         self.root_logger.propagate = False
         self._replace_handlers(colored)
 
     def _replace_handlers(self, colored: bool) -> None:
-        """
-        关闭旧处理器并安装控制台、完整日志和错误日志处理器。
-
-        :param colored: 控制台是否使用 ANSI 颜色
-        """
+        # 关闭旧处理器，再安装本次运行所需的处理器。
         for handler in tuple(self.root_logger.handlers):
             handler.close()
             self.root_logger.removeHandler(handler)
@@ -148,7 +141,7 @@ class LoggingRuntime:
         level: int,
         formatter: logging.Formatter,
     ) -> logging.handlers.TimedRotatingFileHandler:
-        """创建按天滚动切分并 gzip 压缩的旋转文件处理器。"""
+        # 创建按天轮转并压缩归档的文件处理器。
         handler = logging.handlers.TimedRotatingFileHandler(
             self.log_dir / filename,
             when="midnight",
@@ -242,10 +235,7 @@ def get_frontend_log_history() -> list[dict[str, Any]]:
         return list(buffer) if buffer is not None else []
 
 
-LoggerManager = LoggingRuntime
-
 __all__ = [
-    "LoggerManager",
     "LoggingRuntime",
     "configure_logging",
     "get_frontend_log_history",

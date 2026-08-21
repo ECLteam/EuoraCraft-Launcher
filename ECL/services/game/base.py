@@ -25,7 +25,9 @@ from ECL.game import (
     SearchMinecraft,
     build_minecraft_cmd,
 )
+from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
+from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
 from ECL.utils import (
@@ -59,12 +61,7 @@ class _CoreContext:
 
 @dataclass
 class _RunningGame:
-    """
-    保存一次游戏运行在当前启动器会话中的内存态元数据。
-
-    ``token`` 在进程管理器返回实例 ID 前即可被退出回调捕获，用于消除极短生命周期
-    进程带来的注册竞态；这些数据不会写入硬盘。
-    """
+    # 保存一次游戏运行在当前启动器会话中的内存态元数据。
 
     token: str
     version_id: str
@@ -84,11 +81,7 @@ class _RunningGame:
 
 
 class _GameState:
-    """
-    保存游戏目录、安装、启动协调器共享的运行状态与资源。
-
-    该基类只承载跨协调器共享的依赖和生命周期，不对 API 直接公开。
-    """
+    # 保存游戏目录、安装、启动协调器共享的运行状态与资源。
 
     _ECL_JSON_NAME = "ecl.json"
 
@@ -160,6 +153,8 @@ class _GameState:
         self._running_games: dict[str, _RunningGame] = {}
         self._version_stats = VersionStatsStore()
         self.instance_compatibility = InstanceCompatibilityRegistry()
+        self.launch_hooks = LaunchHookRegistry()
+        self.crash_extensions = CrashAnalysisExtensionRegistry()
         self._instance_profiles = InstanceProfileStore(
             self._data_path,
             self._version_stats,
@@ -170,7 +165,7 @@ class _GameState:
         self._server_status_lock = RLock()
         from .crash_analysis import CrashAnalyzer
 
-        self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path)
+        self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path, extensions=self.crash_extensions)
         self._crash_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ECL-CrashAnalyzer")
         self._crash_futures: set[Future[Any]] = set()
         self._closing = False

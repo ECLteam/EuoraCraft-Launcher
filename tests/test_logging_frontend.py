@@ -1,5 +1,5 @@
 import ECL.utils.logging as logging_mod
-from ECL.utils import LoggerManager
+from ECL.utils import LoggingRuntime
 from ECL.utils.logging import FrontendLogHandler, get_frontend_log_history
 
 
@@ -15,16 +15,13 @@ class RecordingEvents:
 
 def test_frontend_log_handler_forwards_and_keeps_history(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
-    manager = LoggerManager(colored=False, data_path=data_path)
+    manager = LoggingRuntime(colored=False, data_path=data_path)
     events = RecordingEvents()
 
     manager.install_frontend_handler(events, history_limit=10)
     # 幂等：重复安装不会产生第二个处理器
     manager.install_frontend_handler(events)
-    handler_count = sum(
-        isinstance(handler, FrontendLogHandler)
-        for handler in manager.get_logger().handlers
-    )
+    handler_count = sum(isinstance(handler, FrontendLogHandler) for handler in manager.get_logger().handlers)
     assert handler_count == 1
 
     logger = manager.get_logger("Terminal")

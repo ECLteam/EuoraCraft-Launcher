@@ -36,11 +36,7 @@ class ProcessService:
         self._off_game_changed = event_bus.subscribe("game:instances_changed", self._on_game_changed)
 
     def _on_game_changed(self, payload: dict[str, Any]) -> None:
-        """
-        登记或清理运行中的 Minecraft 实例，使实例终端也能展示游戏输出。
-
-        :param payload: ``game:instances_changed`` 事件负载
-        """
+        # 登记或清理运行中的 Minecraft 实例，使实例终端也能展示游戏输出。
         action = payload.get("action")
         instance_id = payload.get("instanceId")
         if not instance_id:
@@ -160,12 +156,7 @@ class ProcessService:
             self._manager.stop_instance(iid, force=True, wait_timeout=1.0)
 
     def _on_log(self, line: str, instance_id: str) -> None:
-        """
-        处理 InstancesManager 逐行回读的输出，写入缓冲并推送实时事件。
-
-        :param line: 读到的单行输出
-        :param instance_id: 产生输出的实例标识
-        """
+        # 处理 InstancesManager 逐行回读的输出，写入缓冲并推送实时事件。
         with self._lock:
             meta = self._meta.get(instance_id)
             if meta is None:
@@ -178,14 +169,7 @@ class ProcessService:
         )
 
     def _on_exit(self, exit_code: int, instance_id: str) -> None:
-        """
-        处理子进程退出事件，回收内部登记并推送实例列表变更。
-
-        InstancesManager 的退出回调现在携带实例标识，因此直接按标识清理元数据。
-
-        :param exit_code: 子进程退出码
-        :param instance_id: 实例标识
-        """
+        # 处理子进程退出事件，回收内部登记并推送实例列表变更。
         with self._lock:
             self._meta.pop(instance_id, None)
             self._buffers.pop(instance_id, None)

@@ -78,9 +78,7 @@ class EuoraCraftLauncher:
         return LauncherExitCode.SUCCESS
 
     def _initialize(self) -> None:
-        """
-        执行启动维护任务并构造后端应用上下文。
-        """
+        # 执行启动维护任务并构造后端应用上下文。
         started = perf_counter()
         self.logger.info("正在初始化")
         if sys.platform not in {"win32", "linux", "darwin"}:
@@ -113,31 +111,20 @@ class EuoraCraftLauncher:
         self.logger.info("后端初始化完成，total=%.2fs", perf_counter() - started)
 
     def _apply_bootstrap_state(self, state: ApplicationState) -> None:
-        """
-        在服务和插件构造前应用启动配置，使 Debug 日志立即进入终端。
-
-        :param state: 已读取持久化配置、但尚未构造业务服务的应用状态
-        """
+        # 在服务和插件构造前应用启动配置，使 Debug 日志立即进入终端。
         self.config = state.config
         self.debug = state.debug
         self.logging.set_level(logging.DEBUG if state.debug else logging.INFO)
         self.logger.debug("启动阶段日志级别已应用: debug=%s", state.debug)
 
     def _require_context(self) -> ApplicationContext:
-        """
-        返回已经初始化的应用上下文。
-
-        :return: 当前应用上下文
-        :raises RuntimeError: 后端尚未完成初始化
-        """
+        # 返回已经初始化的应用上下文。
         if self.context is None:
             raise RuntimeError("后端尚未初始化")
         return self.context
 
     def _shutdown(self) -> None:
-        """
-        幂等关闭后端上下文，并在最后刷新日志处理器。
-        """
+        # 幂等关闭后端上下文，并在最后刷新日志处理器。
         if self._shutdown_complete:
             self.logger.debug("忽略重复的启动器关闭请求")
             return
@@ -150,12 +137,7 @@ class EuoraCraftLauncher:
         self.logging.shutdown()
 
     def _on_config_updated(self, section: str, data: Any) -> None:
-        """
-        同步启动器镜像状态，并即时应用 Debug 日志级别。
-
-        :param section: 被修改的配置分区
-        :param data: 分区更新后的配置数据
-        """
+        # 同步启动器镜像状态，并即时应用 Debug 日志级别。
         if section != "launcher" or self.context is None:
             return
         self.config = self.context.state.config

@@ -34,7 +34,7 @@ FrontendApi = import_module("ECL.api").FrontendApi
 Adapter = import_module("ECL.adapters.tauri").Adapter
 frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
-ConfigManager = import_module("ECL.utils").ConfigManager
+ConfigStore = import_module("ECL.utils").ConfigStore
 EventBus = import_module("ECL.events").EventBus
 AccountError = import_module("ECL.services.accounts").AccountError
 command_handlers = import_module("ECL.api.registry").command_handlers
@@ -279,7 +279,7 @@ def _build_api(tmp_path) -> FrontendApi:
     context = SimpleNamespace(
         state=launcher,
         events=bus,
-        config=ConfigManager(tmp_path / "ECL_data", bus),
+        config=ConfigStore(tmp_path / "ECL_data", bus),
         http=FakeHttp(),
         accounts=FakeAccounts(),
         connector=SimpleNamespace(),
@@ -938,9 +938,7 @@ def test_wardrobe_sync_downloads_current_account_skin_into_store(tmp_path) -> No
 def test_wardrobe_apply_skin_uploads_internal_texture_without_base64_body(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(
-        api.wardrobe_apply_skin({"item_id": "skin-id", "account_id": "microsoft-account"})
-    )
+    result = asyncio.run(api.wardrobe_apply_skin({"item_id": "skin-id", "account_id": "microsoft-account"}))
 
     assert result["success"] is True
     assert api.accounts.uploaded_skin == ("microsoft-account", "slim", b"png")

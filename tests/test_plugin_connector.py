@@ -6,7 +6,7 @@ from ECL.plugins import (
     ConnectorExtensionRegistry,
     ConnectorProtocolRequest,
     ConnectorSessionContext,
-    PluginFramework,
+    PluginManager,
 )
 
 
@@ -34,7 +34,7 @@ def test_plugin_connector_extension_requires_permission_and_is_cleaned_on_disabl
     )
 
     registry = ConnectorExtensionRegistry()
-    framework = PluginFramework(connector_extensions=registry)
+    framework = PluginManager(connector_extensions=registry)
     framework.initialize(data_path, tmp_path / "resources")
 
     assert registry.protocol_names() == ["demo:echo"]
@@ -45,7 +45,7 @@ def test_plugin_connector_extension_requires_permission_and_is_cleaned_on_disabl
 
 def test_qomicex_system_plugin_implements_host_and_guest_extension_protocols(tmp_path) -> None:
     registry = ConnectorExtensionRegistry()
-    framework = PluginFramework(connector_extensions=registry)
+    framework = PluginManager(connector_extensions=registry)
     project_root = Path(__file__).resolve().parents[1]
     framework.initialize(tmp_path / "data", project_root)
 
@@ -128,7 +128,7 @@ def test_qomicex_system_plugin_implements_host_and_guest_extension_protocols(tmp
 
 def test_qomicex_plugin_uploads_and_registers_its_own_local_player_icon(tmp_path) -> None:
     registry = ConnectorExtensionRegistry()
-    framework = PluginFramework(connector_extensions=registry)
+    framework = PluginManager(connector_extensions=registry)
     project_root = Path(__file__).resolve().parents[1]
     framework.initialize(tmp_path / "data", project_root)
 
@@ -156,7 +156,9 @@ def test_qomicex_plugin_uploads_and_registers_its_own_local_player_icon(tmp_path
         _local_icon_provider=local_icon,
     )
     registry.guest_joined(guest_context)
-    uploads = [entry for entry in requests if entry[0] == "qml:player_icons" and entry[1] and entry[1].get("iconBase64")]
+    uploads = [
+        entry for entry in requests if entry[0] == "qml:player_icons" and entry[1] and entry[1].get("iconBase64")
+    ]
     assert uploads
     assert uploads[-1][1]["machineId"] == "guest-1"
     assert uploads[-1][1]["iconBase64"] == "c2VsZg=="
@@ -169,7 +171,7 @@ def test_qomicex_plugin_uploads_and_registers_its_own_local_player_icon(tmp_path
 
     # 房主没有客户端请求能力，仅凭 kind==HOST 条目注册并展示自己的头像
     host_registry = ConnectorExtensionRegistry()
-    host_framework = PluginFramework(connector_extensions=host_registry)
+    host_framework = PluginManager(connector_extensions=host_registry)
     host_framework.initialize(tmp_path / "data-host", project_root)
     host_context = ConnectorSessionContext(
         mode="host",

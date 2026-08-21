@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins import InstanceCompatibilityRegistry, PluginFramework
+from ECL.plugins import InstanceCompatibilityRegistry, PluginManager
 from ECL.services.game.instance_compat import InstanceCompatibilityReader
 from ECL.services.game.instance_profiles import InstanceProfileStore
 from ECL.services.game.version_stats import VersionStatsStore
@@ -35,7 +35,7 @@ def _base_version(version_id: str = "1.21.8") -> dict:
 
 def _store_with_qomicex_plugin(tmp_path):
     registry = InstanceCompatibilityRegistry()
-    framework = PluginFramework(instance_compatibility=registry)
+    framework = PluginManager(instance_compatibility=registry)
     framework.initialize(tmp_path / "data", Path(__file__).parent.parent)
     assert framework._status.get("qomicex-compat") == "enabled"
     store = InstanceProfileStore(

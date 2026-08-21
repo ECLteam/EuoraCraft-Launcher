@@ -5,7 +5,9 @@ from ECL.utils import PluginCommandError  # noqa: F401  # re-export
 
 
 class PluginAction(StrEnum):
-    """插件管理操作类型。"""
+    """
+    插件管理操作类型。
+    """
 
     ENABLE = "enable"
     DISABLE = "disable"
@@ -18,7 +20,9 @@ class PluginAction(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PluginActionResult:
-    """插件操作的执行结果。"""
+    """
+    插件操作的执行结果。
+    """
 
     plugin_name: str  # 目标插件名
     action: PluginAction  # 执行的操作类型
@@ -27,5 +31,7 @@ class PluginActionResult:
 
     @property
     def success(self) -> bool:
-        """判断操作是否成功。"""
+        """
+        判断操作是否成功。
+        """
         return self.status in {"enabled", "disabled", "unloaded", "uninstalled", "installed", "updated"}

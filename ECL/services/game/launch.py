@@ -14,6 +14,7 @@ import httpx
 from anyio import to_thread
 
 from ECL.game import LaunchConfig
+from ECL.plugins.launch_hooks import LaunchContext
 from ECL.services.authlib import AuthlibError
 
 from .base import GameServiceError, _GameState, _RunningGame
@@ -81,12 +82,7 @@ class LaunchCoordinator(_GameState):
 
     @staticmethod
     def _fallback_required_java(game_version: Any) -> int | None:
-        """
-        在版本 JSON 未声明运行时时，按 Minecraft 基础版本推断最低 Java 主版本。
-
-        :param game_version: 扫描器识别出的原版基础版本
-        :return: 可可靠推断的 Java 主版本；未知版本返回 ``None``
-        """
+        # 在版本 JSON 未声明运行时时，按 Minecraft 基础版本推断最低 Java 主版本。
         match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?", str(game_version or "").strip())
         if match is None:
             return None
@@ -118,12 +114,7 @@ class LaunchCoordinator(_GameState):
 
     @staticmethod
     def _probe_java_runtime(java_path: str) -> dict[str, str]:
-        """
-        执行一次轻量 Java 属性查询，确认所选运行时可执行且版本可识别。
-
-        :param java_path: 已解析的 Java 可执行文件路径
-        :return: Java 完整版本和运行时架构
-        """
+        # 执行一次轻量 Java 属性查询，确认所选运行时可执行且版本可识别。
         try:
             completed = subprocess.run(
                 [java_path, "-XshowSettings:properties", "-version"],
@@ -157,13 +148,7 @@ class LaunchCoordinator(_GameState):
         required_java: int | None,
         memory: int,
     ) -> None:
-        """
-        在创建 Minecraft 进程前检查可确定的 Java 版本和架构兼容性。
-
-        :param java_path: 本次启动选用的 Java 可执行文件
-        :param required_java: 版本声明或基础版本推断出的 Java 主版本
-        :param memory: 计划分配的游戏内存，单位为 MiB
-        """
+        # 在创建 Minecraft 进程前检查可确定的 Java 版本和架构兼容性。
         runtime = self._known_java_runtime(java_path)
         if runtime is not None:
             version = str(runtime.version)
@@ -250,6 +235,10 @@ class LaunchCoordinator(_GameState):
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
         context = self._context(path, self._normalize_source(source))
         isolated = bool(version_isolation)
+        # 插件启动钩子需要访问最终游戏目录，提前计算以避免在命令构建后再移动。
+        game_directory = path / "versions"
+        if not isolated:
+            game_directory /= version_name
 
         cancel_event = Event()
         with self._lock:
@@ -380,6 +369,16 @@ class LaunchCoordinator(_GameState):
                     )
 
             self._emit_launch_progress("building_args", "正在生成启动参数", 72)
+            launch_context = LaunchContext(
+                version_id=version_name,
+                loader=loader,
+                game_path=path,
+                game_directory=game_directory,
+                version_isolation=isolated,
+                jvm_args=list(custom_jvm_args),
+                game_args=list(custom_game_args),
+            )
+            self.launch_hooks.prepare(launch_context)
             launch_config = LaunchConfig(
                 java_path=java,
                 game_path=path,
@@ -389,7 +388,7 @@ class LaunchCoordinator(_GameState):
                 auth_uuid=credentials["uuid"],
                 user_type=credentials["user_type"],
                 access_token=credentials["access_token"],
-                custom_jvm_params=custom_jvm_args or None,
+                custom_jvm_params=launch_context.jvm_args or None,
                 version_isolation=isolated,
                 window_width=window_width,
                 window_height=window_height,
@@ -397,11 +396,11 @@ class LaunchCoordinator(_GameState):
                 yggdrasil_api=auth_server,
             )
             command = await to_thread.run_sync(self._command_builder, launch_config)
-            if custom_game_args:
+            if launch_context.game_args:
                 if sys.platform == "win32":
-                    formatted_args = subprocess.list2cmdline(custom_game_args)
+                    formatted_args = subprocess.list2cmdline(launch_context.game_args)
                 else:
-                    formatted_args = shlex.join(custom_game_args)
+                    formatted_args = shlex.join(launch_context.game_args)
                 command = f"{command} {formatted_args}"
             self._emit_launch_progress("args_built", "启动参数生成完成", 84)
             if cancel_event.is_set():
@@ -410,9 +409,6 @@ class LaunchCoordinator(_GameState):
             self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
-            game_directory = path / "versions"
-            if not isolated:
-                game_directory /= version_name
             run = _RunningGame(
                 token=run_token,
                 version_id=version_name,
@@ -424,20 +420,27 @@ class LaunchCoordinator(_GameState):
             )
             with self._lock:
                 self._running_games[run_token] = run
+            self.launch_hooks.pre_launch(launch_context)
             try:
+                def on_instance_exit(code: int, name: str) -> None:
+                    self._handle_instance_exit(run_token, code, name)
+                    self.launch_hooks.on_exit(launch_context)
+
                 instance_id, _process = self.instances.create_instance(
                     instance_name=version_name,
                     instance_type="Minecraft",
                     args=command,
-                    cwd=path / "versions" / version_name,
+                    cwd=launch_context.working_directory or (path / "versions" / version_name),
                     new_session=True,
+                    env=launch_context.env or None,
                     log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
-                    exit_callback=lambda code, name: self._handle_instance_exit(run_token, code, name),
+                    exit_callback=on_instance_exit,
                 )
             except Exception:
                 with self._lock:
                     self._running_games.pop(run_token, None)
                 raise
+            self.launch_hooks.post_launch(launch_context)
 
             with self._lock:
                 registered_run = self._running_games.get(run_token)
@@ -502,13 +505,7 @@ class LaunchCoordinator(_GameState):
         )
 
     def _handle_instance_log(self, run_token: str, line: str, instance_id: str) -> None:
-        """
-        缓冲单个游戏进程的近期输出，并记录不依赖退出码的生命周期信号。
-
-        :param run_token: 启动前创建的会话内令牌
-        :param line: InstancesManager 读取到的一行标准输出或错误输出
-        :param instance_id: 用于启动器日志关联的进程管理器实例 ID
-        """
+        # 缓冲单个游戏进程的近期输出，并记录不依赖退出码的生命周期信号。
         normalized = str(line or "").rstrip("\r\n")
         self.logger.debug("[%s] %s", instance_id, normalized)
         folded = normalized.casefold()
@@ -523,13 +520,7 @@ class LaunchCoordinator(_GameState):
                 run.startup_complete = True
 
     def _handle_instance_exit(self, run_token: str, exit_code: int, instance_name: str) -> None:
-        """
-        接收进程管理器线程的唯一退出通知，并在启动注册完成后结算统计。
-
-        :param run_token: 启动前创建的会话内令牌
-        :param exit_code: Minecraft 进程退出码
-        :param instance_name: 供日志识别的版本名称
-        """
+        # 接收进程管理器线程的唯一退出通知，并在启动注册完成后结算统计。
         self.logger.info("Minecraft %s 已退出，退出码: %s", instance_name, exit_code)
         with self._lock:
             run = self._running_games.get(run_token)
@@ -543,15 +534,7 @@ class LaunchCoordinator(_GameState):
         self._finalize_instance_run(run_token, action=action)
 
     def _finalize_instance_run(self, run_token: str, *, action: str) -> None:
-        """
-        从内存运行表移除一次运行，并恰好一次地累计已观察时长。
-
-        该方法同时服务于自然退出、用户终止、列表校正和应用关闭。先从共享表移除再
-        写入统计，确保并发回调不会重复累计。
-
-        :param run_token: 会话内运行令牌
-        :param action: ``exited``、``stopped`` 或 ``launcher_closed``
-        """
+        # 从内存运行表移除一次运行，并恰好一次地累计已观察时长。
         with self._lock:
             run = self._running_games.get(run_token)
             if run is None or run.pending:
@@ -585,12 +568,7 @@ class LaunchCoordinator(_GameState):
         return signals
 
     def _schedule_crash_analysis(self, run: _RunningGame, detected_by: list[str]) -> None:
-        """
-        将文件收集和规则分析交给 GameService 拥有的后台执行器。
-
-        :param run: 已从运行表移除、可安全作为分析快照使用的运行元数据
-        :param detected_by: 触发本次崩溃判定的稳定信号
-        """
+        # 将文件收集和规则分析交给 GameService 拥有的后台执行器。
         with self._lock:
             if self._closing:
                 return

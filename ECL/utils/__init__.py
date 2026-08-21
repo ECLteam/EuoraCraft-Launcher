@@ -1,5 +1,5 @@
-from ECL.utils.config import ConfigManager, ConfigStore, default_config
-from ECL.utils.environment import Environment, EnvManager
+from ECL.utils.config import ConfigStore, default_config
+from ECL.utils.environment import Environment
 from ECL.utils.errors import (
     AccountError,
     AuthlibError,
@@ -15,23 +15,21 @@ from ECL.utils.errors import (
     WardrobeError,
 )
 from ECL.utils.files import atomic_write_bytes, atomic_write_text
-from ECL.utils.logging import LoggerManager, LoggingRuntime, configure_logging, get_logger
+from ECL.utils.logging import LoggingRuntime, configure_logging, get_logger
+from ECL.utils.network import get_with_retries
 
 __all__ = [
     "AccountError",
     "AuthlibError",
     "AuthlibProfileSelectionRequired",
     "ConfigError",
-    "ConfigManager",
     "ConfigStore",
     "ConfigValidationError",
     "ConnectorError",
     "ConnectorNotAvailableError",
     "DebugMaintenanceError",
-    "EnvManager",
     "Environment",
     "GameServiceError",
-    "LoggerManager",
     "LoggingRuntime",
     "PluginCommandError",
     "VersionScanError",
@@ -41,4 +39,5 @@ __all__ = [
     "configure_logging",
     "default_config",
     "get_logger",
+    "get_with_retries",
 ]

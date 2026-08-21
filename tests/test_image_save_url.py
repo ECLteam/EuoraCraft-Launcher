@@ -100,7 +100,7 @@ sys.modules["pytauri.webview"] = pytauri_webview_module
 FrontendApi = import_module("ECL.api").FrontendApi
 frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
-ConfigManager = import_module("ECL.utils").ConfigManager
+ConfigStore = import_module("ECL.utils").ConfigStore
 EventBus = import_module("ECL.events").EventBus
 
 
@@ -140,7 +140,7 @@ def _build_api(tmp_path):
     context = SimpleNamespace(
         state=launcher,
         events=bus,
-        config=ConfigManager(tmp_path / "ECL_data", bus),
+        config=ConfigStore(tmp_path / "ECL_data", bus),
         http=SimpleNamespace(),
         accounts=FakeAccounts(),
         connector=SimpleNamespace(),

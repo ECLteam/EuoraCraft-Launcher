@@ -106,6 +106,60 @@ def _default_preset() -> dict[str, Any]:
     }
 
 
+def _folia_preset() -> dict[str, Any]:
+    """The bundled Folia visual skin.
+
+    The rendering assets live in the frontend bundle; the preset only selects the
+    skin and provides its portable token defaults.  Keeping it a regular v1
+    preset means a copy made in the theme studio remains editable and exportable.
+    """
+    preset = _default_preset()
+    preset["id"] = "builtin.folia"
+    preset["uiSkin"] = "folia"
+    preset["meta"] = {
+        "name": "Folia",
+        "description": "Folia glass and aurora interface skin",
+        "author": "ECLTeam",
+    }
+    preset["schemes"] = {
+        "light": {
+            "canvas": "#f4f6fa",
+            "surface": "rgba(255,255,255,0.62)",
+            "surfaceMuted": "rgba(248,249,252,0.72)",
+            "text": "#1d2433",
+            "textSecondary": "#596275",
+            "border": "rgba(29,36,51,0.12)",
+            "primary": "#5b6ff5",
+        },
+        "dark": {
+            "canvas": "#1a1c23",
+            "surface": "rgba(32,36,46,0.62)",
+            "surfaceMuted": "rgba(41,46,57,0.72)",
+            "text": "#e8e9eb",
+            "textSecondary": "#a0a3a8",
+            "border": "rgba(255,255,255,0.10)",
+            "primary": "#8291ff",
+        },
+    }
+    preset["tokens"].update(
+        {
+            "primary": "#5b6ff5",
+            "radiusControl": "6px",
+            "radiusCard": "8px",
+            "radiusDialog": "10px",
+            "shadowSurface": "0 1px 2px rgba(29,36,51,0.04)",
+        }
+    )
+    return preset
+
+
+def _builtin_presets() -> dict[str, dict[str, Any]]:
+    """
+    Return fresh copies so no caller can mutate a process-wide preset.
+    """
+    return {"builtin.default": _default_preset(), "builtin.folia": _folia_preset()}
+
+
 def _json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
@@ -123,6 +177,12 @@ def normalize_preset(value: Any, *, forced_id: str | None = None) -> dict[str, A
         raise ValueError(f"不支持的主题协议版本: {value.get('schemaVersion')}")
     preset = _json_clone(value)
     preset["id"] = _validate_theme_id(forced_id or preset.get("id"))
+    skin = preset.get("uiSkin", "classic")
+    if skin not in {"classic", "folia"}:
+        raise ValueError("主题 UI skin 不受支持")
+    # Persist the default too: copied/exported legacy presets become explicit,
+    # while older on-disk presets remain accepted during migration.
+    preset["uiSkin"] = skin
     meta = preset.setdefault("meta", {})
     if not isinstance(meta, dict) or not isinstance(meta.get("name"), str) or not meta["name"].strip():
         raise ValueError("主题名称不能为空")
@@ -306,7 +366,7 @@ class ThemeService:
         return self.theme_dir / _validate_theme_id(preset_id) / "theme.json"
 
     def list_presets(self) -> list[dict[str, Any]]:
-        items = [self._summary(_default_preset(), source="builtin", readonly=True)]
+        items = [self._summary(preset, source="builtin", readonly=True) for preset in _builtin_presets().values()]
         for path in sorted(self.theme_dir.glob("*/theme.json")):
             try:
                 preset = normalize_preset(json.loads(path.read_text(encoding="utf-8")))
@@ -418,8 +478,9 @@ class ThemeService:
         }
 
     def get_preset(self, preset_id: str) -> dict[str, Any]:
-        if preset_id == "builtin.default":
-            return _default_preset()
+        builtin = _builtin_presets().get(preset_id)
+        if builtin is not None:
+            return builtin
         for _, preset in self._plugin_presets():
             if preset["id"] == preset_id:
                 return preset
@@ -532,7 +593,9 @@ class ThemeService:
         show_slots: bool,
         slot_hosts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Update transient design overlays without dirtying the preset or its history."""
+        """
+        Update transient design overlays without dirtying the preset or its history.
+        """
         session = self._require_session(session_id)
         session.show_slots = show_slots
         if slot_hosts is not None:
@@ -717,7 +780,7 @@ class ThemeService:
         if output_path.suffix.lower() != ".ecltheme":
             output_path = output_path.with_suffix(".ecltheme")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        source_dir = self._preset_path(preset_id).parent if preset_id != "builtin.default" else None
+        source_dir = self._preset_path(preset_id).parent if not preset_id.startswith("builtin.") else None
         files: dict[str, bytes] = {
             "theme.json": json.dumps(preset, ensure_ascii=False, indent=2).encode("utf-8")
         }
@@ -772,7 +835,10 @@ class ThemeService:
                         data = sanitize_svg(data)
                     raw_files[name] = data
         original_id = preset["id"]
-        if self._preset_path(original_id).exists() and not replace:
+        # Builtins are exportable but can never be restored over the bundled
+        # definition.  Importing one produces the same editable local copy as
+        # opening it in the theme studio.
+        if original_id.startswith("builtin.") or (self._preset_path(original_id).exists() and not replace):
             preset["id"] = f"user.{uuid4().hex[:12]}"
             preset["meta"]["name"] = f"{preset['meta']['name']} (Imported)"
         target_dir = self._preset_path(preset["id"]).parent

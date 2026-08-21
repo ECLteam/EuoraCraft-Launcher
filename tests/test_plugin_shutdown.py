@@ -2,12 +2,12 @@ from unittest.mock import Mock
 
 import ECL.launcher as launcher_module
 from ECL.events import EventBus
-from ECL.plugins import PluginFramework
+from ECL.plugins import PluginManager
 
 
 def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     event_bus = EventBus()
-    framework = PluginFramework(event_bus)
+    framework = PluginManager(event_bus)
     framework.logger = Mock()
     plugin = Mock()
     plugin.name = "loaded"
@@ -20,7 +20,7 @@ def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
     plugin.on_disable.assert_called_once_with()
     plugin.on_unload.assert_called_once_with()
     framework.logger.warning.assert_not_called()
-    framework = PluginFramework(event_bus)
+    framework = PluginManager(event_bus)
     first = Mock()
     second = Mock()
     framework._plugins = {"first": first, "second": second}

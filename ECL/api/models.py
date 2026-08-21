@@ -10,14 +10,14 @@ from ECL.utils.config import default_config
 
 
 def _validate_safe_path(value: Any) -> Any:
-    """拒绝包含 NUL 字符的路径字符串。"""
+    # 拒绝包含 NUL 字符的路径字符串。
     if isinstance(value, str) and "\0" in value:
         raise ValueError("路径包含非法字符")
     return value
 
 
 def _validate_non_empty_path(value: Any, message: str) -> Any:
-    """拒绝空白或包含 NUL 字符的路径字符串。"""
+    # 拒绝空白或包含 NUL 字符的路径字符串。
     if isinstance(value, str) and (not value.strip() or "\0" in value):
         raise ValueError(message)
     return value

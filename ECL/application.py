@@ -35,7 +35,7 @@ logger = logging.getLogger("EuoraCraft-Launcher.Application")
 
 
 def _apply_ssl_verify(ssl_context: ssl.SSLContext, verify: bool) -> None:
-    """设置 SSL 上下文的证书校验开关，供共享 HTTP 客户端运行时热切换。"""
+    # 设置 SSL 上下文的证书校验开关，供共享 HTTP 客户端运行时热切换。
     if verify:
         ssl_context.verify_mode = ssl.CERT_REQUIRED
         ssl_context.check_hostname = True
@@ -44,13 +44,26 @@ def _apply_ssl_verify(ssl_context: ssl.SSLContext, verify: bool) -> None:
         ssl_context.verify_mode = ssl.CERT_NONE
 
 
-def _build_local_player_icon_provider(account_manager: AccountManager, http_client: httpx.Client) -> Callable[[], str | None]:
-    """
-    构造本机玩家完整皮肤的 base64 解析器，供联机头像上传复用。
+def _network_timeout(value: Any) -> float:
+    # 将用户设置限制为合理的 HTTP 总超时范围。
+    try:
+        return min(120.0, max(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 15.0
 
-    离线默认皮肤直接取本地 data URL 载荷；在线账户在首次解析时下载并缓存，
-    避免联机状态轮询期间反复请求网络。无皮肤或解析失败时返回 None。
-    """
+
+def _network_retries(value: Any) -> int:
+    # 将用户设置限制为有限的额外重试次数。
+    try:
+        return min(5, max(0, int(value)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _build_local_player_icon_provider(
+    account_manager: AccountManager, http_client: httpx.Client
+) -> Callable[[], str | None]:
+    # 构造本机玩家完整皮肤的 base64 解析器，供联机头像上传复用。
     cache: dict[str, str | None] = {}
     cache_lock = RLock()
 
@@ -194,8 +207,11 @@ def create_application(
     try:
         phase_started = perf_counter()
         logger.debug("正在创建共享 HTTP 客户端")
-        disable_ssl_verify = bool((state.config.get("launcher") or {}).get("disable_ssl_verify", False))
-        ignore_proxy = bool((state.config.get("launcher") or {}).get("ignore_proxy", True))
+        launcher_config = state.config.get("launcher") or {}
+        disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
+        ignore_proxy = bool(launcher_config.get("ignore_proxy", True))
+        request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
+        request_retries = _network_retries(launcher_config.get("request_retries", 2))
         if ignore_proxy:
             # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
             # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
@@ -204,10 +220,11 @@ def create_application(
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
         http = httpx.Client(
-            timeout=httpx.Timeout(15, connect=10),
+            timeout=httpx.Timeout(request_timeout, connect=min(10.0, request_timeout)),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             verify=ssl_verify_context,
+            transport=httpx.HTTPTransport(retries=request_retries),
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
@@ -235,7 +252,12 @@ def create_application(
             len(wardrobe.list_items()),
             perf_counter() - phase_started,
         )
-        info_card = InfoCardManager(state.data_path, http_client=http)
+        info_card = InfoCardManager(
+            state.data_path,
+            http_client=http,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+        )
 
         phase_started = perf_counter()
         logger.info("正在初始化游戏服务")
@@ -284,6 +306,10 @@ def create_application(
             processes=processes,
             instance_compatibility=game.instance_compatibility,
             connector_extensions=connector_extensions,
+            launch_hooks=game.launch_hooks,
+            http_client=http,
+            auth_providers=accounts.plugin_auth_providers,
+            crash_extensions=game.crash_extensions,
         )
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)

@@ -9,8 +9,8 @@ ECL_ROOT = Path(ECL.__file__).parent
 
 
 def _python_files() -> list[Path]:
-    game_root = ECL_ROOT / "game"
-    return [path for path in ECL_ROOT.rglob("*.py") if not path.is_relative_to(game_root)]
+    submodule_roots = (ECL_ROOT / "game", ECL_ROOT / "services" / "florolding")
+    return [path for path in ECL_ROOT.rglob("*.py") if not any(path.is_relative_to(root) for root in submodule_roots)]
 
 
 def test_application_imports_game_only_through_public_entrypoint() -> None:
@@ -36,6 +36,13 @@ def test_no_service_locator_api_or_duplicate_libs_remains() -> None:
     assert [path for path in ECL_ROOT.rglob("Libs.py") if not path.is_relative_to(ECL_ROOT / "game")] == []
     assert not (ECL_ROOT / "api" / "legacy").exists()
     assert not (ECL_ROOT / "api" / "domain_handlers.py").exists()
+
+
+def test_no_internal_compatibility_aliases_remain() -> None:
+    source = "\n".join(path.read_text(encoding="utf-8") for path in _python_files())
+
+    for alias in ("ConfigManager", "EnvManager", "LoggerManager", "PluginFramework"):
+        assert alias not in source
 
 
 def test_ipc_registry_has_no_retired_compatibility_commands() -> None:

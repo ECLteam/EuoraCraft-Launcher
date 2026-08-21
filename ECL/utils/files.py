@@ -32,7 +32,9 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
 
 
 def atomic_write_text(path: str | Path, data: str, encoding: str = "utf-8") -> None:
-    """以原子替换方式写入文本文件。"""
+    """
+    以原子替换方式写入文本文件。
+    """
     atomic_write_bytes(path, data.encode(encoding))
 
 

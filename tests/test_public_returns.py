@@ -4,17 +4,11 @@ import pytest
 
 from ECL.launcher import LauncherExitCode
 from ECL.plugins import PluginAction, PluginActionResult
-from ECL.utils.config import ConfigManager, ConfigValidationError
+from ECL.utils.config import ConfigStore, ConfigValidationError
 
-
-@pytest.fixture(autouse=True)
-def reset_config_manager():
-    ConfigManager._instance = None
-    ConfigManager._initialized = False
-    yield
 
 def test_config_save_uses_exceptions_instead_of_ambiguous_boolean(tmp_path) -> None:
-    manager = ConfigManager(tmp_path / "ECL_data")
+    manager = ConfigStore(tmp_path / "ECL_data")
 
     assert manager.save_config("launcher", {"debug": True}) is None
     assert manager.get_config("launcher") == {"debug": True}

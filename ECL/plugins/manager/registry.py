@@ -18,19 +18,7 @@ def _plugin_entry(
     settings: list[str] | None = None,
     is_system: bool = False,
 ) -> dict[str, Any]:
-    """
-    构建前端插件列表条目，统一已加载/依赖跳过/禁用/实例化失败四类来源的字典结构。
-
-    :param name: 插件名称
-    :param metadata: 插件实例或 plugin.json 元数据字典；None 表示无可用元数据
-    :param status: 插件状态
-    :param error: 加载或实例化错误信息
-    :param permissions: 权限字典列表
-    :param services: 已注册命令名列表
-    :param settings: 已注册设置项列表
-    :param is_system: 是否为系统内置插件
-    :return: 前端插件列表条目
-    """
+    # 构建前端插件列表条目，统一已加载/依赖跳过/禁用/实例化失败四类来源的字典结构。
     if isinstance(metadata, Plugin):
         title = metadata.title
         version = metadata.version
@@ -74,10 +62,12 @@ def _plugin_entry(
 
 
 class PluginRegistry(_PluginState):
-    """负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。"""
+    """
+    负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。
+    """
 
     def _register_route(self, plugin: Plugin, path: str, title: str, icon: str) -> None:
-        """注册前端路由，同一插件重复注册相同路径时先移除旧条目。"""
+        # 注册前端路由，同一插件重复注册相同路径时先移除旧条目。
         # 同一插件重复注册相同路径时先移除旧条目，避免路由列表出现重复
         self._routes = [r for r in self._routes if not (r["plugin"] == plugin.name and r["path"] == path)]
         self._routes.append({"plugin": plugin.name, "path": path, "title": title, "icon": icon})
@@ -165,29 +155,39 @@ class PluginRegistry(_PluginState):
         return result
 
     def get_routes(self) -> list[dict[str, Any]]:
-        """获取插件路由列表。"""
+        """
+        获取插件路由列表。
+        """
         return list(self._routes)
 
     def get_slots(self) -> dict[str, list[dict[str, str]]]:
-        """返回按插槽分组的插件 HTML 注入内容。"""
+        """
+        返回按插槽分组的插件 HTML 注入内容。
+        """
         return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._slots.items()}
 
     def get_vue_slots(self) -> dict[str, list[dict[str, Any]]]:
-        """返回按插槽分组的插件 Vue 组件定义。"""
+        """
+        返回按插槽分组的插件 Vue 组件定义。
+        """
         return {slot_id: [dict(entry) for entry in entries] for slot_id, entries in self._vue_slots.items()}
 
     def get_vue_components(self) -> dict[str, dict[str, Any]]:
-        """返回所有已注册 Vue 组件定义的浅拷贝。"""
+        """
+        返回所有已注册 Vue 组件定义的浅拷贝。
+        """
         return dict(self._vue_components)
 
     def get_vue_routes(self) -> list[dict[str, Any]]:
-        """获取已注册的 Vue 路由列表。"""
+        """
+        获取已注册的 Vue 路由列表。
+        """
         return list(self._vue_routes)
 
     def _on_html_injected(
         self, plugin_name: str, slot_id: str, html: str, key: str | None, context_key: str | None = None
     ) -> None:
-        """收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。"""
+        # 收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。
         entries = self._slots.setdefault(slot_id, [])
         entry = {"plugin": plugin_name, "html": html}
         if context_key is not None:
@@ -212,7 +212,7 @@ class PluginRegistry(_PluginState):
         style: str,
         context_key: str | None = None,
     ) -> None:
-        """收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。"""
+        # 收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。
         entries = self._vue_slots.setdefault(slot_id, [])
         entry = {
             "plugin": plugin_name,
@@ -248,18 +248,7 @@ class PluginRegistry(_PluginState):
         script: str,
         style: str,
     ) -> None:
-        """
-        注册 Vue 组件路由，同时记录到 _routes 与 _vue_routes；相同路径的先移除旧条目。
-
-        :param plugin: 插件实例
-        :param path: 路由路径
-        :param title: 前端条目的显示标题
-        :param icon: 前端条目的图标标识
-        :param component_name: Vue 组件名称
-        :param template: Vue 组件模板
-        :param script: Vue 组件脚本
-        :param style: Vue 组件样式
-        """
+        # 注册 Vue 组件路由，同时记录到 _routes 与 _vue_routes；相同路径的先移除旧条目。
         # 同一插件重复注册相同路径时先移除旧条目，避免路由列表出现重复
         self._routes = [r for r in self._routes if not (r["plugin"] == plugin.name and r["path"] == path)]
         self._vue_routes = [r for r in self._vue_routes if not (r["plugin"] == plugin.name and r["path"] == path)]

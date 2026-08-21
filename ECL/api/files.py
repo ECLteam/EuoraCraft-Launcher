@@ -63,25 +63,22 @@ _SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
 
 
 class FileHandlers(_FrontendState):
-    """提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。"""
+    """
+    提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。
+    """
 
     @staticmethod
     def _remote_image_cache_dir(data_path: Path) -> Path:
-        """返回远程图片持久化缓存目录。"""
+        # 返回远程图片持久化缓存目录。
         return data_path / "cache" / "remote-images"
 
     @staticmethod
     def _remote_image_digest(url: str) -> str:
-        """按远程 URL 生成稳定缓存摘要键。"""
+        # 按远程 URL 生成稳定缓存摘要键。
         return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
     def _read_remote_image_cache(self, url: str) -> tuple[bytes, str, bool] | None:
-        """
-        按远程 URL 读取持久化图片缓存，并返回其新鲜度。
-
-        :param url: 已完成协议和主机校验的远程图片地址
-        :return: 图片字节、扩展名和是否仍在刷新周期内；未命中返回 ``None``
-        """
+        # 按远程 URL 读取持久化图片缓存，并返回其新鲜度。
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
         for extension in _image_mime_map:
@@ -96,13 +93,7 @@ class FileHandlers(_FrontendState):
         return None
 
     def _write_remote_image_cache(self, url: str, extension: str, image_bytes: bytes) -> None:
-        """
-        原子写入远程图片缓存，并按最近使用时间限制缓存规模。
-
-        :param url: 用于生成稳定缓存键的远程图片地址
-        :param extension: 已根据响应头识别且在白名单内的图片扩展名
-        :param image_bytes: 已经过远程下载大小限制的图片内容
-        """
+        # 原子写入远程图片缓存，并按最近使用时间限制缓存规模。
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
         safe_extension = extension if extension in _image_mime_map else ".jpg"
@@ -285,23 +276,13 @@ class FileHandlers(_FrontendState):
 
     @staticmethod
     def _parse_image_data_url(data_url: str) -> tuple[bytes, str]:
-        """
-        解析 Data URL 为原始图片字节与 MIME 类型。
-
-        :param data_url: 形如 ``data:<mime>;base64,<payload>`` 的图片数据
-        :return: ``(图片字节, MIME 类型)``
-        :raises ValueError: Data URL 格式不合法或 Base64 解码失败
-        """
+        # 解析 Data URL 为原始图片字节与 MIME 类型。
         header, b64 = data_url.split(",", 1)
         mime = header.split(";")[0].split(":", 1)[1] if ":" in header else "image/png"
         return base64.b64decode(b64), mime
 
     def _persist_background_image(self, data_url: str) -> str:
-        """
-        将编码后的图片写入数据目录下的背景图缓存目录，返回本地路径。
-
-        :param data_url: 需要解码并保存的 Data URL
-        """
+        # 将编码后的图片写入数据目录下的背景图缓存目录，返回本地路径。
         try:
             payload, mime = self._parse_image_data_url(data_url)
         except (ValueError, base64.binascii.Error) as exc:
@@ -377,7 +358,7 @@ class FileHandlers(_FrontendState):
 
     @staticmethod
     def _normalize_file_path(path: str) -> str:
-        """将 file:// URL 规整为本地文件系统路径。"""
+        # 将 file:// URL 规整为本地文件系统路径。
         if path.startswith("file://"):
             parsed = urlsplit(path)
             return unquote(parsed.path)
@@ -441,7 +422,7 @@ class FileHandlers(_FrontendState):
         return {"success": True, "data": {"files": files}}
 
     async def _pick_path(self, pick_folder: bool, title: str, extensions: list[str] | None = None) -> str:
-        """打开系统文件选择对话框，返回用户选择的路径；取消时返回空字符串。"""
+        # 打开系统文件选择对话框，返回用户选择的路径；取消时返回空字符串。
         if self._webview is None:
             return ""
 
@@ -464,15 +445,7 @@ class FileHandlers(_FrontendState):
         filter_label: str = "ZIP 压缩包",
         default_directory: str | None = None,
     ) -> str:
-        """
-        在 Tauri 主窗口上打开系统文件保存对话框。
-
-        :param title: 系统对话框标题
-        :param default_name: 预填充且不包含目录部分的文件名
-        :param extensions: 允许用户选择的扩展名列表
-        :param filter_label: 系统对话框中的文件类型筛选标签
-        :return: 用户确认的绝对路径；取消时返回空字符串
-        """
+        # 在 Tauri 主窗口上打开系统文件保存对话框。
         if self._webview is None:
             return ""
 

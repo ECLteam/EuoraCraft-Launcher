@@ -1,15 +1,15 @@
 from pathlib import Path
 
 from ECL.events import EventBus
-from ECL.plugins import Plugin, PluginFramework
+from ECL.plugins import Plugin, PluginManager
 
 
-def _framework() -> PluginFramework:
+def _framework() -> PluginManager:
     EventBus._instance = None
     EventBus._initialized = False
-    PluginFramework._instance = None
-    PluginFramework._initialized = False
-    return PluginFramework()
+    PluginManager._instance = None
+    PluginManager._initialized = False
+    return PluginManager()
 
 
 def test_html_slot_appends_without_key_and_updates_matching_key() -> None:

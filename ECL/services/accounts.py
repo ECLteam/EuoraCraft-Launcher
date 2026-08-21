@@ -17,6 +17,7 @@ import httpx
 from ECL.common import MICROSOFT_CLIENT_ID
 from ECL.events import EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
+from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError
 from ECL.utils import AccountError, atomic_write_text, get_logger
 
@@ -31,7 +32,7 @@ _LOGIN_STATUS_MESSAGES = {
 
 
 def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]]:
-    """读取默认皮肤资源，返回 ``skin_id -> (显示名, 贴图 data URL)``。"""
+    # 读取默认皮肤资源，返回 ``skin_id -> (显示名, 贴图 data URL)``。
     if resource_path is None:
         return {}
     skins_dir = resource_path / "resources" / "Skins"
@@ -45,14 +46,7 @@ def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]
 
 
 def _login_progress_result(status: str, state: dict[str, Any], *, force_pending: bool = False) -> dict[str, Any]:
-    """
-    将等待中的登录状态映射为前端可轮询的进度响应。
-
-    :param status: 当前登录状态（starting/pending/progress）
-    :param state: 登录状态字典
-    :param force_pending: 是否强制返回 ``pending``（不区分 progress）
-    :return: 包含 ``status``、``retry_after`` 与可选 ``stage`` 的响应
-    """
+    # 将等待中的登录状态映射为前端可轮询的进度响应。
     result = {
         "status": "pending" if force_pending or status != "progress" else "progress",
         "retry_after": state.get("interval", _DEFAULT_LOGIN_POLL_INTERVAL_SECONDS),
@@ -195,6 +189,9 @@ class AccountManager:
         self.data_path = Path(data_path) / "accounts"
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.state_path = self.data_path / "accounts.json"
+        # 插件认证提供方由插件框架共享；插件账户持久化于聚合状态文件中。
+        self.plugin_auth_providers = AuthProviderRegistry()
+        self._plugin_accounts: dict[str, dict[str, Any]] = {}
         # 持久化状态和登录任务会被 IPC 轮询并发访问，统一使用一把可重入锁保护。
         self._lock = RLock()
         # 登录事件表示设备码流程已经推进；取消事件用于请求登录任务尽快终止。
@@ -276,9 +273,17 @@ class AccountManager:
                     for account_id, flags in account_prefs.items()
                     if isinstance(flags, dict) and isinstance(account_id, (str, int))
                 }
+            plugin_accounts = state.get("plugin_accounts", {})
+            if isinstance(plugin_accounts, dict):
+                self._plugin_accounts = {
+                    str(account_id): info
+                    for account_id, info in plugin_accounts.items()
+                    if isinstance(info, dict)
+                }
             self.logger.debug(
-                "已读取账户聚合状态: offline=%d, current_selected=%s",
+                "已读取账户聚合状态: offline=%d, plugin=%d, current_selected=%s",
                 len(self._offline_accounts),
+                len(self._plugin_accounts),
                 self._current_account_id is not None,
             )
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
@@ -287,6 +292,7 @@ class AccountManager:
     def _save_state(self) -> None:
         state = {
             "offline_accounts": self._offline_accounts,
+            "plugin_accounts": self._plugin_accounts,
             "current_account_id": self._current_account_id,
             "account_prefs": self._account_prefs,
         }
@@ -417,7 +423,9 @@ class AccountManager:
         return resolve_account_id(preferred_id)
 
     def default_skins(self) -> list[dict[str, Any]]:
-        """返回可供离线账户选择的默认皮肤列表。"""
+        """
+        返回可供离线账户选择的默认皮肤列表。
+        """
         return [
             {"id": skin_id, "name": name, "skinUrl": url}
             for skin_id, (name, url) in self._default_skin_map().items()
@@ -447,6 +455,68 @@ class AccountManager:
             copied["skinUrl"] = skin_url
         return copied
 
+    def _plugin_account(self, account_id: str, info: dict[str, Any]) -> dict[str, Any]:
+        # 将插件账户原始信息转换为公开账户字典。
+        provider = self.plugin_auth_providers.get(info.get("provider") or "")
+        account = {
+            "id": account_id,
+            "alias": info.get("alias") or info.get("player_name") or "插件账户",
+            "type": "plugin",
+            "provider": info.get("provider") or "",
+            "providerTitle": provider.title if provider is not None else (info.get("provider_title") or ""),
+            "uuid": info.get("uuid") or "",
+            "isCurrent": account_id == self._current_account_id,
+        }
+        if info.get("email"):
+            account["email"] = info["email"]
+        if info.get("skinUrl"):
+            account["skinUrl"] = info["skinUrl"]
+        return account
+
+    def list_auth_providers(self) -> list[dict[str, Any]]:
+        """
+        返回插件注册的全部认证提供方定义，供前端动态渲染登录表单。
+        """
+        return [provider.to_dict() for provider in self.plugin_auth_providers.list_providers()]
+
+    def add_plugin_account(self, provider_id: Any, values: Any) -> dict[str, Any]:
+        """
+        通过插件认证提供方新增账户并切换为当前账户。
+
+        :param provider_id: 插件注册的提供方标识
+        :param values: 登录表单字段值字典
+        :return: 新增账户的公开字典
+        """
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            raise AccountError("认证提供方不能为空", "AUTH_PROVIDER_NOT_FOUND")
+        if not isinstance(values, dict):
+            raise AccountError("登录表单数据无效", "INVALID_AUTH_FIELDS")
+        provider = self.plugin_auth_providers.get(provider_id)
+        if provider is None:
+            raise AccountError("认证提供方不存在或已卸载", "AUTH_PROVIDER_NOT_FOUND")
+        try:
+            info = provider.authenticate(values)
+        except AccountError:
+            raise
+        except Exception as exc:
+            raise AccountError(f"认证失败: {exc}", "AUTH_PROVIDER_LOGIN_FAILED") from exc
+        if not isinstance(info, dict) or not info.get("id"):
+            raise AccountError("认证提供方返回数据无效", "AUTH_PROVIDER_LOGIN_FAILED")
+        account_id = f"plugin:{provider_id}:{info['id']}"
+        with self._lock:
+            self._plugin_accounts[account_id] = {
+                "provider": provider_id,
+                "alias": str(info.get("alias") or info.get("player_name") or "").strip(),
+                "uuid": str(info.get("uuid") or "").strip(),
+                "email": str(info.get("email") or "").strip() or None,
+                "skinUrl": str(info.get("skinUrl") or "").strip() or None,
+                "data": info.get("data"),
+            }
+            self._current_account_id = account_id
+            self._save_state()
+        self._emit_changed()
+        return self._plugin_account(account_id, self._plugin_accounts[account_id])
+
     def _all_accounts(self) -> list[dict[str, Any]]:
         offline_accounts = [self._offline_account(account) for account in self._offline_accounts.values()]
         microsoft_accounts = [
@@ -456,7 +526,10 @@ class AccountManager:
         authlib_accounts = [
             self._authlib_account(account_id, info) for account_id, info in self.authlib_manager.list_accounts().items()
         ]
-        accounts = offline_accounts + microsoft_accounts + authlib_accounts
+        plugin_accounts = [
+            self._plugin_account(account_id, info) for account_id, info in self._plugin_accounts.items()
+        ]
+        accounts = offline_accounts + microsoft_accounts + authlib_accounts + plugin_accounts
         for account in accounts:
             account["isCurrent"] = account["id"] == self._current_account_id
             self._apply_account_prefs(account)
@@ -476,11 +549,7 @@ class AccountManager:
 
 
     def _apply_account_prefs(self, account: dict[str, Any]) -> None:
-        """
-        在账户数据中注入收藏/置顶标记。
-
-        :param account: 单个账户字典，会被原地修改。
-        """
+        # 在账户数据中注入收藏/置顶标记。
         prefs = self._account_prefs.get(account["id"], {})
         account["favorite"] = bool(prefs.get("favorite"))
         account["pinned"] = bool(prefs.get("pinned"))
@@ -506,14 +575,7 @@ class AccountManager:
         return self._set_account_flag(account_id, "pinned", pinned)
 
     def _set_account_flag(self, account_id: Any, flag: str, value: bool) -> dict[str, Any]:
-        """
-        设置账户的布尔标记（收藏/置顶）并持久化。
-
-        :param account_id: 账户的稳定标识
-        :param flag: 标记名（"favorite" 或 "pinned"）
-        :param value: 标记值
-        :returns: 刷新后的完整账户列表
-        """
+        # 设置账户的布尔标记（收藏/置顶）并持久化。
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         self._validate_account_prefs(account_id)
@@ -525,11 +587,7 @@ class AccountManager:
         return self.list_accounts()
 
     def _validate_account_prefs(self, account_id: str) -> None:
-        """
-        验证账户是否存在，不存在时抛出 ``AccountError``。
-
-        :param account_id: 账户的稳定标识
-        """
+        # 验证账户是否存在，不存在时抛出 ``AccountError``。
         with self._lock:
             account_ids = {account["id"] for account in self._all_accounts()}
         if account_id not in account_ids:
@@ -593,7 +651,37 @@ class AccountManager:
                 "access_token": token["AccessToken"],
                 "auth_server": token["YggdrasilAPI"],
             }
+        if current.get("type") == "plugin":
+            return self._plugin_launch_credentials(current)
         raise AccountError("当前账户类型暂不支持启动游戏", "ACCOUNT_TYPE_UNSUPPORTED")
+
+    def _plugin_launch_credentials(self, current: dict[str, Any]) -> dict[str, str]:
+        # 通过插件认证提供方解析启动凭据。
+        provider = self.plugin_auth_providers.get(current.get("provider") or "")
+        if provider is None:
+            raise AccountError("认证提供方已卸载，无法启动游戏", "AUTH_PROVIDER_UNAVAILABLE")
+        try:
+            credentials = provider.resolve_credentials(current)
+        except Exception as exc:
+            raise AccountError(f"解析插件账户凭据失败: {exc}", "AUTH_PROVIDER_CREDENTIAL_FAILED") from exc
+        if not isinstance(credentials, dict):
+            raise AccountError("认证提供方返回的凭据无效", "AUTH_PROVIDER_CREDENTIAL_FAILED")
+        user_type = str(credentials.get("user_type") or "").lower()
+        if user_type not in {"msa", "yggdrasil", "legacy"}:
+            raise AccountError(f"认证提供方返回了不支持的凭据类型: {user_type}", "AUTH_PROVIDER_CREDENTIAL_FAILED")
+        player_name = str(credentials.get("player_name") or current.get("alias") or "").strip()
+        uuid = str(credentials.get("uuid") or current.get("uuid") or "").replace("-", "")
+        if not player_name or not uuid:
+            raise AccountError("认证提供方返回的凭据不完整", "AUTH_PROVIDER_CREDENTIAL_FAILED")
+        resolved = {
+            "player_name": player_name,
+            "uuid": uuid,
+            "user_type": user_type,
+            "access_token": str(credentials.get("access_token") or ("None" if user_type == "legacy" else "")),
+        }
+        if credentials.get("auth_server"):
+            resolved["auth_server"] = str(credentials["auth_server"])
+        return resolved
 
     @staticmethod
     def _resolve_offline_uuid(username: str, custom_uuid: Any = None) -> str:
@@ -775,6 +863,8 @@ class AccountManager:
         with self._lock:
             if account_id in self._offline_accounts:
                 self._offline_accounts.pop(account_id)
+            elif account_id in self._plugin_accounts:
+                self._plugin_accounts.pop(account_id)
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
                 self.microsoft_manager.del_microsoft_account(account_id)
             elif account_id in self.authlib_manager.list_accounts():
@@ -802,6 +892,8 @@ class AccountManager:
         with self._lock:
             if account_id in self._offline_accounts:
                 account = deepcopy(self._offline_accounts[account_id])
+            elif account_id in self._plugin_accounts:
+                return self._plugin_account(account_id, deepcopy(self._plugin_accounts[account_id]))
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
                 is_microsoft = True
             elif account_id in self.authlib_manager.list_accounts():
@@ -860,17 +952,18 @@ class AccountManager:
                     # 离线账户没有模型元数据，默认按纤细手臂渲染
                     return {"skinUrl": skin_url, "skinModel": "slim"}
                 return {}
+            if account_id in self._plugin_accounts:
+                skin_url = self._plugin_accounts[account_id].get("skinUrl")
+                if skin_url:
+                    return {"skinUrl": skin_url, "skinModel": "classic"}
+                return {}
             is_authlib = account_id in self.authlib_manager.list_accounts()
         if is_authlib:
             return self.authlib_manager.get_texture_urls(account_id)
         raise AccountError("账号不存在", "ACCOUNT_NOT_FOUND")
 
     def _require_microsoft_account(self, account_id: Any) -> None:
-        """
-        校验 account_id 是否为正版(Microsoft)账户。
-
-        :param account_id: 账户的稳定标识
-        """
+        # 校验 account_id 是否为正版(Microsoft)账户。
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         if account_id not in self.microsoft_manager.get_microsoft_accounts():

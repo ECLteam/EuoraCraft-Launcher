@@ -134,6 +134,8 @@ COMMAND_NAMES = (
     "game_crash_export",
     "accounts_list",
     "accounts_current",
+    "accounts_auth_providers",
+    "accounts_add_plugin",
     "accounts_add_offline",
     "accounts_default_skins",
     "accounts_set_offline_skin",

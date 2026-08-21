@@ -62,12 +62,7 @@ class WardrobeStore:
 
     @staticmethod
     def _png_dimensions(data: bytes) -> tuple[int, int]:
-        """
-        从 PNG 签名和 IHDR 块直接读取尺寸，避免完整图像解码。
-
-        :param data: 完整的 PNG 原始字节
-        :return: 图片宽度和高度
-        """
+        # 从 PNG 签名和 IHDR 块直接读取尺寸，避免完整图像解码。
         if len(data) < 24 or data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR":
             raise WardrobeError("请选择有效的 PNG 图片", "WARDROBE_INVALID_PNG")
         width, height = struct.unpack(">II", data[16:24])

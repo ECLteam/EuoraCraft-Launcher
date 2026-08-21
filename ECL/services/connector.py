@@ -122,7 +122,7 @@ class ConnectorService:
             return "unknown"
 
     def _remember_nodes(self, nodes: list[str]) -> list[str]:
-        """更新进程内节点缓存并返回副本。"""
+        # 更新进程内节点缓存并返回副本。
         self._nodes = list(nodes)
         self._node_cache_refreshed_at = monotonic()
         return list(self._nodes)
@@ -190,12 +190,7 @@ class ConnectorService:
                 return self._remember_nodes(fallback)
 
     def _resolve_aggregate_node(self, url: str) -> list[str]:
-        """
-        解析一个聚合节点地址，得到可用的 EasyTier URI。
-
-        :param url: 以 ``https://`` 开头的聚合节点地址
-        :returns: 解析出的节点 URI 列表（可能为空）
-        """
+        # 解析一个聚合节点地址，得到可用的 EasyTier URI。
         try:
             response = self._http.get(
                 url,
@@ -225,12 +220,7 @@ class ConnectorService:
 
     @staticmethod
     def _is_easytier_peer(value: str) -> bool:
-        """
-        判断一个字符串是否为 easytier 原生支持的节点 URI。
-
-        :param value: 待判断的字符串
-        :returns: 是原生节点 URI 时返回 True
-        """
+        # 判断一个字符串是否为 easytier 原生支持的节点 URI。
         return value.startswith(_EASYTIER_SCHEMES)
 
     @staticmethod
@@ -296,9 +286,7 @@ class ConnectorService:
         return self.extensions.enrich_status(self._session_context(), status)
 
     def _session_context(self) -> ConnectorSessionContext:
-        """
-        构造不暴露底层 socket 的插件联机会话上下文。
-        """
+        # 构造不暴露底层 socket 的插件联机会话上下文。
         client = self._client
         machine_id = getattr(client, "machine_id", None)
         request = self._send_extension_request if client is not None else None
@@ -312,9 +300,7 @@ class ConnectorService:
         )
 
     def _send_extension_request(self, protocol: str, body: bytes = b"") -> tuple[int, bytes]:
-        """
-        在线程安全边界内向当前房主发送扩展协议请求。
-        """
+        # 在线程安全边界内向当前房主发送扩展协议请求。
         client = self._client
         if client is None:
             raise RuntimeError("当前不是房客会话")
@@ -326,9 +312,7 @@ class ConnectorService:
         )
 
     def _extension_protocol_handlers(self) -> dict[str, Callable[..., Any]]:
-        """
-        把插件注册表适配为 Florolding 服务端处理器。
-        """
+        # 把插件注册表适配为 Florolding 服务端处理器。
         handlers: dict[str, Callable[..., Any]] = {}
         for protocol in self.extensions.protocol_names():
 
@@ -443,7 +427,7 @@ class ConnectorService:
 
     @staticmethod
     def _nat_result_from_stun_info(stun_info: Any) -> dict[str, Any] | None:
-        """把 EasyTier STUN 快照转换为稳定的前端结构。"""
+        # 把 EasyTier STUN 快照转换为稳定的前端结构。
         if not isinstance(stun_info, dict) or not stun_info:
             return None
 
@@ -623,18 +607,7 @@ class ConnectorService:
         player_name: str,
         conn_timeout: int = 30,
     ) -> tuple[Any, int]:
-        """
-        执行加入房间的握手流程，返回 EasyTier 节点和本地 Minecraft 映射端口。
-
-        florolding 已提供 ``join_room`` 完成加入与协议协商、``bind_mc_port`` 完成
-        Minecraft 端口转发，这里直接调用二者，仅额外保留端口用于向前端展示。
-
-        :param florolding: Florolding 实例
-        :param room_code: 房间码
-        :param player_name: 玩家昵称
-        :param conn_timeout: 发现房主大厅的超时秒数
-        :returns: (easytier_node, 本地 Minecraft 映射端口)
-        """
+        # 执行加入房间的握手流程，返回 EasyTier 节点和本地 Minecraft 映射端口。
         client, node = florolding.join_room(
             room_code,
             player_name,
@@ -706,13 +679,7 @@ class ConnectorService:
             logger.debug("关闭联机服务失败", exc_info=True)
 
     def _stop_async_thread_client(self) -> None:
-        """
-        停止 florolding 客户端线程：取消心跳并断开连接。
-
-        florolding 的 ``AsyncFloroldingClient`` 以守护线程运行，若不在退出房间时
-        停止，解释器关闭时其心跳仍会写 stdout，引发 ``_enter_buffered_busy`` 死锁。
-        这里通过事件循环安全地取消心跳并断开，不修改子模块。
-        """
+        # 停止 florolding 客户端线程：取消心跳并断开连接。
         client = self._client
         if client is None:
             return
@@ -776,14 +743,7 @@ class ConnectorService:
 
     @staticmethod
     def _minecraft_listener_ports() -> list[int]:
-        """
-        获取 Java 进程正在监听的 TCP 端口。
-
-        psutil 在无管理员权限时可能无法读取其他用户进程；这种情况下返回已能读取到的
-        结果而不是中断扫描。Minecraft 客户端与启动器通常属于当前用户，仍可正常发现。
-
-        :returns: 去重、升序排列的候选端口
-        """
+        # 获取 Java 进程正在监听的 TCP 端口。
         java_pids: set[int] = set()
         try:
             for process in psutil.process_iter(["pid", "name", "exe"]):
@@ -816,13 +776,7 @@ class ConnectorService:
 
     @staticmethod
     def _is_minecraft_server(port: int, timeout: float = _STATUS_PROBE_TIMEOUT_SECONDS) -> bool:
-        """
-        通过 Minecraft Status 协议确认本地端口的服务类型。
-
-        :param port: 待确认的本地 TCP 端口
-        :param timeout: 建连与读取的最大等待秒数
-        :returns: 收到合法 Minecraft 状态 JSON 时返回 True，其他网络服务返回 False
-        """
+        # 通过 Minecraft Status 协议确认本地端口的服务类型。
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=timeout) as connection:
                 connection.settimeout(timeout)
@@ -851,12 +805,7 @@ class ConnectorService:
 
     @staticmethod
     def _encode_varint(value: int) -> bytes:
-        """
-        将非负 Minecraft VarInt 编码为字节串。
-
-        :param value: 待编码的非负整数
-        :returns: 可直接写入 Minecraft TCP 数据包的 VarInt 字节串
-        """
+        # 将非负 Minecraft VarInt 编码为字节串。
         encoded = bytearray()
         while True:
             current = value & 0x7F
@@ -867,12 +816,7 @@ class ConnectorService:
 
     @staticmethod
     def _read_varint(connection: socket.socket) -> int | None:
-        """
-        从套接字读取一个至多五字节的 Minecraft VarInt。
-
-        :param connection: 已建立连接并配置读取超时的 TCP 套接字
-        :returns: 读取成功的整数；连接关闭或格式无效时返回 None
-        """
+        # 从套接字读取一个至多五字节的 Minecraft VarInt。
         encoded = bytearray()
         for _ in range(5):
             byte = ConnectorService._read_exact(connection, 1)
@@ -886,13 +830,7 @@ class ConnectorService:
 
     @staticmethod
     def _decode_varint(data: bytes | bytearray, offset: int = 0) -> tuple[int | None, int]:
-        """
-        解析内存中的 Minecraft VarInt，并返回值与下一个偏移量。
-
-        :param data: 包含 VarInt 的原始字节数据
-        :param offset: VarInt 在 data 内的起始偏移量
-        :returns: (解析值, 下一个偏移量)；不完整或超长时解析值为 None
-        """
+        # 解析内存中的 Minecraft VarInt，并返回值与下一个偏移量。
         value = 0
         for index in range(5):
             if offset + index >= len(data):
@@ -905,13 +843,7 @@ class ConnectorService:
 
     @staticmethod
     def _read_exact(connection: socket.socket, length: int) -> bytes | None:
-        """
-        读取定长响应，连接提前关闭时返回 None。
-
-        :param connection: 已建立连接并配置读取超时的 TCP 套接字
-        :param length: 必须读取的字节数
-        :returns: 完整响应；连接提前关闭时返回 None
-        """
+        # 读取定长响应，连接提前关闭时返回 None。
         chunks = bytearray()
         while len(chunks) < length:
             chunk = connection.recv(length - len(chunks))

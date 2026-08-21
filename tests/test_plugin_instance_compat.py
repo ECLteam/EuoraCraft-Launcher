@@ -1,6 +1,6 @@
 import json
 
-from ECL.plugins import InstanceCompatibilityRegistry, PluginFramework
+from ECL.plugins import InstanceCompatibilityRegistry, PluginManager
 from ECL.services.game.instance_compat import InstanceCompatibilityReader
 
 
@@ -39,7 +39,7 @@ def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:
     (game_path / "versions" / "1.21.8").mkdir(parents=True)
 
     registry = InstanceCompatibilityRegistry()
-    framework = PluginFramework(instance_compatibility=registry)
+    framework = PluginManager(instance_compatibility=registry)
     framework.initialize(data_path, tmp_path / "resources")
     reader = InstanceCompatibilityReader(registry)
 
@@ -53,12 +53,8 @@ def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:
 
     assert metadata[0].source == "demo"
     assert metadata[0].fields == {"description": "1.21.8"}
-    assert registry.describe_sources() == [
-        {"source": "demo", "title": "Demo Launcher", "plugin": "compat-demo"}
-    ]
-    assert registry.resolve_watch_paths({"demo": {"index": index_path}}) == [
-        ("demo", index_path.resolve())
-    ]
+    assert registry.describe_sources() == [{"source": "demo", "title": "Demo Launcher", "plugin": "compat-demo"}]
+    assert registry.resolve_watch_paths({"demo": {"index": index_path}}) == [("demo", index_path.resolve())]
 
     assert framework.disable("compat-demo").success is True
     assert registry.describe_sources() == []

@@ -14,6 +14,7 @@ from typing import Any, Literal
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
+from ECL.plugins.crash_extensions import CrashAnalysisContext, CrashAnalysisExtensionRegistry
 from ECL.utils import get_logger
 
 from .base import GameServiceError
@@ -117,11 +118,13 @@ class CrashAnalyzer:
     关闭后不保留分析历史。
 
     :param data_path: 启动器数据目录，用于临时报告和默认导出位置
+    :param extensions: 可选的插件崩溃富化注册表
     """
 
-    def __init__(self, data_path: Path | str):
+    def __init__(self, data_path: Path | str, extensions: CrashAnalysisExtensionRegistry | None = None):
         self.logger = get_logger("CrashAnalyzer")
         self.data_path = Path(data_path).resolve(strict=False)
+        self._extensions = extensions or CrashAnalysisExtensionRegistry()
         self._sessions_root = self.data_path / "temp" / "crash-analysis"
         self._sessions_root.mkdir(parents=True, exist_ok=True)
         self._cleanup_stale_sessions()
@@ -173,12 +176,7 @@ class CrashAnalyzer:
 
     @staticmethod
     def _safe_member(info: ZipInfo) -> PurePosixPath:
-        """
-        验证压缩成员不是路径穿越、符号链接、嵌套压缩包或二进制文件。
-
-        :param info: ZIP 中尚未解压的成员元数据
-        :return: 可安全用于扁平化目标名称的 POSIX 路径
-        """
+        # 验证压缩成员不是路径穿越、符号链接、嵌套压缩包或二进制文件。
         member = PurePosixPath(info.filename.replace("\\", "/"))
         if member.is_absolute() or ".." in member.parts or not member.name:
             raise GameServiceError("压缩包包含不安全路径", "CRASH_ARCHIVE_UNSAFE")
@@ -190,13 +188,7 @@ class CrashAnalyzer:
         return member
 
     def _import_archive(self, source: Path, destination: Path) -> list[Path]:
-        """
-        在文件数和总解压量限制内提取可分析文本。
-
-        :param source: 用户选择的 ZIP 文件
-        :param destination: 当前会话报告独占的提取目录
-        :return: 已提取并等待脱敏的文本文件
-        """
+        # 在文件数和总解压量限制内提取可分析文本。
         imported: list[Path] = []
         total_size = 0
         try:
@@ -266,11 +258,7 @@ class CrashAnalyzer:
         started_wall_time: float,
         output_lines: list[str],
     ) -> tuple[list[Path], str]:
-        """
-        等待日志短暂落盘，并收集本次进程启动后更新的候选文本。
-
-        :return: 报告内的来源文件和脱敏后的实时输出
-        """
+        # 等待日志短暂落盘，并收集本次进程启动后更新的候选文本。
         sources_dir = report_dir / "sources"
         sources_dir.mkdir()
         output = self._redact("\n".join(output_lines[-500:]))
@@ -315,11 +303,7 @@ class CrashAnalyzer:
         return value
 
     def _collect_context(self, report_dir: Path, game_path: Path, version_id: str) -> None:
-        """
-        收集脱敏版本元数据和最近的启动器日志。
-
-        上下文文件仅用于用户主动导出的诊断包；任何读取失败都记录警告但不阻止分析。
-        """
+        # 收集脱敏版本元数据和最近的启动器日志。
         metadata_dir = report_dir / "metadata"
         metadata_dir.mkdir(exist_ok=True)
         version_json = game_path / "versions" / version_id / f"{version_id}.json"
@@ -543,6 +527,20 @@ class CrashAnalyzer:
             "sourceFiles": [path.name for path in sources],
             "hasOutput": bool(output.strip()),
         }
+        self._extensions.enrich(
+            CrashAnalysisContext(
+                report_id=report_id,
+                version_id=version_id,
+                game_path=game_path,
+                game_directory=game_directory,
+                exit_code=exit_code,
+                detected_by=list(dict.fromkeys(detected_by)),
+                reasons=reasons,
+                output=output,
+                source_files=[path.name for path in sources],
+            ),
+            result,
+        )
         (report_dir / "analysis.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2),
             encoding="utf-8",

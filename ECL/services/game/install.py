@@ -276,13 +276,7 @@ class InstallCoordinator(_GameState):
 
     @staticmethod
     def _resolve_fabric_api(game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
-        """
-        解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
-
-        :param game_version: 目标 Minecraft 游戏版本
-        :param fabric_api_version: 指定版本号，为空时选择最新版本
-        :return: 主文件下载地址与文件名
-        """
+        # 解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
         params = {
             "game_versions": json.dumps([game_version]),
             "loaders": json.dumps(["fabric"]),
