@@ -83,6 +83,35 @@ class QomicExCompatibilityPlugin(Plugin):
             before_leave=self._before_connector_leave,
             on_reset=self._reset_connector_state,
         )
+        self.register_command(
+            "resolve",
+            self._resolve_instance_index,
+            "解析当前生效的 QomicEX 实例索引路径",
+        )
+
+    def on_frontend_ready(self) -> None:
+        """
+        前端就绪后向启动器设置页注入实例兼容设置卡片。
+        """
+        super().on_frontend_ready()
+        self.register_vue_slot_file(
+            "plugin-slot-settings-launcher-section-after",
+            "QomicExInstanceCompatSettings",
+            "instance_compat_settings.vue",
+        )
+
+    def _resolve_instance_index(self, instances_path: str | None = None) -> dict[str, Any]:
+        """
+        解析当前生效的 QomicEX 实例索引路径，供前端设置卡片展示。
+        """
+        manual = str(instances_path or "").strip() or None
+        options: Mapping[str, Any] = {"qomicex": {"instances_path": manual}}
+        resolved = self.resolve_data_path(options)
+        return {
+            "path": str(resolved) if resolved is not None else None,
+            "valid": bool(resolved is not None and resolved.is_file()),
+            "manual": manual,
+        }
 
     @staticmethod
     def _default_game_info() -> dict[str, Any]:
