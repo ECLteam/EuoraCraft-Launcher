@@ -6,13 +6,14 @@ import inspect
 import logging
 import os
 import ssl
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+from urllib.request import getproxies
 
 import httpx
 
@@ -58,6 +59,30 @@ def _network_retries(value: Any) -> int:
         return min(5, max(0, int(value)))
     except (TypeError, ValueError):
         return 2
+
+
+_PROXY_MODES = ("none", "system", "custom")
+
+
+def _proxy_mode(launcher_config: Mapping[str, Any]) -> str:
+    # 读取代理模式，兼容旧版 ignore_proxy 布尔配置（true→直连、false→系统代理）。
+    mode = launcher_config.get("proxy_mode")
+    if mode in _PROXY_MODES:
+        return mode
+    return "none" if launcher_config.get("ignore_proxy", True) else "system"
+
+
+def _resolve_proxy_url(proxy_mode: str, custom_url: str) -> str | None:
+    # 解析当前代理模式下应使用的代理地址，None 表示直连。
+    if proxy_mode == "custom":
+        return custom_url or None
+    if proxy_mode == "system":
+        # 读取系统/环境代理，Windows 下同时覆盖 Internet 选项与代理环境变量。
+        for key in ("all", "http", "https"):
+            url = getproxies().get(key)
+            if url and not url.lower().startswith("socks"):
+                return url
+    return None
 
 
 def _build_local_player_icon_provider(
@@ -209,22 +234,27 @@ def create_application(
         logger.debug("正在创建共享 HTTP 客户端")
         launcher_config = state.config.get("launcher") or {}
         disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
-        ignore_proxy = bool(launcher_config.get("ignore_proxy", True))
+        proxy_mode = _proxy_mode(launcher_config)
+        custom_proxy_url = str(launcher_config.get("proxy_url") or "").strip()
         request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
         request_retries = _network_retries(launcher_config.get("request_retries", 2))
-        if ignore_proxy:
+        if proxy_mode == "none":
             # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
             # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
             os.environ["NO_PROXY"] = "*"
             os.environ["no_proxy"] = "*"
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
+        proxy_url = _resolve_proxy_url(proxy_mode, custom_proxy_url)
         http = httpx.Client(
             timeout=httpx.Timeout(request_timeout, connect=min(10.0, request_timeout)),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             verify=ssl_verify_context,
-            transport=httpx.HTTPTransport(retries=request_retries),
+            transport=httpx.HTTPTransport(
+                retries=request_retries,
+                proxy=httpx.Proxy(url=proxy_url) if proxy_url else None,
+            ),
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
@@ -285,6 +315,7 @@ def create_application(
             player_name=(current_account or {}).get("alias") or "Player",
             extensions=connector_extensions,
             local_player_icon_provider=_build_local_player_icon_provider(accounts, http),
+            http_client=http,
         )
         logger.debug(
             "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",

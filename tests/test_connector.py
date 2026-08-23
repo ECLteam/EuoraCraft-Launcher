@@ -10,7 +10,12 @@ import pytest
 
 pytest.importorskip("easytier_pyo3")
 
-from ECL.services.connector import ConnectorService
+from ECL.services.connector import ConnectorService, _DEFAULT_NODES
+
+
+class _FailingHttpClient:
+    def get(self, *_args, **_kwargs):
+        raise ConnectionError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
 
 
 class _NodeResponse:
@@ -52,6 +57,16 @@ def test_fetch_nodes_force_refreshes_memory_cache() -> None:
     http.payload = [{"url": "tcp://second.example:11010"}]
     assert service.fetch_nodes(force=True) == ["tcp://second.example:11010"]
     assert http.calls == 2
+
+
+def test_fetch_nodes_falls_back_to_multiple_defaults_when_api_fails() -> None:
+    service = ConnectorService(http_client=_FailingHttpClient())
+
+    nodes = service.fetch_nodes(force=True)
+
+    assert nodes == list(_DEFAULT_NODES)
+    assert len(_DEFAULT_NODES) > 1, "默认节点必须保留多节点兜底，避免单点 DNS 失效导致无法联机"
+    assert any(url.startswith("tcp://") for url in _DEFAULT_NODES)
 
 
 def test_nat_result_maps_easytier_stun_snapshot() -> None:

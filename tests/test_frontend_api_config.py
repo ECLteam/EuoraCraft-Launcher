@@ -301,7 +301,10 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
     assert result["data"]["launcher"] == {
         "debug": True,
         "disable_ssl_verify": False,
-        "ignore_proxy": True,
+        "proxy_mode": "none",
+        "proxy_url": "",
+        "request_timeout": 15,
+        "request_retries": 2,
         "version": "0.1.0",
         "version_type": "dev",
     }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import socket
@@ -28,7 +29,12 @@ from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 _NODE_LIST_URL = "https://api.qomicex.top/api/nodes"
 _NODE_UA = "ECL"
-_DEFAULT_NODES = ["tcp://public.easytier.cn:11010"]
+_DEFAULT_NODES = [
+    "tcp://public.easytier.cn:11010",
+    "tcp://8.162.7.222:11010",
+    "tcp://103.239.245.69:38867",
+    "tcp://mc.lenmei233.top:31010",
+]
 _EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
 _NODE_FETCH_TIMEOUT_SECONDS = 10.0
 _NODE_CACHE_TTL_SECONDS = 30 * 60.0
@@ -43,6 +49,17 @@ _NAT_PROBE_INTERVAL_SECONDS = 0.25
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
+
+
+def _supports_kwarg(func: Callable[..., Any], name: str) -> bool:
+    # 检测调用目标是否接受指定关键字参数，用于兼容不同版本的 Florolding API。
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    if name in signature.parameters:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
 
 
 class ConnectorService:
@@ -517,10 +534,15 @@ class ConnectorService:
             florolding.set_nodes(self._nodes)
             logger.debug("已设置 EasyTier 节点列表")
 
+            create_kwargs: dict[str, Any] = {}
+            if _supports_kwarg(florolding.create_room, "protocol_handlers"):
+                create_kwargs["protocol_handlers"] = self._extension_protocol_handlers()
+            else:
+                logger.debug("当前 Florolding 版本不支持 protocol_handlers，跳过插件扩展协议注册")
             room_code, server, easy_tier_node = florolding.create_room(
                 player_name=self._player_name,
                 minecraft_port=port,
-                protocol_handlers=self._extension_protocol_handlers(),
+                **create_kwargs,
             )
             logger.debug(
                 "房间已创建: room_code=%s, server=%s, easytier_id=%s",
@@ -607,17 +629,27 @@ class ConnectorService:
         player_name: str,
         conn_timeout: int = 30,
     ) -> tuple[Any, int]:
-        # 执行加入房间的握手流程，返回 EasyTier 节点和本地 Minecraft 映射端口。
+        join_kwargs: dict[str, Any] = {}
+        if _supports_kwarg(florolding.join_room, "supported_protocols"):
+            join_kwargs["supported_protocols"] = self.extensions.protocol_names()
+        else:
+            logger.debug("当前 Florolding 版本不支持 supported_protocols，跳过插件扩展协议协商")
         client, node = florolding.join_room(
             room_code,
             player_name,
             conn_timeout,
-            supported_protocols=self.extensions.protocol_names(),
+            **join_kwargs,
         )
         self._client = client
 
         bind_mc_port = find_free_port()
-        if not florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout):
+        bind_result = florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout)
+        # 新版本返回 (bool, broadcaster)，旧版本返回 bool
+        if isinstance(bind_result, tuple):
+            bind_ok = bool(bind_result[0])
+        else:
+            bind_ok = bool(bind_result)
+        if not bind_ok:
             node.stop()
             raise ConnectorError("绑定 Minecraft 端口失败")
         self.extensions.guest_joined(self._session_context())

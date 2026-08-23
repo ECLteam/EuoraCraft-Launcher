@@ -15,7 +15,8 @@ default_config: dict[str, Any] = {
     "launcher": {
         "debug": False,
         "disable_ssl_verify": False,
-        "ignore_proxy": True,
+        "proxy_mode": "none",
+        "proxy_url": "",
         "request_timeout": 15,
         "request_retries": 2,
     },
