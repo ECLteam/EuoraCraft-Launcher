@@ -82,7 +82,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Install UPX
-        if: ${{ runner.os != 'macOS' }}
+        if: ${{ runner.os != 'macOS' && matrix.os != 'windows-11-arm' }}
         uses: crazy-max/ghaction-upx@v4
         with:
           version: v5.2.0
@@ -192,11 +192,13 @@ jobs:
         run: |
           set -euo pipefail
           # macOS 用 app bundle；其余平台 onefile（关闭内置 zstd，由 UPX 直接压缩整体负载，实测更小）
+          # windows-11-arm 无可用 UPX ARM64 发行版，使用 onefile 内置 zstd 压缩
           if [ "$RUNNER_OS" = "macOS" ]; then
             ARGS=(--mode=app --assume-yes-for-downloads --output-dir=build-nuitka)
+          elif [ "$RUNNER_OS" = "Windows" ] && [ "${{ matrix.os }}" = "windows-11-arm" ]; then
+            ARGS=(--mode=onefile --assume-yes-for-downloads --output-dir=build-nuitka)
           else
             ARGS=(--mode=onefile --onefile-no-compression --assume-yes-for-downloads --output-dir=build-nuitka)
-            # windows-11-arm 等场景可能没有可用的 upx（UPX 无 ARM64 Windows 发行版），退化为不压缩
             if command -v upx >/dev/null 2>&1; then
               ARGS+=(--enable-plugin=upx)
             fi
