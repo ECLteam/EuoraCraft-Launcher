@@ -54,7 +54,7 @@ _SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
     FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
     FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
     FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
-    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.zip", ["zip"]),
+    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.eclmodpack", ["eclmodpack"]),
     FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
     FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
     FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
@@ -510,6 +510,8 @@ class FileHandlers(_FrontendState):
             return invalid
         if request.purpose == FileSelectionPurpose.CRASH_ANALYSIS:
             path = await self._pick_path(False, "选择 Minecraft 崩溃日志", ["log", "txt", "zip"])
+        elif request.purpose == FileSelectionPurpose.MODPACK:
+            path = await self._pick_path(False, "选择整合包", ["eclmodpack", "zip", "mrpack"])
         else:
             path = await self._pick_path(False, "选择文件")
         self.logger.info("文件选择结果: %s", path)
@@ -554,7 +556,13 @@ class FileHandlers(_FrontendState):
         )
         if request.default_name:
             default_name = request.default_name
-        filter_label = "JAR 文件" if request.purpose == FileSavePurpose.MOD_FILE else "ZIP 压缩包"
+        filter_label = (
+            "JAR 文件"
+            if request.purpose == FileSavePurpose.MOD_FILE
+            else "ECL 整合包"
+            if request.purpose == FileSavePurpose.INSTANCE_EXPORT
+            else "ZIP 压缩包"
+        )
         selected = await self._pick_save_path(
             title,
             default_name,
@@ -562,17 +570,16 @@ class FileHandlers(_FrontendState):
             filter_label,
             request.default_directory,
         )
-        if (
-            selected
-            and request.purpose
-            not in {
-                FileSavePurpose.RESOURCE_MANIFEST,
-                FileSavePurpose.SCREENSHOT,
-                FileSavePurpose.MOD_FILE,
-            }
-            and Path(selected).suffix.casefold() != ".zip"
-        ):
-            selected = str(Path(selected).with_suffix(".zip"))
+        # 对未显式豁免的用途，按该用途的主扩展名补齐后缀（如 instance-export -> .eclmodpack）
+        no_suffix_force = {
+            FileSavePurpose.RESOURCE_MANIFEST,
+            FileSavePurpose.SCREENSHOT,
+            FileSavePurpose.MOD_FILE,
+        }
+        if selected and request.purpose not in no_suffix_force:
+            primary_ext = extensions[0] if extensions else "zip"
+            if Path(selected).suffix.casefold() != f".{primary_ext.casefold()}":
+                selected = str(Path(selected).with_suffix(f".{primary_ext}"))
         self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
         return success({"path": selected})
 

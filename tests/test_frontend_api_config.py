@@ -514,6 +514,48 @@ def test_select_save_file_accepts_mod_default_directory_and_filename(tmp_path, m
     ]
 
 
+def test_select_save_file_instance_export_uses_eclmodpack_suffix(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakeSaveDialog:
+        def blocking_save_file(self, **options):
+            calls.append(options)
+            return tmp_path / "my-pack"
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakeSaveDialog()))
+
+    result = asyncio.run(api.select_save_file({"purpose": "instance-export"}))
+
+    assert result == {"success": True, "data": {"path": str(tmp_path / "my-pack.eclmodpack")}}
+    assert calls == [
+        {
+            "add_filter": ("ECL 整合包", ["eclmodpack"]),
+            "set_file_name": "instance.eclmodpack",
+            "set_title": "导出实例整合包",
+        }
+    ]
+
+
+def test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakePickDialog:
+        def blocking_pick_file(self, **options):
+            calls.append(options)
+            return str(tmp_path / "pack.eclmodpack")
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakePickDialog()))
+
+    result = asyncio.run(api.select_file({"purpose": "modpack"}))
+
+    assert result["success"] is True
+    assert calls == [{"add_filter": ("文件", ["eclmodpack", "zip", "mrpack"]), "set_title": "选择整合包"}]
+
+
 def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
