@@ -54,7 +54,7 @@ _SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
     FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
     FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
     FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
-    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.eclmodpack", ["eclmodpack"]),
+    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.mrpack", ["mrpack"]),
     FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
     FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
     FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
@@ -511,7 +511,7 @@ class FileHandlers(_FrontendState):
         if request.purpose == FileSelectionPurpose.CRASH_ANALYSIS:
             path = await self._pick_path(False, "选择 Minecraft 崩溃日志", ["log", "txt", "zip"])
         elif request.purpose == FileSelectionPurpose.MODPACK:
-            path = await self._pick_path(False, "选择整合包", ["eclmodpack", "zip", "mrpack"])
+            path = await self._pick_path(False, "选择整合包", ["zip", "mrpack"])
         else:
             path = await self._pick_path(False, "选择文件")
         self.logger.info("文件选择结果: %s", path)
@@ -559,7 +559,7 @@ class FileHandlers(_FrontendState):
         filter_label = (
             "JAR 文件"
             if request.purpose == FileSavePurpose.MOD_FILE
-            else "ECL 整合包"
+            else "Modrinth 整合包"
             if request.purpose == FileSavePurpose.INSTANCE_EXPORT
             else "ZIP 压缩包"
         )

@@ -81,6 +81,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "game_instance_categories_upsert",
         "game_instance_categories_delete",
         "game_instance_stop",
+        "game_crash_list",
         "game_crash_analyze",
         "game_crash_output",
         "game_crash_export",

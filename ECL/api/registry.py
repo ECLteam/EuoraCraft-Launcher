@@ -109,6 +109,7 @@ COMMAND_NAMES = (
     "game_launch",
     "game_launch_cancel",
     "game_instance_stop",
+    "game_crash_list",
     "game_crash_analyze",
     "game_crash_output",
     "game_crash_export",

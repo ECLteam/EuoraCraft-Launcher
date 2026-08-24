@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import sys
 from enum import IntEnum
 from pathlib import Path
@@ -12,6 +11,7 @@ from ECL.application import ApplicationContext, ApplicationState, create_applica
 from ECL.common import __version__, __version_type__, get_runtime_info
 from ECL.services.maintenance import apply_pending_debug_maintenance
 from ECL.utils import configure_logging
+from ECL.utils.logging import resolve_log_level
 
 
 class LauncherExitCode(IntEnum):
@@ -39,7 +39,8 @@ class EuoraCraftLauncher:
         self.launcher_version = __version__  # 启动器版本号
         self.launcher_version_type = __version_type__  # 启动器版本类型（alpha/beta/release；dev 表示源码启动）
         self.is_frozen = self.runtime_info["is_frozen"]  # 是否运行于打包后的可执行文件
-        self.debug = False  # 是否启用 Debug 日志
+        self.debug = False  # 是否启用调试模式（调试工具与标签显示）
+        self.debug_log_level = "info"  # 控制台日志级别
         self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
         self.context: ApplicationContext | None = None  # 已构造的后端应用上下文
         self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
@@ -98,8 +99,8 @@ class EuoraCraftLauncher:
         self.context = create_application(self.runtime_info, on_state_ready=self._apply_bootstrap_state)
         self.config = self.context.state.config
         self.debug = self.context.state.debug
-        if self.debug:
-            self.logging.set_level(logging.DEBUG)
+        self.debug_log_level = self._config_log_level()
+        self._apply_log_level()
         self.logging.install_frontend_handler(self.context.events)
         self.context.events.subscribe("config:updated", self._on_config_updated)
         self.logger.debug(
@@ -111,11 +112,22 @@ class EuoraCraftLauncher:
         self.logger.info("后端初始化完成，total=%.2fs", perf_counter() - started)
 
     def _apply_bootstrap_state(self, state: ApplicationState) -> None:
-        # 在服务和插件构造前应用启动配置，使 Debug 日志立即进入终端。
+        # 在服务和插件构造前应用启动配置，使配置的日志级别立即进入终端。
         self.config = state.config
         self.debug = state.debug
-        self.logging.set_level(logging.DEBUG if state.debug else logging.INFO)
-        self.logger.debug("启动阶段日志级别已应用: debug=%s", state.debug)
+        self.debug_log_level = self._config_log_level()
+        self._apply_log_level()
+        self.logger.debug("启动阶段日志级别已应用: %s", self.debug_log_level)
+
+    def _config_log_level(self) -> str:
+        # 从启动器配置读取控制台日志级别名称，缺失或非法时回退为 info。
+        launcher_config = self.config.get("launcher") if isinstance(self.config, dict) else None
+        raw = (launcher_config or {}).get("debug_log_level")
+        return raw if isinstance(raw, str) and raw else "info"
+
+    def _apply_log_level(self) -> None:
+        # 开启 Debug 模式时强制最高诊断级别，否则采用独立配置的日志级别。
+        self.logging.set_level(resolve_log_level("debug" if self.debug else self.debug_log_level))
 
     def _require_context(self) -> ApplicationContext:
         # 返回已经初始化的应用上下文。
@@ -137,13 +149,14 @@ class EuoraCraftLauncher:
         self.logging.shutdown()
 
     def _on_config_updated(self, section: str, data: Any) -> None:
-        # 同步启动器镜像状态，并即时应用 Debug 日志级别。
+        # 同步启动器镜像状态，并即时应用配置的控制台日志级别。
         if section != "launcher" or self.context is None:
             return
         self.config = self.context.state.config
         self.debug = self.context.state.debug
-        self.logging.set_level(logging.DEBUG if self.debug else logging.INFO)
-        self.logger.debug("Debug 日志已%s", "启用" if self.debug else "关闭")
+        self.debug_log_level = self._config_log_level()
+        self._apply_log_level()
+        self.logger.debug("控制台日志级别已更新: %s", self.debug_log_level)
 
 
 __all__ = ["EuoraCraftLauncher", "LauncherExitCode"]

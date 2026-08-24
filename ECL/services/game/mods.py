@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import shutil
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,20 @@ from uuid import uuid4
 
 from .base import GameServiceError, _GameState
 from .resources import ResourceCoordinator
+
+# 单个模组图标允许读取的最大字节数，超出则放弃以避免占用过多内存
+_MAX_ICON_BYTES = 1024 * 1024
+
+
+def _icon_mime(filename: str) -> str:
+    # 依据扩展名推断图标的 MIME 类型，未知时回退为 PNG。
+    mime = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    return mime.get(Path(filename).suffix.lower(), "image/png")
 
 
 class ModCoordinator(_GameState):
@@ -52,6 +68,7 @@ class ModCoordinator(_GameState):
                     "dependencies": metadata.get("dependencies") or [],
                     "enabled": enabled,
                     "size": path.stat().st_size,
+                    "icon_data": self._read_mod_icon(path, metadata.get("icon"), [project_id, original_name]),
                     "modified_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
                 }
             )
@@ -111,6 +128,40 @@ class ModCoordinator(_GameState):
         if not target.is_file():
             raise GameServiceError("模组文件不存在", "MOD_NOT_FOUND")
         target.unlink()
+
+    def _read_mod_icon(self, path: Path, icon: Any, fallback_ids: list[str]) -> str:
+        """
+        从 mod jar 中提取图标并编码为数据 URL。
+
+        先尝试元数据声明的图标路径，缺失时按常见命名兜底探测。
+
+        :param path: 模组 Jar 文件路径
+        :param icon: 元数据解析出的图标路径或其映射
+        :param fallback_ids: 用于构造兜底路径的 mod id/名称候选
+        :return: 图标的数据 URL，未找到或超限时为空字符串
+        """
+        candidates: list[str] = []
+        if isinstance(icon, str) and icon:
+            candidates.append(icon)
+        for mod_id in fallback_ids:
+            if not mod_id:
+                continue
+            candidates.append(f"assets/{mod_id}/icon.png")
+            candidates.append(f"{mod_id}.png")
+        candidates.append("icon.png")
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names = set(archive.namelist())
+                for name in dict.fromkeys(candidates):
+                    entry_name = name.lstrip("/")
+                    entry = archive.getinfo(entry_name) if entry_name in names else None
+                    if entry is None or entry.file_size <= 0 or entry.file_size > _MAX_ICON_BYTES:
+                        continue
+                    data = archive.read(entry_name)
+                    return f"data:{_icon_mime(entry_name)};base64,{base64.b64encode(data).decode('ascii')}"
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+            pass
+        return ""
 
     def mods_path(self, game_path: Any) -> Path:
         """

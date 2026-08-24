@@ -14,6 +14,7 @@ from ECL.utils.logging import get_logger
 default_config: dict[str, Any] = {
     "launcher": {
         "debug": False,
+        "debug_log_level": "info",
         "disable_ssl_verify": False,
         "proxy_mode": "none",
         "proxy_url": "",

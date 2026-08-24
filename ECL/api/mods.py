@@ -163,8 +163,9 @@ class ModHandlers(_FrontendState):
             body.get("source", "modrinth"),
             body.get("mod_id"),
             body.get("file_id"),
-            task_id=body.get("task_id"),
-            world_id=body.get("world_id"),
+            False,
+            body.get("task_id"),
+            body.get("world_id"),
         )
         return success(
             {
@@ -187,7 +188,7 @@ class ModHandlers(_FrontendState):
             body.get("mod_id"),
             body.get("file_id"),
             body.get("save_path"),
-            task_id=body.get("task_id"),
+            body.get("task_id"),
         )
         return success({"filename": result["filename"]})
 

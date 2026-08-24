@@ -80,7 +80,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install pyinstaller
+
+      - name: Install UPX
+        if: ${{ runner.os != 'macOS' }}
+        uses: crazy-max/ghaction-upx@v4
+        with:
+          version: v5.2.0
+          install-only: true
 
       - name: Inject build secrets
         shell: bash
@@ -179,25 +185,67 @@ jobs:
               print("No tag detected, keeping existing version.py")
           PY
 
-      - name: Build with PyInstaller
-        # 临时禁用 UPX，验证 exe 运行失败是否为 UPX 压缩 python DLL 所致
+      - name: Build with Nuitka
+        shell: bash
         env:
-          ECL_UPX: "0"
-        run: pyinstaller EuoraCraft-Launcher.spec
+          VTYPE: ${{ steps.version_info.outputs.type }}
+        run: |
+          set -euo pipefail
+          # macOS 用 app bundle；其余平台 onefile（关闭内置 zstd，由 UPX 直接压缩整体负载，实测更小）
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ARGS=(--mode=app --assume-yes-for-downloads --output-dir=build-nuitka)
+          else
+            ARGS=(--mode=onefile --onefile-no-compression --assume-yes-for-downloads --output-dir=build-nuitka)
+            # windows-11-arm 等场景可能没有可用的 upx（UPX 无 ARM64 Windows 发行版），退化为不压缩
+            if command -v upx >/dev/null 2>&1; then
+              ARGS+=(--enable-plugin=upx)
+            fi
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ARGS+=(--windows-icon-from-ico=resources/img/logo.ico)
+            # easytier 的 Packet.dll / wintun.dll 在运行时动态加载，需显式随包分发
+            ETP_DIR="$(python -c 'import easytier_pyo3, os; print(os.path.dirname(easytier_pyo3.__file__).replace("\\", "/"))')"
+            ARGS+=(--include-data-files="$ETP_DIR/Packet.dll=easytier_pyo3/Packet.dll")
+            ARGS+=(--include-data-files="$ETP_DIR/wintun.dll=easytier_pyo3/wintun.dll")
+            # beta/release 面向普通用户隐藏控制台；alpha/dev 保留控制台便于排查启动问题
+            CONSOLE_MODE="force"
+            if [ "${ECL_CONSOLE:-}" = "1" ]; then
+              CONSOLE_MODE="force"
+            elif [ "${ECL_CONSOLE:-}" = "0" ]; then
+              CONSOLE_MODE="disable"
+            elif [ "$VTYPE" = "beta" ] || [ "$VTYPE" = "release" ]; then
+              CONSOLE_MODE="disable"
+            fi
+            ARGS+=(--windows-console-mode="$CONSOLE_MODE")
+          fi
+          python -m nuitka "${ARGS[@]}" \
+            --include-package=ECL \
+            --include-package=pytauri \
+            --include-package=pytauri_plugins \
+            --include-package=pytauri_utils \
+            --include-package=pytauri_wheel \
+            --include-module=pytauri_wheel.ext_mod \
+            --include-distribution-metadata=pytauri-wheel \
+            --include-package-data=easytier_pyo3 \
+            --include-raw-dir=resources=resources \
+            --include-data-dir=frontend/dist=frontend/dist \
+            --include-data-dir=capabilities=capabilities \
+            --include-data-files=Tauri.toml=Tauri.toml \
+            main.py
 
       - name: Package artifact
         id: package
         shell: bash
         run: |
-          cd dist
+          cd build-nuitka
           if [ "${{ runner.os }}" = "macOS" ]; then
-            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "EuoraCraft Launcher.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
+            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "main.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg" >> "$GITHUB_OUTPUT"
           elif [ "${{ runner.os }}" = "Windows" ]; then
-            mv "EuoraCraft Launcher.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
+            mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
           else
-            mv "EuoraCraft Launcher" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
+            mv "main" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -205,20 +253,20 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.filename }}
-          path: dist/${{ steps.package.outputs.filename }}
+          path: build-nuitka/${{ steps.package.outputs.filename }}
           archive: false
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/${{ steps.package.outputs.filename }}
+          files: build-nuitka/${{ steps.package.outputs.filename }}
           prerelease: ${{ steps.version_info.outputs.type != 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Arch Linux 打包：GitHub 无原生 Arch hosted runner，因此在 Arch 容器中
-  # 原生构建 PyInstaller 产物，避免将 Ubuntu/WebKitGTK 的编译期路径带入 Arch 包。
+  # 原生构建 Nuitka 产物，避免将 Ubuntu/WebKitGTK 的编译期路径带入 Arch 包。
   build-arch-pkg:
     name: Build Arch Linux package
     # 只等待共用前端产物，随后与其他平台的后端矩阵并行构建。
@@ -294,7 +342,7 @@ jobs:
             uv \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
             xorg-server-xvfb xorg-xauth dbus \
-            patchelf curl
+            patchelf curl upx
 
       - name: Install Python dependencies
         shell: bash
@@ -354,10 +402,25 @@ jobs:
               print("No tag detected, keeping existing version.py")
           PY
 
-      - name: Build Arch binary with PyInstaller
-        env:
-          ECL_UPX: "0"
-        run: .venv-arch/bin/pyinstaller EuoraCraft-Launcher.spec
+      - name: Build Arch binary with Nuitka
+        shell: bash
+        run: |
+          .venv-arch/bin/python -m nuitka \
+            --mode=onefile --onefile-no-compression --enable-plugin=upx \
+            --assume-yes-for-downloads --output-dir=build-nuitka \
+            --include-package=ECL \
+            --include-package=pytauri \
+            --include-package=pytauri_plugins \
+            --include-package=pytauri_utils \
+            --include-package=pytauri_wheel \
+            --include-module=pytauri_wheel.ext_mod \
+            --include-distribution-metadata=pytauri-wheel \
+            --include-package-data=easytier_pyo3 \
+            --include-raw-dir=resources=resources \
+            --include-data-dir=frontend/dist=frontend/dist \
+            --include-data-dir=capabilities=capabilities \
+            --include-data-files=Tauri.toml=Tauri.toml \
+            main.py
 
       - name: Smoke test Arch binary
         shell: bash
@@ -365,7 +428,7 @@ jobs:
           set +e
           timeout 30s dbus-run-session -- \
             xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-            './dist/EuoraCraft Launcher' > arch-smoke.log 2>&1
+            './build-nuitka/main' > arch-smoke.log 2>&1
           status=$?
           set -e
 
@@ -388,7 +451,7 @@ jobs:
         working-directory: packaging/arch
         shell: bash
         run: |
-          SRC="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher"
+          SRC="$GITHUB_WORKSPACE/build-nuitka/main"
           [ -x "$SRC" ] || { echo "未找到 Arch 原生二进制"; exit 1; }
           cp "$SRC" euoracraft-launcher
           cp "$SRC" "$GITHUB_WORKSPACE/EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}"

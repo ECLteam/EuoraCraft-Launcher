@@ -459,6 +459,19 @@ class GameHandlers(_FrontendState):
         await to_thread.run_sync(self.game.stop_instance, request.instance_id)
         return success()
 
+    @_ipc_handler("CRASH_LIST_FAILED")
+    async def game_crash_list(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        列出指定实例文件夹内可分析的候选日志文件。
+
+        :param body: 符合 ``GameVersionRequest`` 的游戏路径与版本
+        :return: 候选日志描述列表（path/name/size/mtime）
+        """
+        request, invalid = _validate_body(GameVersionRequest, body)
+        if invalid is not None:
+            return invalid
+        return success(await to_thread.run_sync(self.game.list_crash_candidates, request.game_path, request.version_id))
+
     @_ipc_handler("CRASH_ANALYSIS_FAILED")
     async def game_crash_analyze(self, body: dict[str, Any]) -> ApiResponse:
         """

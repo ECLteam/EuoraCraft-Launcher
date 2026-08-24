@@ -541,6 +541,7 @@ class _FrontendState:
         runtime_config = (self.launcher.config or {}).get("launcher") or {}
         launcher_config.update(runtime_config)
         launcher_config["debug"] = bool(self.launcher.debug)
+        launcher_config["debug_log_level"] = getattr(self.launcher, "debug_log_level", None) or "info"
         launcher_config["version"] = self.launcher.launcher_version or ""
         launcher_config["version_type"] = self.launcher.launcher_version_type or "beta"
         config["launcher"] = launcher_config

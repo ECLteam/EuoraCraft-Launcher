@@ -92,7 +92,7 @@ class WorkspaceHandlers(_FrontendState):
             InstancePackExportRequest,
             body,
             lambda request: self.game.export_instance_pack(
-                request.game_path, request.version_id, request.output_path, request.pack_format, request.includes
+                request.game_path, request.version_id, request.output_path, request.pack_format
             ),
         )
 

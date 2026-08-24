@@ -248,6 +248,25 @@ class CrashAnalyzer:
                 continue
         return sorted(candidates, key=lambda item: str(item).casefold())
 
+    def candidate_files(
+        self,
+        game_path: Path,
+        version_id: str,
+        game_directory: Path,
+    ) -> list[dict[str, Any]]:
+        """返回实例内候选日志的描述列表，供前端下拉选择。"""
+        result: list[dict[str, Any]] = []
+        for path in self._candidate_files(game_path, version_id, game_directory):
+            try:
+                stat = path.stat()
+                size = int(stat.st_size)
+                mtime = int(stat.st_mtime)
+            except OSError:
+                size = 0
+                mtime = 0
+            result.append({"path": str(path), "name": path.name, "size": size, "mtime": mtime})
+        return result
+
     def _collect_runtime_sources(
         self,
         report_dir: Path,

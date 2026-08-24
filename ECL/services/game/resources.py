@@ -142,6 +142,16 @@ def _sha512(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 匹配 version_id 中最后一个 x.y[.z] 形态的 MC 版本号；取最后一个以兼容
+# "fabric-loader-0.16.14-1.21.5" 这类加载器版本号在前、MC 版本号在后的命名。
+_MC_VERSION_RE = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
+
+
+def _extract_minecraft_version(version_id: str) -> str:
+    matches = list(_MC_VERSION_RE.finditer(version_id))
+    return matches[-1].group(0) if matches else version_id
+
+
 def _safe_json(data: bytes) -> dict[str, Any]:
     value = json.loads(data.decode("utf-8-sig"))
     return value if isinstance(value, dict) else {}
@@ -213,6 +223,10 @@ class ResourceCoordinator:
                 if "fabric.mod.json" in names:
                     data = _safe_json(archive.read("fabric.mod.json"))
                     depends = data.get("depends") or {}
+                    icon = data.get("icon")
+                    # fabric 的 icon 可为路径字符串或 {尺寸: 路径} 映射，取第一个有效路径。
+                    if isinstance(icon, dict) and icon:
+                        icon = next(iter(icon.values()))
                     result.update(
                         {
                             "loader": "fabric",
@@ -222,6 +236,7 @@ class ResourceCoordinator:
                             "author": _join_authors(data.get("authors")),
                             "gameVersion": str(depends.get("minecraft")) if depends.get("minecraft") else None,
                             "dependencies": list(depends.keys()),
+                            "icon": icon if isinstance(icon, str) else None,
                         }
                     )
                 elif "quilt.mod.json" in names:
@@ -270,6 +285,7 @@ class ResourceCoordinator:
                                 minecraft_range = str(dep.get("versionRange") or "")
                             elif dep.get("mandatory"):
                                 dependencies.append(str(dep["modId"]))
+                        logo = first.get("icon") or first.get("logoFile")
                         result.update(
                             {
                                 "loader": "neoforge" if "neoforge" in toml_name else "forge",
@@ -279,6 +295,7 @@ class ResourceCoordinator:
                                 "author": str(first.get("authors") or ""),
                                 "gameVersion": minecraft_range,
                                 "dependencies": dependencies,
+                                "icon": logo if isinstance(logo, str) else None,
                             }
                         )
         except (OSError, ValueError, KeyError, zipfile.BadZipFile):
@@ -1248,90 +1265,50 @@ class ResourceCoordinator:
         version_id: Any,
         output_path: Any,
         pack_format: str,
-        includes: list[str] | None = None,
     ) -> dict[str, str]:
         """
-        导出 ECL 完整包或标准包；标准包默认排除隐私目录。
+        导出实例为标准 Modrinth 整合包（mrpack）。
+
+        按 HMCL 导出原则打包：排除隐私目录（存档/截图/日志/崩溃报告/servers.dat），
+        其余实例内容（mods/config/resourcepacks/shaderpacks 等）置于 overrides/ 下，
+        并写入 modrinth.index.json。
         """
         target = self.resolve_instance(game_path, version_id)
         output = Path(str(output_path)).expanduser().resolve(strict=False)
-        include_set = set(includes or [])
-        private = {"saves", "screenshots", "logs", "crash-reports", "servers.dat"}
-        if pack_format not in {"ecl", "modrinth", "curseforge"}:
+        if pack_format != "modrinth":
             raise GameServiceError("不支持的整合包格式", "INVALID_PACK_FORMAT")
+        private = {"saves", "screenshots", "logs", "crash-reports", "servers.dat"}
 
         def worker(context: OperationContext) -> dict[str, str]:
             output.parent.mkdir(parents=True, exist_ok=True)
             temp = output.with_name(f".{output.name}.ecl-tmp")
-            checksums: dict[str, str] = {}
             try:
                 with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
-                    roots = [target.instance_path]
-                    resource_manifest = self._read_resource_manifest(target.game_path, target.version_id)
-                    known_standard_files = {
-                        key.split(":", 1)[1]
-                        for key, metadata in (resource_manifest.get("resources") or {}).items()
-                        if isinstance(metadata, dict) and metadata.get("source") in {"modrinth", "curseforge"}
-                    }
-                    for root in roots:
-                        files = [path for path in root.rglob("*") if path.is_file()]
-                        for index, path in enumerate(files, 1):
-                            relative = path.relative_to(root)
-                            top = relative.parts[0]
-                            if pack_format != "ecl" and top in private and top not in include_set:
-                                continue
-                            if (
-                                pack_format != "ecl"
-                                and top in {"mods", "resourcepacks", "shaderpacks"}
-                                and path.name not in known_standard_files
-                            ):
-                                continue
-                            context.check_cancelled()
-                            archive_name = Path("overrides") / relative if pack_format != "ecl" else relative
-                            archive.write(path, archive_name)
-                            checksums[str(archive_name).replace("\\", "/")] = _sha512(path)
-                            context.progress(index * 85 / max(1, len(files)), "正在导出整合包")
-                    if pack_format == "modrinth":
-                        archive.writestr(
-                            "modrinth.index.json",
-                            json.dumps(
-                                {
-                                    "formatVersion": 1,
-                                    "game": "minecraft",
-                                    "versionId": 1,
-                                    "name": target.version_id,
-                                    "summary": "Exported by ECL",
-                                    "files": [],
-                                    "dependencies": {"minecraft": target.version_id},
-                                }
-                            ),
-                        )
-                    elif pack_format == "curseforge":
-                        archive.writestr(
-                            "manifest.json",
-                            json.dumps(
-                                {
-                                    "minecraft": {"version": target.version_id},
-                                    "manifestType": "minecraftModpack",
-                                    "manifestVersion": 1,
-                                    "name": target.version_id,
-                                    "version": "1.0.0",
-                                    "author": "ECL",
-                                    "files": [],
-                                    "overrides": "overrides",
-                                }
-                            ),
-                        )
-                    else:
-                        archive.writestr(
-                            "ecl-pack.json",
-                            json.dumps(
-                                {"schemaVersion": 1, "versionId": target.version_id, "checksums": checksums},
-                                ensure_ascii=False,
-                            ),
-                        )
+                    files = [path for path in target.instance_path.rglob("*") if path.is_file()]
+                    for index, path in enumerate(files, 1):
+                        relative = path.relative_to(target.instance_path)
+                        if relative.parts and relative.parts[0] in private:
+                            continue
+                        context.check_cancelled()
+                        archive.write(path, Path("overrides") / relative)
+                        context.progress(index * 90 / max(1, len(files)), "正在导出整合包")
+                    archive.writestr(
+                        "modrinth.index.json",
+                        json.dumps(
+                            {
+                                "formatVersion": 1,
+                                "game": "minecraft",
+                                "versionId": 1,
+                                "name": target.version_id,
+                                "summary": "Exported by ECL",
+                                "files": [],
+                                "dependencies": {"minecraft": _extract_minecraft_version(target.version_id)},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
                 temp.replace(output)
-                return {"path": str(output), "format": pack_format}
+                return {"path": str(output), "format": "modrinth"}
             finally:
                 temp.unlink(missing_ok=True)
 

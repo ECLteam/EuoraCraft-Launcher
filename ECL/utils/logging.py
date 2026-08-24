@@ -54,6 +54,20 @@ def _gzip_rotator(source: str, destination: str) -> None:
     Path(source).unlink()
 
 
+def resolve_log_level(name: str | None) -> int:
+    """
+    将配置中的日志级别名称解析为标准库日志级别。
+
+    :param name: 小写或大写级别名（debug/info/warning/error）
+    :return: logging 模块的级别值，无法识别时回退为 INFO
+    """
+    if isinstance(name, str):
+        level = logging.getLevelName(name.upper())
+        if isinstance(level, int):
+            return level
+    return logging.INFO
+
+
 _FRONTEND_BUFFER: deque[dict[str, Any]] | None = None
 _FRONTEND_BUFFER_LOCK = RLock()
 
@@ -240,4 +254,5 @@ __all__ = [
     "configure_logging",
     "get_frontend_log_history",
     "get_logger",
+    "resolve_log_level",
 ]

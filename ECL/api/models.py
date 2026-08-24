@@ -358,8 +358,7 @@ class InstancePackImportRequest(RequestModel):
 
 class InstancePackExportRequest(InstanceTarget):
     output_path: Path
-    pack_format: Literal["ecl", "modrinth", "curseforge"]
-    includes: list[Literal["saves", "servers.dat", "screenshots", "logs", "crash-reports"]] = Field(default_factory=list)
+    pack_format: Literal["modrinth"]
 
 
 class OperationRequest(RequestModel):
@@ -616,6 +615,7 @@ REQUEST_MODELS: dict[str, type[RequestModel]] = {
     "game_instance_categories_upsert": InstanceCategoryUpsertRequest,
     "game_instance_categories_delete": InstanceCategoryDeleteRequest,
     "game_instance_stop": GameInstanceRequest,
+    "game_crash_list": GameVersionRequest,
     "game_crash_analyze": CrashAnalyzeRequest,
     "game_crash_output": CrashReportRequest,
     "game_crash_export": CrashExportRequest,
