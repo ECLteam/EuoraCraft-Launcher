@@ -247,7 +247,7 @@ jobs:
             mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
           else
-            mv "main" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
+            mv "main.bin" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -430,7 +430,7 @@ jobs:
           set +e
           timeout 30s dbus-run-session -- \
             xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-            './build-nuitka/main' > arch-smoke.log 2>&1
+            './build-nuitka/main.bin' > arch-smoke.log 2>&1
           status=$?
           set -e
 
@@ -453,7 +453,7 @@ jobs:
         working-directory: packaging/arch
         shell: bash
         run: |
-          SRC="$GITHUB_WORKSPACE/build-nuitka/main"
+          SRC="$GITHUB_WORKSPACE/build-nuitka/main.bin"
           [ -x "$SRC" ] || { echo "未找到 Arch 原生二进制"; exit 1; }
           cp "$SRC" euoracraft-launcher
           cp "$SRC" "$GITHUB_WORKSPACE/EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}"
