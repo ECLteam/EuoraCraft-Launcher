@@ -94,7 +94,8 @@ class EuoraCraftLauncher:
         else:
             self.logger.debug("待处理的调试维护任务数量: %d", len(maintenance_results))
             for result in maintenance_results:
-                self.logger.warning("已执行调试维护操作 %s，备份位置: %s", result.action, result.backup_path or "无")
+                removed = "、".join(result.removed_targets) or "无"
+                self.logger.warning("已执行调试维护操作 %s，删除目标: %s", result.action, removed)
 
         self.context = create_application(self.runtime_info, on_state_ready=self._apply_bootstrap_state)
         self.config = self.context.state.config

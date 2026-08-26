@@ -16,7 +16,7 @@
 
 ## 介绍
 
-**EuoraCraft Launcher** 是一款现代化、可插拔的 Minecraft 第三方启动器，采用 **Python + Tauri (pytauri)** 构建，前端使用 **Vue 3 + TypeScript**。只需编写少量代码即可通过插件系统扩展启动器功能，满足个性化需求。
+**EuoraCraft Launcher**(ECL) 是一款现代化、可插拔的 Minecraft 第三方启动器，采用 **Python + Tauri (pytauri)** 构建，前端使用 **Vue 3 + TypeScript**。只需编写少量代码即可通过插件系统扩展启动器功能，满足个性化需求。
 
 ---
 

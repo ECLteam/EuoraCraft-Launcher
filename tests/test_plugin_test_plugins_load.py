@@ -3,6 +3,8 @@
 import shutil
 from pathlib import Path
 
+import pytest
+
 from ECL.plugins import PluginManager
 
 # 需要验证的测试插件名称列表
@@ -32,6 +34,8 @@ def test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) ->
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     source_plugins = Path(__file__).parent.parent / "ECL_data" / "plugins"
+    if not any((source_plugins / name).is_dir() for name in _TEST_PLUGIN_NAMES):
+        pytest.skip("ECL_data/plugins 为 gitignore 运行时数据，本机不存在测试插件夹具")
     _copy_plugins(source_plugins, data_path / "plugins")
 
     framework = PluginManager()

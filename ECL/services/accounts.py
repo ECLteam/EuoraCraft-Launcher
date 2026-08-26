@@ -172,6 +172,7 @@ class AccountManager:
         event_bus: EventBus | None = None,
         disable_ssl_verify: bool = False,
         resource_path: Path | str | None = None,
+        state_dir: Path | str | None = None,
     ):
         """
         加载持久化账户，并连接两种在线认证提供者。
@@ -183,10 +184,12 @@ class AccountManager:
         :param event_bus: 当前应用上下文拥有的事件总线
         :param disable_ssl_verify: 是否关闭 Microsoft 登录服务器的 SSL 证书校验
         :param resource_path: 只读资源目录，用于定位 ``resources/Skins`` 默认皮肤
+        :param state_dir: 账户聚合状态目录；生产环境统一使用 ``~/.ECL/accounts``，
+            缺省时保持数据目录内的历史位置（测试兼容）
         """
         self.logger = get_logger("AccountManager")
         self.events = event_bus or EventBus()
-        self.data_path = Path(data_path) / "accounts"
+        self.data_path = Path(state_dir) if state_dir is not None else Path(data_path) / "accounts"
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.state_path = self.data_path / "accounts.json"
         # 插件认证提供方由插件框架共享；插件账户持久化于聚合状态文件中。

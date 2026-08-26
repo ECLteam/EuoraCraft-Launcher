@@ -631,7 +631,9 @@ class LaunchCoordinator(_GameState):
         future.add_done_callback(analysis_done)
 
     def list_crash_candidates(self, game_path: Any, version_id: Any) -> list[dict[str, Any]]:
-        """列出指定实例文件夹内可分析的候选日志文件。"""
+        """
+        列出指定实例文件夹内可分析的候选日志文件。
+        """
         path = self._normalize_game_path(game_path)
         version = self._normalize_version_name(version_id)
         game_directory = path / "versions" / version

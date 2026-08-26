@@ -26,6 +26,9 @@ _TAG_COMPOUND = 10
 _TAG_INT_ARRAY = 11
 _TAG_LONG_ARRAY = 12
 
+# 限制 NBT 嵌套深度与数组长度，防止恶意构造的存档数据耗尽栈或内存。
+_MAX_DEPTH = 512
+
 
 class _Tag:
     """
@@ -143,10 +146,11 @@ class File(Compound):
 
     def __init__(self, value: dict | None = None, gzipped: bool = False) -> None:
         super().__init__(value or {})
+        self._gzipped = gzipped
 
-    def save(self, path: Path | str, gzipped: bool = True) -> None:
+    def save(self, path: Path | str, gzipped: bool | None = None) -> None:
         data = _serialize(self)
-        if gzipped:
+        if self._gzipped if gzipped is None else gzipped:
             data = gzip.compress(data)
         Path(path).write_bytes(data)
 
@@ -183,71 +187,87 @@ _TAG_CLASSES: dict[int, type[_Tag]] = {
 
 
 def _read_string(buffer: io.BytesIO) -> str:
-    length = struct.unpack(">H", buffer.read(2))[0]
-    return buffer.read(length).decode("utf-8")
+    length = struct.unpack(">H", _read_exactly(buffer, 2))[0]
+    return _read_exactly(buffer, length).decode("utf-8")
+
+
+def _read_exactly(buffer: io.BytesIO, count: int) -> bytes:
+    # 按预期长度读取，数据不足时抛出可识别的错误而非交给 struct 报晦涩异常。
+    data = buffer.read(count)
+    if len(data) != count:
+        raise ValueError("NBT 数据不完整")
+    return data
 
 
 def _parse_byte(buffer: io.BytesIO) -> Byte:
-    return Byte(struct.unpack(">b", buffer.read(1))[0])
+    return Byte(struct.unpack(">b", _read_exactly(buffer, 1))[0])
 
 
 def _parse_short(buffer: io.BytesIO) -> Short:
-    return Short(struct.unpack(">h", buffer.read(2))[0])
+    return Short(struct.unpack(">h", _read_exactly(buffer, 2))[0])
 
 
 def _parse_int(buffer: io.BytesIO) -> Int:
-    return Int(struct.unpack(">i", buffer.read(4))[0])
+    return Int(struct.unpack(">i", _read_exactly(buffer, 4))[0])
 
 
 def _parse_long(buffer: io.BytesIO) -> Long:
-    return Long(struct.unpack(">q", buffer.read(8))[0])
+    return Long(struct.unpack(">q", _read_exactly(buffer, 8))[0])
 
 
 def _parse_float(buffer: io.BytesIO) -> Float:
-    return Float(struct.unpack(">f", buffer.read(4))[0])
+    return Float(struct.unpack(">f", _read_exactly(buffer, 4))[0])
 
 
 def _parse_double(buffer: io.BytesIO) -> Double:
-    return Double(struct.unpack(">d", buffer.read(8))[0])
+    return Double(struct.unpack(">d", _read_exactly(buffer, 8))[0])
 
 
 def _parse_byte_array(buffer: io.BytesIO) -> ByteArray:
-    length = struct.unpack(">i", buffer.read(4))[0]
-    return ByteArray(buffer.read(length))
+    length = struct.unpack(">i", _read_exactly(buffer, 4))[0]
+    if length < 0:
+        raise ValueError("NBT 数组长度非法")
+    return ByteArray(_read_exactly(buffer, length))
 
 
 def _parse_string(buffer: io.BytesIO) -> String:
     return String(_read_string(buffer))
 
 
-def _parse_list(buffer: io.BytesIO) -> List:
-    element_id = struct.unpack(">b", buffer.read(1))[0]
-    length = struct.unpack(">i", buffer.read(4))[0]
+def _parse_list(buffer: io.BytesIO, _depth: int = 0) -> List:
+    element_id = struct.unpack(">b", _read_exactly(buffer, 1))[0]
+    length = struct.unpack(">i", _read_exactly(buffer, 4))[0]
+    if length < 0:
+        raise ValueError("NBT 数组长度非法")
     result = List()
     result._element_type = _TAG_CLASSES.get(element_id)
     for _ in range(length):
-        result.append(_parse_payload(buffer, element_id))
+        result.append(_parse_payload(buffer, element_id, _depth + 1))
     return result
 
 
 def _parse_int_array(buffer: io.BytesIO) -> IntArray:
-    length = struct.unpack(">i", buffer.read(4))[0]
-    return IntArray(struct.unpack(f">{length}i", buffer.read(4 * length)))
+    length = struct.unpack(">i", _read_exactly(buffer, 4))[0]
+    if length < 0:
+        raise ValueError("NBT 数组长度非法")
+    return IntArray(struct.unpack(f">{length}i", _read_exactly(buffer, 4 * length)))
 
 
 def _parse_long_array(buffer: io.BytesIO) -> LongArray:
-    length = struct.unpack(">i", buffer.read(4))[0]
-    return LongArray(struct.unpack(f">{length}q", buffer.read(8 * length)))
+    length = struct.unpack(">i", _read_exactly(buffer, 4))[0]
+    if length < 0:
+        raise ValueError("NBT 数组长度非法")
+    return LongArray(struct.unpack(f">{length}q", _read_exactly(buffer, 8 * length)))
 
 
-def _parse_compound(buffer: io.BytesIO) -> Compound:
+def _parse_compound(buffer: io.BytesIO, _depth: int = 0) -> Compound:
     result = Compound()
     while True:
-        child_id = struct.unpack(">b", buffer.read(1))[0]
+        child_id = struct.unpack(">b", _read_exactly(buffer, 1))[0]
         if child_id == _TAG_END:
             break
         name = _read_string(buffer)
-        result[name] = _parse_payload(buffer, child_id)
+        result[name] = _parse_payload(buffer, child_id, _depth + 1)
     return result
 
 
@@ -267,10 +287,15 @@ _PARSERS: dict[int, Any] = {
 }
 
 
-def _parse_payload(buffer: io.BytesIO, tag_id: int) -> Any:
+def _parse_payload(buffer: io.BytesIO, tag_id: int, depth: int = 0) -> Any:
+    if depth > _MAX_DEPTH:
+        raise ValueError("NBT 嵌套层级过深")
     parser = _PARSERS.get(tag_id)
     if parser is None:
         raise ValueError(f"未知 NBT 标签类型：{tag_id}")
+    # 只有会递归的容器标签需要接收深度参数。
+    if tag_id in (_TAG_LIST, _TAG_COMPOUND):
+        return parser(buffer, depth)
     return parser(buffer)
 
 

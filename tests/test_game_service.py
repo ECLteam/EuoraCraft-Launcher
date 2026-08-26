@@ -1271,7 +1271,8 @@ def test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> Non
 def test_download_resource_to_path_rejects_unsupported_source_and_missing_dir(tmp_path) -> None:
     service = _build_service()
     with pytest.raises(GameServiceError) as error:
-        service.download_resource_to_path("curseforge", "p", "v", str(tmp_path / "mod.jar"))
+        # curseforge 已是受支持来源（需 API Key），这里用真正未知的来源验证拒绝逻辑
+        service.download_resource_to_path("unknown-source", "p", "v", str(tmp_path / "mod.jar"))
     assert error.value.error_code == "INVALID_RESOURCE_SOURCE"
 
     missing_dir = tmp_path / "not-exists" / "mod.jar"

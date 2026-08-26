@@ -185,7 +185,6 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
     async with (
         httpx.AsyncClient(
             follow_redirects=True,
-            verify=False,
             timeout=_REMOTE_IMAGE_TIMEOUT,
             headers={"User-Agent": "EuoraCraft-Launcher"},
         ) as client,
@@ -351,7 +350,7 @@ class _FrontendState:
         self._frontend_event_lock = RLock()
         self.is_dev_mode_tips = False
         self.is_dev_mode_no_client_id_tips = False
-        self.is_dev_mode_no_curseforge_key_tips =False
+        self.is_dev_mode_no_curseforge_key_tips = False
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
@@ -431,7 +430,7 @@ class _FrontendState:
         plugin = metadata.get("plugin")
         return event.startswith("plugin:") and isinstance(payload, dict) and payload.get("plugin") == plugin
 
-    def authorize_window_command(  # noqa: C901
+    def authorize_window_command(
         self, operation: str, body: dict[str, Any], webview_window: WebviewWindow
     ) -> dict[str, Any] | None:
         """
@@ -743,16 +742,27 @@ class _FrontendState:
         label = str(label_getter()) if callable(label_getter) else "main"
         known_metadata = self._window_metadata.get(label)
         # 非主窗口身份只能来自后端 window_open 创建的注册项，不能信任前端自报。
-        window_type = str(known_metadata.get("windowType", "main")) if known_metadata else "main"
-        session_id = known_metadata.get("sessionId") if known_metadata else None
+        if known_metadata is None and label != "main":
+            # 未经后端注册的窗口不得自报为主窗口，避免顶替主窗口身份与事件目标。
+            self.logger.warning("未注册的前端窗口调用 frontend_ready: label=%s", label)
+            window_type = "unregistered"
+            session_id = None
+        else:
+            window_type = str(known_metadata.get("windowType", "main")) if known_metadata else "main"
+            session_id = known_metadata.get("sessionId") if known_metadata else None
         self._webviews[label] = webview_window
-        metadata = dict(known_metadata or {"label": label, "descriptorId": "main", "windowType": "main"})
+        if known_metadata is not None:
+            metadata = dict(known_metadata)
+        elif window_type == "unregistered":
+            metadata = {"label": label, "descriptorId": "", "windowType": "unregistered"}
+        else:
+            metadata = {"label": label, "descriptorId": "main", "windowType": "main"}
         metadata.update({"label": label, "sessionId": session_id, "ready": True})
         self._window_metadata[label] = metadata
         self.logger.info("前端窗口已就绪: label=%s, type=%s", label, window_type)
-        if window_type != "main":
+        if window_type not in {"main", "unregistered"}:
             self.emit_to_frontend("window:ready", metadata)
-        if window_type == "main" or label == "main" or self._webview is None:
+        if window_type == "main" or label == "main":
             self._webview = webview_window
         if window_type == "main" and not self._main_window_event_bound:
             on_window_event = getattr(webview_window, "on_window_event", None)
@@ -774,13 +784,13 @@ class _FrontendState:
                 on_window_event(handle_main_window_event)
                 self._main_window_event_bound = True
         webview_window.show()
-        if window_type != "main":
+        if window_type not in {"main", "unregistered"}:
             with suppress(OSError, RuntimeError):
                 webview_window.unminimize()
                 webview_window.set_focus()
         if self._webview is webview_window:
             self._flush_pending_frontend_events()
-        if not self._plugins_frontend_ready:
+        if not self._plugins_frontend_ready and window_type == "main":
             self.plugins.on_frontend_ready()
             self._plugins_frontend_ready = True
         if window_type != "main":

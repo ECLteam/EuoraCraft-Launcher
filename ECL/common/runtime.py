@@ -11,7 +11,9 @@ _module_globals = globals()
 
 
 def _get_nuitka_binary_dir() -> str | None:
-    """返回 Nuitka 注入的二进制/负载目录；非 Nuitka 环境返回 None。"""
+    """
+    返回 Nuitka 注入的二进制/负载目录；非 Nuitka 环境返回 None。
+    """
     if "__nuitka_binary_dir" in _module_globals:
         return _module_globals["__nuitka_binary_dir"]
     return getattr(builtins, "__nuitka_binary_dir", None)

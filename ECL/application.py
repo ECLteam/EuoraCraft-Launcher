@@ -244,7 +244,7 @@ def create_application(
             os.environ["NO_PROXY"] = "*"
             os.environ["no_proxy"] = "*"
         ssl_verify_context = ssl.create_default_context()
-        _apply_ssl_verify(ssl_verify_context, disable_ssl_verify)
+        _apply_ssl_verify(ssl_verify_context, not disable_ssl_verify)
         proxy_url = _resolve_proxy_url(proxy_mode, custom_proxy_url)
         http = httpx.Client(
             timeout=httpx.Timeout(request_timeout, connect=min(10.0, request_timeout)),
@@ -267,6 +267,8 @@ def create_application(
             event_bus=events,
             disable_ssl_verify=disable_ssl_verify,
             resource_path=state.resource_path,
+            # 离线/插件账户状态与微软、外置令牌统一存放于用户目录下的账户根目录。
+            state_dir=Path.home() / ".ECL" / "accounts",
         )
         created.append(accounts)
         logger.info(
@@ -299,6 +301,7 @@ def create_application(
             resource_path=state.resource_path,
             curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY") or CURSEFORGE_API_KEY or None,
             event_bus=events,
+
             instances_manager=shared_instances,
         )
         created.append(game)
@@ -382,7 +385,7 @@ def create_application(
         state.debug = bool((data or {}).get("debug", False))
         _apply_ssl_verify(
             ssl_verify_context,
-            bool((data or {}).get("disable_ssl_verify", False)),
+            not bool((data or {}).get("disable_ssl_verify", False)),
         )
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 

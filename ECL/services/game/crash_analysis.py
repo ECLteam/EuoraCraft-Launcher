@@ -254,7 +254,9 @@ class CrashAnalyzer:
         version_id: str,
         game_directory: Path,
     ) -> list[dict[str, Any]]:
-        """返回实例内候选日志的描述列表，供前端下拉选择。"""
+        """
+        返回实例内候选日志的描述列表，供前端下拉选择。
+        """
         result: list[dict[str, Any]] = []
         for path in self._candidate_files(game_path, version_id, game_directory):
             try:

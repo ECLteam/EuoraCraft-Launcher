@@ -300,6 +300,7 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
     assert result["success"] is True
     assert result["data"]["launcher"] == {
         "debug": True,
+        "debug_log_level": "info",
         "disable_ssl_verify": False,
         "proxy_mode": "none",
         "proxy_url": "",

@@ -15,30 +15,35 @@ def _write(path, content: str = "data") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_reset_launcher_data_moves_only_declared_targets_to_backup(tmp_path) -> None:
+def test_reset_launcher_data_deletes_only_declared_targets(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
+    home_dir = tmp_path / "home"
     _write(data_path / "setting.json", "{}")
-    _write(data_path / "accounts" / "accounts.json", "{}")
     _write(data_path / "info_card.json", "{}")
     _write(data_path / "notice.json", "{}")
+    _write(data_path / "accounts" / "legacy.json", "{}")
     _write(data_path / "plugins" / "example" / "plugin.json", "{}")
     _write(data_path / "logs" / "launcher.log")
+    _write(home_dir / ".ECL" / "accounts" / "accounts.json", "{}")
 
     scheduled = schedule_debug_maintenance(data_path, "reset_launcher_data")
-    results = apply_pending_debug_maintenance(data_path)
+    results = apply_pending_debug_maintenance(data_path, home_dir=home_dir)
 
     assert scheduled.restart_required is True
     assert results[0].action == "reset_launcher_data"
-    assert set(results[0].moved_targets) == {
+    assert set(results[0].removed_targets) == {
         "setting.json",
-        "accounts",
         "info_card.json",
         "notice.json",
+        str((home_dir / ".ECL" / "accounts").resolve()),
     }
-    backup_path = results[0].backup_path
-    assert backup_path is not None
+    assert not (data_path / "setting.json").exists()
+    assert not (data_path / "info_card.json").exists()
+    assert not (data_path / "notice.json").exists()
+    assert (data_path / "accounts" / "legacy.json").is_file()
     assert (data_path / "plugins" / "example" / "plugin.json").is_file()
     assert (data_path / "logs" / "launcher.log").is_file()
+    assert not (home_dir / ".ECL" / "accounts").exists()
     assert not (data_path / PENDING_MAINTENANCE_FILE).exists()
 
 

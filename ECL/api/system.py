@@ -185,7 +185,6 @@ class SystemHandlers(_FrontendState):
                 "action": result.action,
                 "restart_required": result.restart_required,
                 "targets": list(result.targets),
-                "backup_root": str(result.backup_root),
             }
         )
 

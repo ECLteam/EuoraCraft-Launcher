@@ -68,6 +68,10 @@ class ConfigStore:
     负责配置的读写、默认值填充与校验，并以事件总线向其他组件广播配置变更。
     """
 
+    # 允许持久化的配置分区白名单。未知分区（例如决定前端来源的 tauri）禁止经
+    # IPC 写入，防止前端或注入脚本篡改启动器级敏感配置。
+    allowed_sections = frozenset(default_config) | {"user_agreement", "background"}
+
     def __init__(self, data_path: Path, event_bus: EventBus | None = None) -> None:
         self.logger = get_logger("config")  # 配置读写日志器。
         self.data_path = Path(data_path)  # 应用数据目录。
@@ -184,6 +188,8 @@ class ConfigStore:
         if not isinstance(section, str) or not section.strip():
             raise ConfigValidationError("配置分区名称不能为空")
         normalized_section = section.strip()
+        if normalized_section not in self.allowed_sections:
+            raise ConfigValidationError(f"配置分区不受支持: {normalized_section}")
         config_data = self.get_config()
         config_data[normalized_section] = deepcopy(data)
         self._write_config(config_data)

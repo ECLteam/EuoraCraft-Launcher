@@ -795,7 +795,7 @@ class Plugin:
         :return: 文件内容，读取失败返回 None
         """
         self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
-        path = self.plugin_dir / relative_path
+        path = self._resolve_inside_plugin_dir(self.plugin_dir, relative_path)
         if not path.is_file():
             return None
         return path.read_text(encoding=encoding)
@@ -817,10 +817,23 @@ class Plugin:
         :return: 文件内容，读取失败返回 None
         """
         self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
-        path = self.resource_path(relative_path)
+        path = self._resolve_inside_plugin_dir(self.plugin_dir / "resources", relative_path)
         if not path.is_file():
             return None
         return path.read_text(encoding=encoding)
+
+    @staticmethod
+    def _resolve_inside_plugin_dir(base_dir: Path, relative_path: str) -> Path:
+        # 将相对路径解析到基目录内部，拒绝绝对路径与 .. 越界。
+        base = base_dir.resolve(strict=False)
+        normalized = str(relative_path or "").strip()
+        candidate = Path(normalized)
+        if not normalized or candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError(f"插件文件路径越界: {relative_path}")
+        target = (base / candidate).resolve(strict=False)
+        if target != base and base not in target.parents:
+            raise ValueError(f"插件文件路径越界: {relative_path}")
+        return target
 
     @staticmethod
     def _parse_vue_sfc(content: str) -> dict[str, str]:

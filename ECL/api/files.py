@@ -607,6 +607,13 @@ class FileHandlers(_FrontendState):
         url = body.get("url")
         if not isinstance(url, str) or not url.strip():
             return {"success": False, "message": "URL 不能为空", "errorCode": "INVALID_URL"}
-        opened = webbrowser.open(url.strip())
+        candidate = url.strip()
+        try:
+            scheme = urlsplit(candidate).scheme.lower()
+        except ValueError:
+            scheme = ""
+        if scheme not in {"http", "https"}:
+            return {"success": False, "message": "仅支持 http/https 链接", "errorCode": "INVALID_URL"}
+        opened = webbrowser.open(candidate)
         self.logger.info("已在默认浏览器中打开: %s", url)
         return {"success": True, "data": opened}
