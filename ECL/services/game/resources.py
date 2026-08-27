@@ -501,7 +501,7 @@ class ResourceCoordinator:
                 temp.unlink(missing_ok=True)
         return {"id": path.name, "enabled": bool(enabled)}
 
-    def delete_resources_to_trash(
+    def delete_resources(
         self,
         game_path: Any,
         version_id: Any,

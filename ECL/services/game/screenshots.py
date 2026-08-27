@@ -138,7 +138,7 @@ class ScreenshotCoordinator:
         except Exception as exc:
             raise GameServiceError(f"复制截图到剪贴板失败：{exc}", "CLIPBOARD_WRITE_FAILED") from exc
 
-    def delete_screenshot_to_trash(
+    def delete_screenshot(
         self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False
     ) -> None:
         """

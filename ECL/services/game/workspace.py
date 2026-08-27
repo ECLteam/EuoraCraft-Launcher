@@ -185,7 +185,7 @@ class WorkspaceCoordinator:
         os.startfile(path)  # type: ignore[attr-defined]
         return {"path": str(path)}
 
-    def delete_instance_to_trash(self, game_path: Any, version_id: Any) -> None:
+    def delete_instance(self, game_path: Any, version_id: Any) -> None:
         """
         阻止运行中实例后，仅回收版本目录，不触碰共享资源和第三方配置。
         """

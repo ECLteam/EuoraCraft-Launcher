@@ -201,7 +201,7 @@ class WorldCoordinator:
             raise GameServiceError("世界图标必须是可读图片", "INVALID_WORLD_ICON") from exc
         return {"path": str(world / "icon.png")}
 
-    def delete_world_to_trash(
+    def delete_world(
         self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
     ) -> None:
         target = self.resolve_instance(game_path, version_id, version_isolation)

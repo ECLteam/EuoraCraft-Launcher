@@ -160,7 +160,7 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(GameUninstallRequest, body)
         if invalid is not None:
             return invalid
-        await to_thread.run_sync(self.game.delete_instance_to_trash, request.game_path, request.version_id)
+        await to_thread.run_sync(self.game.delete_instance, request.game_path, request.version_id)
         return success()
 
     @_ipc_handler("GAME_CONFIG_FAILED")

@@ -113,11 +113,11 @@ class WorkspaceHandlers(_FrontendState):
         )
 
     @_ipc_handler("INSTANCE_DELETE_FAILED")
-    async def game_instance_delete_to_trash(self, body: dict[str, Any]) -> ApiResponse:
+    async def game_instance_delete(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
             InstanceTarget,
             body,
-            lambda request: self.game.delete_instance_to_trash(request.game_path, request.version_id),
+            lambda request: self.game.delete_instance(request.game_path, request.version_id),
         )
 
     @_ipc_handler("OPERATION_QUERY_FAILED")
@@ -218,11 +218,11 @@ class WorkspaceHandlers(_FrontendState):
         )
 
     @_ipc_handler("WORLD_DELETE_FAILED")
-    async def game_world_delete_to_trash(self, body: dict[str, Any]) -> ApiResponse:
+    async def game_world_delete(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
             WorldRequest,
             body,
-            lambda request: self.game.delete_world_to_trash(
+            lambda request: self.game.delete_world(
                 request.game_path, request.version_id, request.world_id, request.version_isolation
             ),
         )
@@ -270,7 +270,7 @@ class WorkspaceHandlers(_FrontendState):
         )
 
     @_ipc_handler("WORLD_BACKUP_FAILED")
-    async def game_world_backup_delete_to_trash(self, body: dict[str, Any]) -> ApiResponse:
+    async def game_world_backup_delete(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
             WorldBackupRequest,
             body,
@@ -326,11 +326,11 @@ class WorkspaceHandlers(_FrontendState):
         )
 
     @_ipc_handler("SCREENSHOT_FAILED")
-    async def game_screenshot_delete_to_trash(self, body: dict[str, Any]) -> ApiResponse:
+    async def game_screenshot_delete(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
             ScreenshotRequest,
             body,
-            lambda request: self.game.delete_screenshot_to_trash(
+            lambda request: self.game.delete_screenshot(
                 request.game_path, request.version_id, request.screenshot_id, request.version_isolation
             ),
         )
@@ -460,11 +460,11 @@ class WorkspaceHandlers(_FrontendState):
         )
 
     @_ipc_handler("RESOURCE_DELETE_FAILED")
-    async def game_resource_delete_to_trash(self, body: dict[str, Any]) -> ApiResponse:
+    async def game_resource_delete(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
             ResourceDeleteRequest,
             body,
-            lambda request: self.game.delete_resources_to_trash(
+            lambda request: self.game.delete_resources(
                 request.game_path,
                 request.version_id,
                 request.resource_type,
