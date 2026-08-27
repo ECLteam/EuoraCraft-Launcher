@@ -23,7 +23,7 @@ from ECL.utils.nbt import Compound, List, String, load
 
 from .base import GameServiceError
 from .operations import OperationContext
-from .workspace import move_to_trash, resolve_relative_id, safe_extract_zip
+from .workspace import delete_path, resolve_relative_id, safe_extract_zip
 
 RESOURCE_DIRECTORIES = {
     "mod": "mods",
@@ -512,7 +512,7 @@ class ResourceCoordinator:
     ) -> None:
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         for resource_id in resource_ids:
-            move_to_trash(resolve_relative_id(root, resource_id))
+            delete_path(resolve_relative_id(root, resource_id))
 
     def export_resource_manifest(
         self,
@@ -1214,7 +1214,7 @@ class ResourceCoordinator:
         world_id: str | None = None,
     ) -> dict[str, str]:
         """
-        下载校验更新文件后原子替换，旧文件仅移入系统回收站。
+        下载校验更新文件后原子替换，旧文件直接删除。
         """
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         old = resolve_relative_id(root, resource_id)
@@ -1240,7 +1240,7 @@ class ResourceCoordinator:
                     raise GameServiceError("更新文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
                 if destination != old and destination.exists():
                     raise GameServiceError("更新目标文件已存在", "RESOURCE_ALREADY_EXISTS")
-                move_to_trash(old)
+                delete_path(old)
                 temp.replace(destination)
                 manifest = self._read_resource_manifest(game_path, version_id)
                 records = manifest.setdefault("resources", {})

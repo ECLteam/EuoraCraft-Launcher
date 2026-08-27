@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from send2trash import send2trash
-
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError
@@ -65,17 +63,20 @@ def resolve_relative_id(parent: Path, relative_id: Any, *, must_exist: bool = Tr
     return target
 
 
-def move_to_trash(path: Path) -> None:
+def delete_path(path: Path) -> None:
     """
-    把文件或目录送入系统回收站，失败时绝不退化为永久删除。
+    递归删除文件或目录。
     """
     target = path.resolve(strict=False)
     if not target.exists():
         raise GameServiceError("目标不存在", "RESOURCE_NOT_FOUND")
     try:
-        send2trash(str(target))
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
     except Exception as exc:
-        raise GameServiceError(f"无法移入系统回收站：{exc}", "RECYCLE_BIN_UNAVAILABLE") from exc
+        raise GameServiceError(f"无法删除：{exc}", "DELETE_FAILED") from exc
 
 
 def safe_extract_zip(
@@ -120,7 +121,7 @@ def safe_extract_zip(
 
 class WorkspaceCoordinator:
     """
-    提供实例工作台通用目录、复制、导入导出、校验和回收站操作。
+    提供实例工作台通用目录、复制、导入导出、校验和删除操作。
     """
 
     def resolve_instance(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> ResolvedInstanceTarget:
@@ -193,7 +194,7 @@ class WorkspaceCoordinator:
         for instance in self.list_instances():
             if str(instance.get("gamePath") or "").casefold() == game_key and instance.get("versionId") == target.version_id:
                 raise GameServiceError("游戏正在运行，无法删除实例", "INSTANCE_IS_RUNNING")
-        move_to_trash(target.instance_path)
+        delete_path(target.instance_path)
         self.events.emit("game:instances_changed", {"reason": "instance_deleted", "versionId": target.version_id})
 
     def clone_instance(  # noqa: C901 - clone transaction keeps cleanup and atomic commit in one boundary

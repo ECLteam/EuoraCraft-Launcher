@@ -14,12 +14,12 @@ from PIL import Image, UnidentifiedImageError
 from ECL.utils import atomic_write_bytes
 
 from .base import GameServiceError
-from .workspace import move_to_trash, resolve_relative_id
+from .workspace import delete_path, resolve_relative_id
 
 
 class ScreenshotCoordinator:
     """
-    管理实例截图索引、缩略图、剪贴板、封面和回收站删除。
+    管理实例截图索引、缩略图、剪贴板、封面和删除操作。
     """
 
     _EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"})
@@ -142,7 +142,7 @@ class ScreenshotCoordinator:
         self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False
     ) -> None:
         """
-        把指定截图移入系统回收站。
+        把指定截图直接删除。
 
         :param game_path: Minecraft 游戏根目录
         :param version_id: 版本目录名称
@@ -150,7 +150,7 @@ class ScreenshotCoordinator:
         :param version_isolation: 是否启用版本目录隔离
         """
         source = resolve_relative_id(self._screenshot_root(game_path, version_id, version_isolation), screenshot_id)
-        move_to_trash(source)
+        delete_path(source)
 
     def set_instance_cover(
         self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False

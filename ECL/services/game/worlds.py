@@ -17,7 +17,7 @@ from ECL.utils.nbt import Byte, load
 
 from .base import GameServiceError
 from .operations import OperationContext
-from .workspace import move_to_trash, resolve_relative_id, safe_extract_zip
+from .workspace import delete_path, resolve_relative_id, safe_extract_zip
 
 
 def _nbt_scalar(value: Any, default: Any = None) -> Any:
@@ -207,7 +207,7 @@ class WorldCoordinator:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         world = self._world_path(game_path, version_id, world_id, version_isolation)
         self._assert_world_writable(target, world)
-        move_to_trash(world)
+        delete_path(world)
 
     def export_world(
         self, game_path: Any, version_id: Any, world_id: Any, output_path: Any, version_isolation: Any = False
@@ -311,10 +311,10 @@ class WorldCoordinator:
         unlocked = [item for item in self.list_world_backups(game_path, version_id, world.name) if not item["locked"]]
         keep_count = 10
         for old in unlocked[keep_count:]:
-            move_to_trash(Path(old["path"]))
+            delete_path(Path(old["path"]))
             metadata_path = Path(old["metadataPath"])
             if metadata_path.exists():
-                move_to_trash(metadata_path)
+                delete_path(metadata_path)
         return metadata
 
     def start_world_backup(
@@ -374,15 +374,15 @@ class WorldCoordinator:
 
     def delete_world_backup(self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any) -> None:
         """
-        把指定备份及其元数据移入系统回收站。
+        把指定备份及其元数据直接删除。
         """
         target = self.resolve_instance(game_path, version_id)
         root = self._backup_root(target, str(world_id))
         archive = resolve_relative_id(root, f"{backup_id}.zip")
-        move_to_trash(archive)
+        delete_path(archive)
         metadata = archive.with_suffix(".json")
         if metadata.exists():
-            move_to_trash(metadata)
+            delete_path(metadata)
 
     def restore_world_backup(
         self, game_path: Any, version_id: Any, world_id: Any, backup_id: Any, version_isolation: Any = False
@@ -406,7 +406,7 @@ class WorldCoordinator:
                 except Exception:
                     old.replace(current)
                     raise
-                move_to_trash(old)
+                delete_path(old)
                 return {"worldId": current.name}
 
         return self._game_operations.submit("world_restore", worker)
