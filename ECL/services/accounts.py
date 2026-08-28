@@ -8,7 +8,6 @@ from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
-from time import perf_counter
 from typing import Any
 from uuid import UUID
 
@@ -211,15 +210,13 @@ class AccountManager:
         self._account_prefs: dict[str, dict[str, bool]] = {}
         self.resource_path = Path(resource_path).resolve() if resource_path else None
         self._default_skins: dict[str, tuple[str, str]] | None = None
-        phase_started = perf_counter()
         self._load_state()
-        self.logger.debug("账户聚合状态读取完成，duration=%.2fs", perf_counter() - phase_started)
+        self.logger.debug("账户聚合状态读取完成")
 
         manager_was_provided = microsoft_manager is not None
         effective_client_id = (microsoft_client_id or MICROSOFT_CLIENT_ID).strip()
         self._microsoft_login_available = manager_was_provided or bool(effective_client_id)
         if microsoft_manager is None:
-            phase_started = perf_counter()
             self.logger.debug("正在创建 Microsoft 认证管理器")
             microsoft_manager = LauncherMicrosoftAccountManager(
                 client_id=effective_client_id,
@@ -227,26 +224,23 @@ class AccountManager:
                 on_progress=self._on_microsoft_progress,
                 verify=not disable_ssl_verify,
             )
-            self.logger.debug("Microsoft 认证管理器已创建，duration=%.2fs", perf_counter() - phase_started)
+            self.logger.debug("Microsoft 认证管理器已创建")
         else:
             microsoft_manager.on_device_code = self._on_device_code
         self.microsoft_manager = microsoft_manager
         if authlib_manager is None:
-            phase_started = perf_counter()
             self.logger.debug("正在创建 Authlib 账户管理器")
             authlib_manager = AuthlibAccountManager()
-            self.logger.debug("Authlib 账户管理器已创建，duration=%.2fs", perf_counter() - phase_started)
+            self.logger.debug("Authlib 账户管理器已创建")
         self.authlib_manager = authlib_manager
-        phase_started = perf_counter()
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
         self.logger.debug(
-            "账户服务已加载: offline=%d, microsoft=%d, authlib=%d, current_selected=%s, finalize=%.2fs",
+            "账户服务已加载: offline=%d, microsoft=%d, authlib=%d, current_selected=%s",
             len(self._offline_accounts),
             len(self.microsoft_manager.get_microsoft_accounts()),
             len(self.authlib_manager.list_accounts()),
             self._current_account_id is not None,
-            perf_counter() - phase_started,
         )
 
     def microsoft_login_config(self) -> dict[str, bool]:

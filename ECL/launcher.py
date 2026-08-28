@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 from enum import IntEnum
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
 from ECL.adapters import Adapter
@@ -80,7 +79,6 @@ class EuoraCraftLauncher:
 
     def _initialize(self) -> None:
         # 执行启动维护任务并构造后端应用上下文。
-        started = perf_counter()
         self.logger.info("正在初始化")
         if sys.platform not in {"win32", "linux", "darwin"}:
             raise RuntimeError(f"不支持的系统环境: {sys.platform}")
@@ -110,7 +108,7 @@ class EuoraCraftLauncher:
             type(self.context.game).__name__,
             type(self.context.plugins).__name__,
         )
-        self.logger.info("后端初始化完成，total=%.2fs", perf_counter() - started)
+        self.logger.info("后端初始化完成")
 
     def _apply_bootstrap_state(self, state: ApplicationState) -> None:
         # 在服务和插件构造前应用启动配置，使配置的日志级别立即进入终端。

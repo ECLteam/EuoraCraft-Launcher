@@ -1,7 +1,6 @@
 import json
 import shutil
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
 from ECL.plugins.dependencies import parse_dependency, parse_version
@@ -17,7 +16,6 @@ class PluginLifecycle(_PluginState):
 
     def _enable_all(self) -> None:
         # 按依赖拓扑顺序启用已加载插件；被禁用的插件不参与启用。
-        started = perf_counter()
         enabled_count = 0
         for name in self._dependency_resolution.load_order:
             if name in self._disabled_plugins:
@@ -25,7 +23,7 @@ class PluginLifecycle(_PluginState):
             if name in self._plugins:
                 enabled, _reason = self._enable(name)
                 enabled_count += int(enabled)
-        self.logger.debug("插件批量启用完成: enabled=%d, duration=%.2fs", enabled_count, perf_counter() - started)
+        self.logger.debug("插件批量启用完成: enabled=%d", enabled_count)
 
     def enable(self, name: str) -> PluginActionResult:
         """
@@ -303,10 +301,9 @@ class PluginLifecycle(_PluginState):
         if self._frontend_ready:
             self.logger.debug("忽略重复的插件前端就绪通知")
             return
-        started = perf_counter()
-        notified = 0
         self.logger.info("正在通知已启用插件前端已就绪")
         self._frontend_ready = True
+        notified = 0
         for name, plugin in self._plugins.items():
             if self._status.get(name) != "enabled":
                 continue
@@ -315,9 +312,8 @@ class PluginLifecycle(_PluginState):
         if self._sidebar_collapsed is not None:
             self.events.emit("frontend:sidebar_changed", {"collapsed": self._sidebar_collapsed})
         self.logger.info(
-            "插件前端就绪通知完成: notified=%d, duration=%.2fs",
+            "插件前端就绪通知完成: notified=%d",
             notified,
-            perf_counter() - started,
         )
 
     def set_sidebar_state(self, collapsed: bool) -> None:

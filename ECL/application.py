@@ -11,7 +11,6 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.request import getproxies
 
@@ -207,7 +206,6 @@ def create_application(
     :param on_state_ready: 配置读取后、服务构造前的可选回调，用于提前应用日志级别
     :return: 负责后端依赖与资源生命周期的应用上下文
     """
-    startup_started = perf_counter()
     state = ApplicationState(
         app_path=runtime_info["app_path"],
         resource_path=runtime_info["resource_path"],
@@ -230,7 +228,6 @@ def create_application(
 
     created: list[Any] = []
     try:
-        phase_started = perf_counter()
         logger.debug("正在创建共享 HTTP 客户端")
         launcher_config = state.config.get("launcher") or {}
         disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
@@ -257,9 +254,8 @@ def create_application(
             ),
         )
         created.append(http)
-        logger.debug("共享 HTTP 客户端已创建，duration=%.2fs", perf_counter() - phase_started)
+        logger.debug("共享 HTTP 客户端已创建")
 
-        phase_started = perf_counter()
         logger.info("正在初始化账户服务")
         accounts = AccountManager(
             state.data_path,
@@ -272,17 +268,14 @@ def create_application(
         )
         created.append(accounts)
         logger.info(
-            "账户服务初始化完成，duration=%.2fs，Microsoft 登录可用=%s",
-            perf_counter() - phase_started,
+            "账户服务初始化完成，Microsoft 登录可用=%s",
             accounts.microsoft_login_config()["available"],
         )
 
-        phase_started = perf_counter()
         wardrobe = WardrobeStore(state.data_path)
         logger.debug(
-            "本地衣柜已创建，条目数=%s，duration=%.2fs",
+            "本地衣柜已创建，条目数=%s",
             len(wardrobe.list_items()),
-            perf_counter() - phase_started,
         )
         info_card = InfoCardManager(
             state.data_path,
@@ -291,7 +284,6 @@ def create_application(
             request_retries=request_retries,
         )
 
-        phase_started = perf_counter()
         logger.info("正在初始化游戏服务")
         # 共享进程管理器，使实例终端能同时展示插件与 Minecraft 实例的输出。
         shared_instances = InstancesManager()
@@ -305,9 +297,8 @@ def create_application(
             instances_manager=shared_instances,
         )
         created.append(game)
-        logger.info("游戏服务初始化完成，duration=%.2fs", perf_counter() - phase_started)
+        logger.info("游戏服务初始化完成")
 
-        phase_started = perf_counter()
         logger.debug("正在初始化联机服务 ConnectorService")
         from ECL.plugins.connector import ConnectorExtensionRegistry
         from ECL.services.connector import ConnectorService
@@ -327,13 +318,12 @@ def create_application(
             connector.easytier_version,
         )
         created.append(connector)
-        logger.debug("联机服务 ConnectorService 已初始化，duration=%.2fs", perf_counter() - phase_started)
+        logger.debug("联机服务 ConnectorService 已初始化")
 
-        phase_started = perf_counter()
         logger.debug("正在初始化子进程实例服务")
         processes = ProcessService(event_bus=events, instances_manager=shared_instances)
         created.append(processes)
-        logger.debug("子进程实例服务已初始化，duration=%.2fs", perf_counter() - phase_started)
+        logger.debug("子进程实例服务已初始化")
 
         plugins = PluginManager(
             events,
@@ -347,7 +337,7 @@ def create_application(
         )
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
-        logger.debug("插件管理器已初始化，duration=%.2fs", perf_counter() - phase_started)
+        logger.debug("插件管理器已初始化")
     except Exception:
         logger.exception("后端依赖图构造失败，正在回收已创建的资源")
         for resource in reversed(created):
@@ -390,7 +380,7 @@ def create_application(
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
-    logger.info("后端依赖图构造完成，total=%.2fs", perf_counter() - startup_started)
+    logger.info("后端依赖图构造完成")
     return context
 
 

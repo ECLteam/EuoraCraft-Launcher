@@ -1,5 +1,4 @@
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
 from anyio.from_thread import start_blocking_portal
@@ -35,28 +34,21 @@ class Adapter:
         """
         启动 Tauri 前端。
         """
-        started = perf_counter()
         self.logger.info("正在初始化前端适配器")
         self._register_commands()
         self._register_events()
         tauri_config = self._build_config()
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
-            phase_started = perf_counter()
             self.logger.debug("正在创建 Tauri 运行上下文")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
-            self.logger.debug("Tauri 运行上下文已创建，duration=%.2fs", perf_counter() - phase_started)
-            phase_started = perf_counter()
+            self.logger.debug("Tauri 运行上下文已创建")
             self.logger.debug("正在构建 Tauri 应用")
             app = builder_factory().build(
                 context=context,
                 invoke_handler=self.commands.generate_handler(portal),
                 plugins=[dialog_init()],
             )
-            self.logger.info(
-                "前端适配器初始化完成，build=%.2fs，total=%.2fs",
-                perf_counter() - phase_started,
-                perf_counter() - started,
-            )
+            self.logger.info("前端适配器初始化完成")
             self.logger.info("Tauri 主循环已启动，正在等待前端就绪")
             app.run_return()
         self.logger.info("前端已退出")

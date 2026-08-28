@@ -100,7 +100,6 @@ class PluginDiscovery(_PluginState):
 
     def _load_plugin(self, plugin_dir: Path, metadata_path: Path, is_system: bool) -> None:
         # 加载单个插件：先注册权限声明、读取配置，再实例化并调用 on_load 钩子。
-        started = perf_counter()
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -142,7 +141,7 @@ class PluginDiscovery(_PluginState):
         self._plugins[name] = plugin
         self._status[name] = "loaded"
         self._call_plugin_hook(plugin, "on_load")
-        self.logger.info("插件已加载: %s v%s，duration=%.2fs", name, plugin.version, perf_counter() - started)
+        self.logger.info("插件已加载: %s v%s", name, plugin.version)
 
     def _create_instance(
         self, name: str, plugin_dir: Path, metadata: dict[str, Any], entry_point: str, is_system: bool
@@ -187,17 +186,15 @@ class PluginDiscovery(_PluginState):
             duration = perf_counter() - started
             if duration >= 2.0:
                 self.logger.warning(
-                    "插件钩子执行缓慢: plugin=%s, hook=%s, success=%s, duration=%.2fs",
+                    "插件钩子执行缓慢: plugin=%s, hook=%s, success=%s",
                     plugin.name,
                     method_name,
                     succeeded,
-                    duration,
                 )
             else:
                 self.logger.debug(
-                    "插件钩子执行完成: plugin=%s, hook=%s, success=%s, duration=%.2fs",
+                    "插件钩子执行完成: plugin=%s, hook=%s, success=%s",
                     plugin.name,
                     method_name,
                     succeeded,
-                    duration,
                 )
