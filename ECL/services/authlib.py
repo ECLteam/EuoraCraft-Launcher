@@ -42,14 +42,21 @@ class AuthlibInjector:
     def _checksum(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
 
+    def needs_download(self) -> bool:
+        """
+        本地 jar 缺失或校验失配时需要重新下载。
+        """
+        if self.jar_path.is_file() and self.checksum_path.is_file():
+            expected = self.checksum_path.read_text(encoding="ascii").strip()
+            return self._checksum(self.jar_path.read_bytes()) != expected
+        return True
+
     def ensure(self) -> Path:
         """
         返回可用的 authlib-injector；本地缺失时下载最新版。
         """
-        if self.jar_path.is_file() and self.checksum_path.is_file():
-            expected = self.checksum_path.read_text(encoding="ascii").strip()
-            if self._checksum(self.jar_path.read_bytes()) == expected:
-                return self.jar_path
+        if not self.needs_download():
+            return self.jar_path
 
         metadata = self.http.get(self.METADATA_URL)
         metadata.raise_for_status()

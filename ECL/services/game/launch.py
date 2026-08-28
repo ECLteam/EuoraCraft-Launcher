@@ -285,11 +285,64 @@ class LaunchCoordinator(_GameState):
                 auth_server = credentials.get("auth_server")
                 if not auth_server:
                     raise GameServiceError("外置登录认证服务器地址缺失", "AUTHLIB_SERVER_MISSING")
+
+            # 登录方式无关：始终确保 authlib-injector 组件就绪。正版/离线账号并不使用该
+            # 组件，这里仅作静默预下载，保证将来切换外置登录时首次启动不再拉取。
+            authlib_name = "下载 authlib-injector.jar"
+            authlib_task_id = None
+            if self.authlib_injector is not None:
                 self._emit_launch_progress("authlib", "正在准备外置登录组件", 20)
                 try:
+                    if self.authlib_injector.needs_download():
+                        authlib_task_id = f"authlib-{uuid4().hex}"
+                        self.events.emit(
+                            "game:install_progress",
+                            {
+                                "phase": "download",
+                                "task_id": authlib_task_id,
+                                "name": authlib_name,
+                                "message": "正在下载 authlib-injector.jar",
+                                "done": 0,
+                                "total": 1,
+                                "progress_type": "files",
+                                "total_files": 1,
+                                "downloaded_files": 0,
+                                "speed": 0,
+                                "subtask": "download_files",
+                            },
+                        )
                     authlib_path = await to_thread.run_sync(self.authlib_injector.ensure)
+                    if authlib_task_id is not None:
+                        self.events.emit(
+                            "game:install_progress",
+                            {
+                                "phase": "done",
+                                "task_id": authlib_task_id,
+                                "name": authlib_name,
+                                "message": "authlib-injector.jar 下载完成",
+                                "done": 1,
+                                "total": 1,
+                                "total_files": 1,
+                                "downloaded_files": 1,
+                                "speed": 0,
+                            },
+                        )
                 except (AuthlibError, OSError, KeyError, TypeError, ValueError, httpx.HTTPError) as exc:
-                    raise GameServiceError(f"准备外置登录组件失败: {exc}", "AUTHLIB_INJECTOR_FAILED") from exc
+                    if authlib_task_id is not None:
+                        self.events.emit(
+                            "game:install_progress",
+                            {
+                                "phase": "error",
+                                "task_id": authlib_task_id,
+                                "name": authlib_name,
+                                "message": f"下载 authlib-injector.jar 失败: {exc}",
+                                "done": 0,
+                                "total": 1,
+                            },
+                        )
+                    # 正版/离线下 authlib 仅预下载，失败不阻断启动；外置登录必须就绪否则中断。
+                    if credentials["user_type"] == "yggdrasil":
+                        raise GameServiceError(f"准备外置登录组件失败: {exc}", "AUTHLIB_INJECTOR_FAILED") from exc
 
             self._emit_launch_progress("environment_check", "正在校验 Java 与实例运行环境", 22)
             java = await to_thread.run_sync(self._resolve_java_path, java_path, required_java)
@@ -543,10 +596,9 @@ class LaunchCoordinator(_GameState):
         duration_seconds = max(0, int(monotonic() - run.started_at))
         self._version_stats.record_duration(run.game_path, run.version_id, duration_seconds)
         self.logger.debug(
-            "游戏运行已结算: version=%s, action=%s, duration=%ss",
+            "游戏运行已结算: version=%s, action=%s",
             run.version_id,
             action,
-            duration_seconds,
         )
         if action != "launcher_closed":
             self._emit_instance_change(run, action)
