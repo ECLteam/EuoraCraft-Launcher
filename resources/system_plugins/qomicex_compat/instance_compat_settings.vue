@@ -116,13 +116,28 @@ module.exports = {
     async openFolder() {
       const sdk = window.__plugin_sdk__
       if (!sdk || !this.effectivePath) return
-      await sdk.api.openFolder(this.effectivePath)
+      const folder = this.effectivePath.replace(/[\\/][^\\/]*$/, '')
+      await sdk.api.openFolder(folder || this.effectivePath)
     },
   },
 }
 </script>
 
 <style>
+.qomicex-settings.settings-section {
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.qomicex-settings.settings-section:last-child {
+  margin-bottom: 0;
+}
+.qomicex-settings .settings-section__header {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--ecl-border);
+  color: var(--ecl-text);
+  font-size: 13px;
+  font-weight: 650;
+}
 .qomicex-settings__item {
   display: flex;
   min-height: 64px;
