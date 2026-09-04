@@ -92,3 +92,4 @@ Desktop.ini
 /.memory/
 .memory/
 docs/junsi-dev-docs
+.pytest-tmp/
