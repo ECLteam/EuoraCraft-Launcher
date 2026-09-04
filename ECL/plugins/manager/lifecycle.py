@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -257,7 +258,10 @@ class PluginLifecycle(_PluginState):
         target_name = metadata.get("name")
         if not target_name:
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单缺少 name")
-        target_dir = self._plugin_dir / target_name
+        # 插件名即目标目录名，限制为安全字符，防止 "../x" 等名字越出插件根目录
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(target_name)):
+            return PluginActionResult(str(target_name), PluginAction.INSTALL, "invalid", "插件名包含非法字符")
+        target_dir = self._plugin_dir / str(target_name)
         # 用 shutil.copytree 复制整个插件目录，覆盖已存在的
 
         if target_dir.exists():
