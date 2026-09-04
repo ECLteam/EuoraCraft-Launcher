@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -182,7 +184,12 @@ class WorkspaceCoordinator:
             raise GameServiceError("不支持的实例目录类型", "INVALID_FOLDER_KIND")
         path = folders[folder]
         path.mkdir(parents=True, exist_ok=True)
-        os.startfile(path)  # type: ignore[attr-defined]
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
         return {"path": str(path)}
 
     def delete_instance(self, game_path: Any, version_id: Any) -> None:

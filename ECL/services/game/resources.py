@@ -921,7 +921,15 @@ class ResourceCoordinator:
             url = download_payload.get("data") if isinstance(download_payload, dict) else None
         if not url:
             raise GameServiceError("该 CurseForge 文件不允许第三方下载", "CURSEFORGE_DOWNLOAD_UNAVAILABLE")
-        return {"filename": str(data["fileName"]), "url": str(url), "hashes": {}}
+        # CurseForge 算法 ID：1=SHA-512，2=SHA-1；带上哈希供下载后校验
+        hashes: dict[str, str] = {}
+        for item in data.get("hashes") or []:
+            if not isinstance(item, dict) or not item.get("value"):
+                continue
+            algorithm = {1: "sha512", 2: "sha1"}.get(item.get("id"))
+            if algorithm:
+                hashes[algorithm] = str(item["value"])
+        return {"filename": str(data["fileName"]), "url": str(url), "hashes": hashes}
 
     def _select_online_file(self, source: str, project_id: str, version_id_str: str) -> dict[str, Any]:
         if source == "modrinth":
@@ -1240,8 +1248,10 @@ class ResourceCoordinator:
                     raise GameServiceError("更新文件哈希校验失败", "RESOURCE_HASH_MISMATCH")
                 if destination != old and destination.exists():
                     raise GameServiceError("更新目标文件已存在", "RESOURCE_ALREADY_EXISTS")
-                delete_path(old)
+                # 先原子替换再删除旧文件：顺序反过来时中途失败会导致新旧资源全部丢失
                 temp.replace(destination)
+                if destination != old:
+                    delete_path(old)
                 manifest = self._read_resource_manifest(game_path, version_id)
                 records = manifest.setdefault("resources", {})
                 records.pop(f"{resource_type}:{old.name}", None)

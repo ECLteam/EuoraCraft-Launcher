@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -508,13 +509,16 @@ class LaunchCoordinator(_GameState):
                     self._handle_instance_exit(run_token, code, name)
                     self.launch_hooks.on_exit(launch_context)
 
+                # 插件 env 是覆写/追加语义，必须合并进父进程环境后再传给子进程，
+                # 否则游戏进程会丢失 PATH/SystemRoot 等系统变量导致启动失败。
+                instance_env = {**os.environ, **launch_context.env} if launch_context.env else None
                 instance_id, _process = self.instances.create_instance(
                     instance_name=version_name,
                     instance_type="Minecraft",
                     args=command,
                     cwd=launch_context.working_directory or (path / "versions" / version_name),
                     new_session=True,
-                    env=launch_context.env or None,
+                    env=instance_env,
                     log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
                     exit_callback=on_instance_exit,
                 )
