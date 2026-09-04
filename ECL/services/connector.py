@@ -645,10 +645,7 @@ class ConnectorService:
         bind_mc_port = find_free_port()
         bind_result = florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout)
         # 新版本返回 (bool, broadcaster)，旧版本返回 bool
-        if isinstance(bind_result, tuple):
-            bind_ok = bool(bind_result[0])
-        else:
-            bind_ok = bool(bind_result)
+        bind_ok = bool(bind_result[0]) if isinstance(bind_result, tuple) else bool(bind_result)
         if not bind_ok:
             node.stop()
             raise ConnectorError("绑定 Minecraft 端口失败")
@@ -742,6 +739,15 @@ class ConnectorService:
         :param machine_id: 目标玩家机器 ID
         :returns: 包含 status 的字典
         """
+        # 房主模式下玩家列表来自房间服务器，必须同步移除，否则列表刷新后玩家会"复活"。
+        server = self._room_server
+        if self._mode == "host" and server is not None:
+            loop = getattr(server, "loop", None)
+            if loop is not None and not loop.is_closed() and loop.is_running():
+                try:
+                    asyncio.run_coroutine_threadsafe(server.remove_player(machine_id), loop).result(timeout=5)
+                except Exception:
+                    logger.warning("房间服务器移除玩家失败: %s", machine_id, exc_info=True)
         self._players = [p for p in self._players if p.get("machineId") != machine_id]
         return {"status": "kicked"}
 
