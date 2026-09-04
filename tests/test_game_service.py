@@ -934,6 +934,9 @@ def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -
         def __init__(self, path):
             self.path = path
 
+        def needs_download(self):
+            return False
+
         def ensure(self):
             return self.path
 

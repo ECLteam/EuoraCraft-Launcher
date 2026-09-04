@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("easytier_pyo3")
 
-from ECL.services.connector import ConnectorService, _DEFAULT_NODES
+from ECL.services.connector import _DEFAULT_NODES, ConnectorService
 
 
 class _FailingHttpClient:
