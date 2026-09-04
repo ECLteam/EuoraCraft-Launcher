@@ -323,6 +323,7 @@ class LaunchRequest(RequestModel):
     memory: int = Field(default=default_config["game"]["memory_size"], ge=256, le=131072)
     width: int = Field(default=default_config["game"]["game_width"], ge=320, le=16384)
     height: int = Field(default=default_config["game"]["game_height"], ge=240, le=16384)
+    fullscreen: bool = False
     jvm_args: list[str] = Field(default_factory=list)
     game_args: list[str] = Field(default_factory=list)
     version_isolation: bool = False

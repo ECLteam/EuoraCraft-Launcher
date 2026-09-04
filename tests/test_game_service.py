@@ -554,6 +554,77 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     service.close()
 
 
+def _fullscreen_launch_fixture(tmp_path, monkeypatch):
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    service = _build_service(
+        instances_manager=FakeInstances(),
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+    return service, game_path, java_path
+
+
+def test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_path, monkeypatch) -> None:
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    options_path.write_text("lang:zh_CN\nfullscreen:false\nmusicVolume:0.8\n", encoding="utf-8")
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+            fullscreen=True,
+        )
+    )
+
+    assert options_path.read_text(encoding="utf-8") == "lang:zh_CN\nfullscreen:true\nmusicVolume:0.8\n"
+    service.close()
+
+
+def test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monkeypatch) -> None:
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+        )
+    )
+
+    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    assert options_path.read_text(encoding="utf-8") == "fullscreen:false\n"
+    service.close()
+
+
+def test_launch_fullscreen_uses_versions_directory_when_isolated(tmp_path, monkeypatch) -> None:
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+            fullscreen=True,
+            version_isolation=True,
+        )
+    )
+
+    assert (game_path / "versions" / "options.txt").read_text(encoding="utf-8") == "fullscreen:true\n"
+    assert not (game_path / "versions" / "1.21.8" / "options.txt").exists()
+    service.close()
+
+
 def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(tmp_path, monkeypatch) -> None:
     clock = [10.0]
     service, instances, game_path, _java_path, _result = _launch_lifecycle_fixture(tmp_path, monkeypatch, clock)

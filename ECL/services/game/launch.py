@@ -16,6 +16,7 @@ from anyio import to_thread
 from ECL.game import LaunchConfig
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.services.authlib import AuthlibError
+from ECL.utils.files import atomic_write_text
 
 from .base import GameServiceError, _GameState, _RunningGame
 
@@ -176,6 +177,30 @@ class LaunchCoordinator(_GameState):
                 "JAVA_ARCH_MEMORY_LIMIT",
             )
 
+    def _apply_fullscreen_option(self, game_directory: Path, enabled: bool) -> None:
+        # Minecraft 无全屏命令行参数，启动前把 options.txt 的 fullscreen 键写为目标状态，
+        # 由游戏启动时读取该值决定窗口模式；写入失败不阻断启动，沿用游戏内既有状态。
+        options_path = game_directory / "options.txt"
+        value = "true" if enabled else "false"
+        try:
+            lines = (
+                options_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if options_path.is_file()
+                else []
+            )
+        except OSError:
+            lines = []
+        for index, line in enumerate(lines):
+            if line.startswith("fullscreen:"):
+                lines[index] = f"fullscreen:{value}"
+                break
+        else:
+            lines.append(f"fullscreen:{value}")
+        try:
+            atomic_write_text(options_path, "\n".join(lines) + "\n")
+        except OSError as exc:
+            self.logger.warning("写入全屏设置失败，游戏将沿用既有窗口状态: %s", exc)
+
     async def launch_instance(  # noqa: C901 - launch transaction and cleanup boundary
         self,
         body: Mapping[str, object],
@@ -186,6 +211,7 @@ class LaunchCoordinator(_GameState):
         memory: Any = 4096,
         width: Any = 854,
         height: Any = 480,
+        fullscreen: Any = False,
         jvm_args: Any = None,
         game_args: Any = None,
         version_isolation: Any = False,
@@ -200,6 +226,7 @@ class LaunchCoordinator(_GameState):
         :param memory: 分配给游戏的内存大小，单位为 MiB
         :param width: 游戏窗口宽度
         :param height: 游戏窗口高度
+        :param fullscreen: 启动时是否进入全屏模式
         :param jvm_args: 附加的 JVM 参数列表
         :param game_args: 附加的 Minecraft 参数列表
         :param version_isolation: 是否启用版本目录隔离
@@ -231,6 +258,7 @@ class LaunchCoordinator(_GameState):
         ram = self._normalize_positive_int(memory, 4096, 256, 131072, "游戏内存")
         window_width = self._normalize_positive_int(width, 854, 320, 16384, "窗口宽度")
         window_height = self._normalize_positive_int(height, 480, 240, 16384, "窗口高度")
+        fullscreen_enabled = bool(fullscreen)
         custom_jvm_args = self._normalize_string_list(jvm_args, "JVM 参数")
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
         context = self._context(path, self._normalize_source(source))
@@ -421,6 +449,7 @@ class LaunchCoordinator(_GameState):
                         "GAME_DOWNLOAD_FAILED",
                     )
 
+            self._apply_fullscreen_option(game_directory, fullscreen_enabled)
             self._emit_launch_progress("building_args", "正在生成启动参数", 72)
             launch_context = LaunchContext(
                 version_id=version_name,

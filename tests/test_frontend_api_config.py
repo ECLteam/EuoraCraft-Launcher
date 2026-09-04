@@ -406,6 +406,7 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
                 "game_path": str(tmp_path / ".minecraft"),
                 "java_path": str(tmp_path / "java.exe"),
                 "memory": 6144,
+                "fullscreen": True,
                 "version_isolation": True,
             }
         )
@@ -420,6 +421,7 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
         },
     }
     assert api.game.launch_call[1]["memory"] == 6144
+    assert api.game.launch_call[1]["fullscreen"] is True
     assert api.game.launch_call[1]["version_isolation"] is True
 
 

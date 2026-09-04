@@ -74,6 +74,7 @@ _RUNTIME_OPTION_FIELDS = (
     ("memory", "memory", lambda c: c.get("memory_size", default_config["game"]["memory_size"])),
     ("width", "width", lambda c: c.get("game_width", default_config["game"]["game_width"])),
     ("height", "height", lambda c: c.get("game_height", default_config["game"]["game_height"])),
+    ("fullscreen", "fullscreen", lambda c: bool(c.get("fullscreen", default_config["game"]["fullscreen"]))),
     ("jvm_args", "jvm_args", lambda c: c.get("jvm_args", [])),
 )
 
