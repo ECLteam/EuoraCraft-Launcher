@@ -60,6 +60,43 @@ def _network_retries(value: Any) -> int:
         return 2
 
 
+def _http_transport(launcher_config: Mapping[str, Any]) -> httpx.HTTPTransport:
+    """按启动器网络配置构造共享客户端的传输层。
+
+    :param launcher_config: launcher 配置分区，提供代理模式与重试次数
+    :return: 配置好代理与重试的 HTTP 传输层
+    """
+    proxy_mode = _proxy_mode(launcher_config)
+    custom_proxy_url = str(launcher_config.get("proxy_url") or "").strip()
+    if proxy_mode == "none":
+        # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
+        # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+    proxy_url = _resolve_proxy_url(proxy_mode, custom_proxy_url)
+    return httpx.HTTPTransport(
+        retries=_network_retries(launcher_config.get("request_retries", 2)),
+        proxy=httpx.Proxy(url=proxy_url) if proxy_url else None,
+    )
+
+
+def _apply_http_network_settings(client: httpx.Client, launcher_config: Mapping[str, Any]) -> None:
+    """将代理/超时/重试热应用到已存在的共享客户端，配置变化无需重启启动器。
+
+    :param client: 共享 HTTP 客户端
+    :param launcher_config: launcher 配置分区
+    """
+    request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
+    client.timeout = httpx.Timeout(request_timeout, connect=min(10.0, request_timeout))
+    old_transport = getattr(client, "_transport", None)
+    # httpx 未提供传输层替换的公开 API；超时走公开 setter，传输层只能整体换新并关闭旧连接池。
+    client._transport = _http_transport(launcher_config)
+    if old_transport is not None:
+        close = getattr(old_transport, "close", None)
+        if callable(close):
+            close()
+
+
 _PROXY_MODES = ("none", "system", "custom")
 
 
@@ -231,27 +268,16 @@ def create_application(
         logger.debug("正在创建共享 HTTP 客户端")
         launcher_config = state.config.get("launcher") or {}
         disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
-        proxy_mode = _proxy_mode(launcher_config)
-        custom_proxy_url = str(launcher_config.get("proxy_url") or "").strip()
         request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
         request_retries = _network_retries(launcher_config.get("request_retries", 2))
-        if proxy_mode == "none":
-            # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
-            # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
-            os.environ["NO_PROXY"] = "*"
-            os.environ["no_proxy"] = "*"
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, not disable_ssl_verify)
-        proxy_url = _resolve_proxy_url(proxy_mode, custom_proxy_url)
         http = httpx.Client(
             timeout=httpx.Timeout(request_timeout, connect=min(10.0, request_timeout)),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             verify=ssl_verify_context,
-            transport=httpx.HTTPTransport(
-                retries=request_retries,
-                proxy=httpx.Proxy(url=proxy_url) if proxy_url else None,
-            ),
+            transport=_http_transport(launcher_config),
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建")
@@ -344,7 +370,11 @@ def create_application(
             close = getattr(resource, "close", None)
             if callable(close):
                 with suppress(Exception):
-                    close()
+                    if inspect.iscoroutinefunction(close):
+                        # 账户等资源的异步关闭需要在独立事件循环中完成
+                        asyncio.run(close())
+                    else:
+                        close()
         raise
 
     context = ApplicationContext(
@@ -371,12 +401,14 @@ def create_application(
         """
         if section != "launcher":
             return
+        launcher_config = data if isinstance(data, Mapping) else state.config.get("launcher") or {}
         state.config = environment.apply_to_config(config.get_config())
         state.debug = bool((data or {}).get("debug", False))
         _apply_ssl_verify(
             ssl_verify_context,
             not bool((data or {}).get("disable_ssl_verify", False)),
         )
+        _apply_http_network_settings(http, launcher_config)
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
