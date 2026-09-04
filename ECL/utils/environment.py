@@ -72,6 +72,10 @@ class Environment:
         """
         使用环境变量覆盖配置。
 
+        键路径按已存在的配置层级贪心匹配，使含下划线的真实配置键可以被
+        ECL_CONFIG_LAUNCHER_DEBUG_LOG_LEVEL 这类环境变量正确寻址到
+        launcher.debug_log_level，而不是被拆成无意义的嵌套层级。
+
         :param config: 游戏或启动器配置数据
         """
         result = deepcopy(config)
@@ -80,15 +84,24 @@ class Environment:
         for env_key, env_value in env_data.items():
             if not env_key.startswith(prefix) or env_value is None:
                 continue
-            cfg_key_path = env_key[len(prefix) :]
-            key_segments = cfg_key_path.split("_")
-            key_segments = [seg.lower() for seg in key_segments]
+            key_segments = [seg.lower() for seg in env_key[len(prefix) :].split("_")]
             current = result
-            for i, segment in enumerate(key_segments):
-                if i == len(key_segments) - 1:
-                    current[segment] = self._convert_env_value(env_value)
-                else:
-                    if segment not in current or not isinstance(current[segment], dict):
-                        current[segment] = {}
-                    current = current[segment]
+            index = 0
+            while True:
+                matched: tuple[str, int] | None = None
+                for end in range(len(key_segments), index, -1):
+                    candidate = "_".join(key_segments[index:end])
+                    if candidate in current and isinstance(current[candidate], dict):
+                        matched = (candidate, end)
+                        break
+                if matched is None:
+                    # 剩余段无法命中已存在的层级时，合并为单个键写入当前层
+                    current["_".join(key_segments[index:])] = self._convert_env_value(env_value)
+                    break
+                candidate, end = matched
+                if end == len(key_segments):
+                    current[candidate] = self._convert_env_value(env_value)
+                    break
+                current = current[candidate]
+                index = end
         return result
