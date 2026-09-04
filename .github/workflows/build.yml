@@ -186,16 +186,16 @@ jobs:
           PY
 
       - name: Build with Nuitka
+        if: ${{ runner.os != 'macOS' }}
         shell: bash
         env:
           VTYPE: ${{ steps.version_info.outputs.type }}
         run: |
           set -euo pipefail
-          # macOS 用 app bundle；其余平台 onefile（关闭内置 zstd，由 UPX 直接压缩整体负载，实测更小）
+          # macOS 改由 PyInstaller 构建（见下方 Build with PyInstaller）；
+          # 其余平台 onefile（关闭内置 zstd，由 UPX 直接压缩整体负载，实测更小）
           # windows-11-arm 无可用 UPX ARM64 发行版，使用 onefile 内置 zstd 压缩
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            ARGS=(--mode=app --assume-yes-for-downloads --output-dir=build-nuitka)
-          elif [ "$RUNNER_OS" = "Windows" ] && [ "${{ matrix.os }}" = "windows-11-arm" ]; then
+          if [ "$RUNNER_OS" = "Windows" ] && [ "${{ matrix.os }}" = "windows-11-arm" ]; then
             ARGS=(--mode=onefile --assume-yes-for-downloads --output-dir=build-nuitka)
           else
             ARGS=(--mode=onefile --onefile-no-compression --assume-yes-for-downloads --output-dir=build-nuitka)
@@ -235,34 +235,46 @@ jobs:
             --include-data-files=Tauri.toml=Tauri.toml \
             main.py
 
+      # macOS 用 PyInstaller 出 .app bundle（规格见 EuoraCraft-Launcher.spec），打包步骤再压成 DMG
+      - name: Build with PyInstaller
+        if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean "EuoraCraft-Launcher.spec"
+
       - name: Package artifact
         id: package
         shell: bash
         run: |
-          cd build-nuitka
           if [ "${{ runner.os }}" = "macOS" ]; then
-            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "main.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
+            cd dist
+            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "EuoraCraft Launcher.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
             echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg" >> "$GITHUB_OUTPUT"
-          elif [ "${{ runner.os }}" = "Windows" ]; then
-            mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
-            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
+            echo "dir=dist" >> "$GITHUB_OUTPUT"
           else
-            mv "main.bin" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
-            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
+            cd build-nuitka
+            echo "dir=build-nuitka" >> "$GITHUB_OUTPUT"
+            if [ "${{ runner.os }}" = "Windows" ]; then
+              mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
+              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
+            else
+              mv "main.bin" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
+              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.filename }}
-          path: build-nuitka/${{ steps.package.outputs.filename }}
+          path: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
           archive: false
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: build-nuitka/${{ steps.package.outputs.filename }}
+          files: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
           prerelease: ${{ steps.version_info.outputs.type != 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
