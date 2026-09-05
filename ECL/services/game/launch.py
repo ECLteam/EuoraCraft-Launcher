@@ -266,7 +266,8 @@ class LaunchCoordinator(_GameState):
         isolated = bool(version_isolation)
         # 插件启动钩子需要访问最终游戏目录，提前计算以避免在命令构建后再移动。
         game_directory = path / "versions"
-        if not isolated:
+        # 版本隔离=开 时该实例使用独立的 versions/<版本名>/ 数据目录，与设置项文案一致
+        if isolated:
             game_directory /= version_name
 
         cancel_event = Event()
