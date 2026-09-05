@@ -250,15 +250,30 @@ class AuthlibAccountManager:
         profiles: list[dict],
         existing_accounts: dict[str, str],
     ) -> tuple[str, dict]:
-        self.pending_accounts[account_id] = {
-            "YggdrasilAPI": server_url,
-            "Username": username,
-            "Password": password,
-            "Response": deepcopy(response),
-            "Profiles": deepcopy(profiles),
-            "ExistingAccounts": deepcopy(existing_accounts),
-        }
+        with self._lock:
+            self.pending_accounts[account_id] = {
+                "YggdrasilAPI": server_url,
+                "Username": username,
+                "Password": password,
+                "Response": deepcopy(response),
+                "Profiles": deepcopy(profiles),
+                "ExistingAccounts": deepcopy(existing_accounts),
+            }
         return account_id, self._pending_info(account_id, server_url, username, profiles, existing_accounts)
+
+    def _read_account_token(self, account_id: str) -> tuple[dict, dict]:
+        """
+        在锁内读取账户与令牌快照。
+
+        :param account_id: 账户稳定标识
+        :returns: 账户与令牌数据；账户不存在时抛出 KeyError
+        """
+        with self._lock:
+            account = self.accounts.get(account_id)
+            token = self.tokens.get(account_id)
+        if account is None or token is None:
+            raise KeyError(f"账户 '{account_id}' 不存在")
+        return account, token
 
     def _store_response(
         self,
@@ -272,21 +287,23 @@ class AuthlibAccountManager:
         if isinstance(user, dict):
             profiles["user"] = deepcopy(user)
 
-        self.tokens[account_id] = {
-            "AccessToken": response["accessToken"],
-            "ClientToken": response["clientToken"],
-        }
         account = {
             "AccountId": account_id,
             "YggdrasilAPI": server_url,
             "Profiles": profiles,
         }
-        saved_username = username or (self.accounts.get(account_id) or {}).get("Username")
-        if saved_username:
-            account["Username"] = saved_username
-        self.accounts[account_id] = account
-        self._save_token(account_id)
-        self._save_accounts()
+        # 网络请求在锁外完成后才进入本方法，这里只短暂持锁完成状态写入与持久化
+        with self._lock:
+            self.tokens[account_id] = {
+                "AccessToken": response["accessToken"],
+                "ClientToken": response["clientToken"],
+            }
+            saved_username = username or (self.accounts.get(account_id) or {}).get("Username")
+            if saved_username:
+                account["Username"] = saved_username
+            self.accounts[account_id] = account
+            self._save_token(account_id)
+            self._save_accounts()
         return deepcopy(account)
 
     def list_accounts(self) -> dict[str, dict]:
@@ -308,136 +325,142 @@ class AuthlibAccountManager:
         """
         登录外置账户并保存令牌与角色资料。
 
+        ALI 解析与认证请求在锁外执行，仅状态写入短暂持锁，
+        避免登录耗时阻塞账户列表等 IPC 读取。
+
         :param server_url: Authlib 认证服务器地址
         :param username: 登录或离线账户用户名
         :param password: 仅用于本次认证且不会写入日志的密码
         """
+        root_url = self.resolve_server(server_url)
+        account_id = uuid4().hex
         with self._lock:
-            root_url = self.resolve_server(server_url)
-            account_id = uuid4().hex
             existing_accounts = self._existing_profile_accounts(root_url, username)
-            response = self.client.auth(
+        response = self.client.auth(
+            root_url,
+            username,
+            password,
+            follow_ali=False,
+            client_token=account_id,
+        )
+        available_profiles = [
+            profile
+            for profile in response.get("availableProfiles") or []
+            if isinstance(profile, dict) and profile.get("id") and profile.get("name")
+        ]
+        if existing_accounts and len(available_profiles) > 1:
+            return self._create_pending_login(
+                account_id,
                 root_url,
                 username,
                 password,
-                follow_ali=False,
-                client_token=account_id,
-            )
-            available_profiles = [
-                profile
-                for profile in response.get("availableProfiles") or []
-                if isinstance(profile, dict) and profile.get("id") and profile.get("name")
-            ]
-            if existing_accounts and len(available_profiles) > 1:
-                return self._create_pending_login(
-                    account_id,
-                    root_url,
-                    username,
-                    password,
-                    response,
-                    available_profiles,
-                    existing_accounts,
-                )
-            try:
-                selected_profile = self._selected_profile(response, username)
-            except AuthlibProfileSelectionRequired as exc:
-                return self._create_pending_login(
-                    account_id,
-                    root_url,
-                    username,
-                    password,
-                    response,
-                    exc.profiles,
-                    existing_accounts,
-                )
-
-            response_profile = response.get("selectedProfile")
-            response_selected = isinstance(response_profile, dict) and response_profile.get(
-                "id"
-            ) == selected_profile.get("id")
-            token_selected = self._token_profile_id(response) == str(selected_profile.get("id") or "")
-            target_account_id = existing_accounts.get(str(selected_profile.get("id") or ""), account_id)
-            if response_selected or token_selected:
-                return target_account_id, self._store_response(target_account_id, root_url, response, username)
-            return target_account_id, self._refresh_with_profile(
-                target_account_id,
-                root_url,
                 response,
-                selected_profile,
-                username,
+                available_profiles,
+                existing_accounts,
             )
+        try:
+            selected_profile = self._selected_profile(response, username)
+        except AuthlibProfileSelectionRequired as exc:
+            return self._create_pending_login(
+                account_id,
+                root_url,
+                username,
+                password,
+                response,
+                exc.profiles,
+                existing_accounts,
+            )
+
+        response_profile = response.get("selectedProfile")
+        response_selected = isinstance(response_profile, dict) and response_profile.get(
+            "id"
+        ) == selected_profile.get("id")
+        token_selected = self._token_profile_id(response) == str(selected_profile.get("id") or "")
+        target_account_id = existing_accounts.get(str(selected_profile.get("id") or ""), account_id)
+        if response_selected or token_selected:
+            return target_account_id, self._store_response(target_account_id, root_url, response, username)
+        return target_account_id, self._refresh_with_profile(
+            target_account_id,
+            root_url,
+            response,
+            selected_profile,
+            username,
+        )
 
     def select_profile(self, account_id: str, profile_id: str) -> tuple[str, dict]:
         """
         为一次待完成的多角色登录绑定单个角色并保存账户。
 
+        快照待选登录数据后即在锁外执行认证请求，仅状态写入短暂持锁。
+
         :param account_id: 账户的稳定标识
         :param profile_id: Authlib 玩家档案标识
         """
         with self._lock:
-            pending = self.pending_accounts.get(account_id)
-            if pending is None:
-                raise KeyError(f"待选择角色的账户 '{account_id}' 不存在")
-            profile = next(
-                (item for item in pending["Profiles"] if str(item.get("id") or "") == profile_id),
-                None,
+            pending = deepcopy(self.pending_accounts.get(account_id))
+        if pending is None:
+            raise KeyError(f"待选择角色的账户 '{account_id}' 不存在")
+        profile = next(
+            (item for item in pending["Profiles"] if str(item.get("id") or "") == profile_id),
+            None,
+        )
+        if profile is None:
+            raise AuthlibError("所选角色不属于本次登录账户")
+        response = pending["Response"]
+        target_account_id = pending["ExistingAccounts"].get(profile_id, account_id)
+        bound_profile = response.get("selectedProfile")
+        bound_profile_id = (
+            str(bound_profile.get("id") or "")
+            if isinstance(bound_profile, dict)
+            else self._token_profile_id(response)
+        )
+        if bound_profile_id == profile_id:
+            account = self._store_response(
+                target_account_id,
+                pending["YggdrasilAPI"],
+                response,
+                pending["Username"],
             )
-            if profile is None:
-                raise AuthlibError("所选角色不属于本次登录账户")
-            response = pending["Response"]
-            target_account_id = pending["ExistingAccounts"].get(profile_id, account_id)
-            bound_profile = response.get("selectedProfile")
-            bound_profile_id = (
-                str(bound_profile.get("id") or "")
-                if isinstance(bound_profile, dict)
-                else self._token_profile_id(response)
+        elif bound_profile_id:
+            selected_response = self.client.auth(
+                pending["YggdrasilAPI"],
+                profile["name"],
+                pending["Password"],
+                follow_ali=False,
+                client_token=response["clientToken"],
             )
-            if bound_profile_id == profile_id:
-                account = self._store_response(
-                    target_account_id,
-                    pending["YggdrasilAPI"],
-                    response,
-                    pending["Username"],
-                )
-            elif bound_profile_id:
-                selected_response = self.client.auth(
-                    pending["YggdrasilAPI"],
-                    profile["name"],
-                    pending["Password"],
-                    follow_ali=False,
-                    client_token=response["clientToken"],
-                )
-                selected = self._selected_profile(selected_response, profile["name"])
-                if str(selected.get("id") or "") != profile_id:
-                    raise AuthlibError("认证服务器没有绑定所选角色")
-                if not (
-                    isinstance(selected_response.get("selectedProfile"), dict)
-                    or self._token_profile_id(selected_response) == profile_id
-                ):
-                    account = self._refresh_with_profile(
-                        target_account_id,
-                        pending["YggdrasilAPI"],
-                        selected_response,
-                        profile,
-                        pending["Username"],
-                    )
-                else:
-                    account = self._store_response(
-                        target_account_id,
-                        pending["YggdrasilAPI"],
-                        selected_response,
-                        pending["Username"],
-                    )
-            else:
+            selected = self._selected_profile(selected_response, profile["name"])
+            if str(selected.get("id") or "") != profile_id:
+                raise AuthlibError("认证服务器没有绑定所选角色")
+            if not (
+                isinstance(selected_response.get("selectedProfile"), dict)
+                or self._token_profile_id(selected_response) == profile_id
+            ):
                 account = self._refresh_with_profile(
                     target_account_id,
                     pending["YggdrasilAPI"],
-                    response,
+                    selected_response,
                     profile,
                     pending["Username"],
                 )
+            else:
+                account = self._store_response(
+                    target_account_id,
+                    pending["YggdrasilAPI"],
+                    selected_response,
+                    pending["Username"],
+                )
+        else:
+            account = self._refresh_with_profile(
+                target_account_id,
+                pending["YggdrasilAPI"],
+                response,
+                profile,
+                pending["Username"],
+            )
+        with self._lock:
             self.pending_accounts.pop(account_id, None)
-            return target_account_id, account
+        return target_account_id, account
 
     def delete_account(self, account_id: str) -> None:
         """
@@ -457,47 +480,43 @@ class AuthlibAccountManager:
         """
         刷新外置账户的令牌与角色资料。
 
+        刷新请求在锁外执行，仅状态写入短暂持锁。
+
         :param account_id: 账户的稳定标识
         """
-        with self._lock:
-            account = self.accounts.get(account_id)
-            token = self.tokens.get(account_id)
-            if account is None or token is None:
-                raise KeyError(f"账户 '{account_id}' 不存在")
-            response = self.client.refresh(
-                account["YggdrasilAPI"],
-                token["AccessToken"],
-                token["ClientToken"],
-                follow_ali=False,
-            )
-            return self._store_response(account_id, account["YggdrasilAPI"], response)
+        account, token = self._read_account_token(account_id)
+        response = self.client.refresh(
+            account["YggdrasilAPI"],
+            token["AccessToken"],
+            token["ClientToken"],
+            follow_ali=False,
+        )
+        return self._store_response(account_id, account["YggdrasilAPI"], response)
 
     def get_token(self, account_id: str) -> dict[str, str]:
         """
         返回可启动游戏的有效外置登录令牌。
 
+        validate 与刷新均为网络请求，在锁外执行避免阻塞账户列表等 IPC 读取。
+
         :param account_id: 账户的稳定标识
         """
-        with self._lock:
-            account = self.accounts.get(account_id)
-            token = self.tokens.get(account_id)
-            if account is None or token is None:
-                raise KeyError(f"账户 '{account_id}' 不存在")
-            if not (account.get("Profiles") or {}).get("selectedProfile"):
-                raise AuthlibError("外置登录账户缺少默认角色")
-            if not self.client.validate(
-                account["YggdrasilAPI"],
-                token["AccessToken"],
-                token["ClientToken"],
-                follow_ali=False,
-            ):
-                account = self.refresh_account(account_id)
-                token = self.tokens[account_id]
-            return {
-                "AccessToken": token["AccessToken"],
-                "ClientToken": token["ClientToken"],
-                "YggdrasilAPI": account["YggdrasilAPI"],
-            }
+        account, token = self._read_account_token(account_id)
+        if not (account.get("Profiles") or {}).get("selectedProfile"):
+            raise AuthlibError("外置登录账户缺少默认角色")
+        if not self.client.validate(
+            account["YggdrasilAPI"],
+            token["AccessToken"],
+            token["ClientToken"],
+            follow_ali=False,
+        ):
+            self.refresh_account(account_id)
+            account, token = self._read_account_token(account_id)
+        return {
+            "AccessToken": token["AccessToken"],
+            "ClientToken": token["ClientToken"],
+            "YggdrasilAPI": account["YggdrasilAPI"],
+        }
 
     def get_texture_urls(self, account_id: str) -> dict[str, str]:
         """
