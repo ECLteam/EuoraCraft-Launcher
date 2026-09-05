@@ -569,14 +569,30 @@ class ConnectorService:
 
     def host_instance(self, game_path: str, version_id: str) -> dict[str, Any]:
         """
-        启动实例并创建联机房间。
+        为指定实例创建联机房间。
+
+        先探测本机 Java 进程监听且确认是 Minecraft 服务的端口，再据此建房；
+        实例尚未启动（找不到服务端口）时返回失败，由前端引导用户先启动实例。
 
         :param game_path: 游戏路径
         :param version_id: 版本 ID
-        :returns: 包含 status 的字典
+        :returns: 包含 roomCode 的字典
+        :raises ConnectorError: 实例未运行或房间创建失败时抛出
         """
-        # 简易实现：先创建房间，后续通过启动器启动游戏服务端
-        return self.host_port(25565)
+        if self._mode != "idle":
+            raise ConnectorError("当前已有活跃的房间，请先退出")
+
+        candidates = self._minecraft_listener_ports()
+        detected = self.search_mc_port(candidates).get("port")
+        if not isinstance(detected, int):
+            raise ConnectorError("未检测到运行中的实例服务端口，请先启动实例后再联机")
+        logger.debug(
+            "实例联机建房: game_path=%s, version_id=%s, detected_port=%s",
+            game_path,
+            version_id,
+            detected,
+        )
+        return self.host_port(detected)
 
     def join(self, code: str) -> dict[str, Any]:
         """
