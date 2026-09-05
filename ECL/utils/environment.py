@@ -95,6 +95,15 @@ class Environment:
                         matched = (candidate, end)
                         break
                 if matched is None:
+                    if index == 0:
+                        # 顶层未命中已知分区时，将首个段作为新分区（如默认配置中不含的 tauri），
+                        # 使 ECL_CONFIG_TAURI_FRONTENDDIST 仍能寻址到 tauri.frontenddist。
+                        section = key_segments[0]
+                        if not isinstance(current.get(section), dict):
+                            current[section] = {}
+                        current = current[section]
+                        index = 1
+                        continue
                     # 剩余段无法命中已存在的层级时，合并为单个键写入当前层
                     current["_".join(key_segments[index:])] = self._convert_env_value(env_value)
                     break

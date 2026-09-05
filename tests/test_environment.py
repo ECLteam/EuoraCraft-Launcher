@@ -1,4 +1,29 @@
 from ECL.utils import Environment
+from ECL.utils.config import default_config
+
+
+def test_apply_to_config_maps_non_default_section_to_nested_dict(tmp_path, monkeypatch) -> None:
+    # tauri 分区不在默认配置中，但启动器读取 tauri.frontenddist 决定前端来源；
+    # 环境变量覆盖必须仍能寻址到嵌套的 tauri.frontenddist，而非扁平键 tauri_frontenddist。
+    monkeypatch.setenv("ECL_CONFIG_TAURI_FRONTENDDIST", "http://localhost:5173/")
+    manager = Environment(tmp_path)
+
+    result = manager.apply_to_config(default_config)
+
+    assert result["tauri"]["frontenddist"] == "http://localhost:5173/"
+    assert "tauri_frontenddist" not in result
+
+
+def test_apply_to_config_preserves_underscored_leaf_key(tmp_path, monkeypatch) -> None:
+    # 含下划线的叶子键应保持真实键名，而不是被拆成多层嵌套。
+    monkeypatch.setenv("ECL_CONFIG_LAUNCHER_DEBUG_LOG_LEVEL", "debug")
+    manager = Environment(tmp_path)
+
+    result = manager.apply_to_config(default_config)
+
+    assert result["launcher"]["debug_log_level"] == "debug"
+    # 不应把 debug_log_level 拆成 launcher.debug.log.level：debug 仍保持默认布尔值而非嵌套字典。
+    assert result["launcher"]["debug"] is False
 
 
 def test_env_manager_reads_microsoft_client_id_from_dotenv(tmp_path, monkeypatch) -> None:
