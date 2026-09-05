@@ -308,6 +308,7 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
         "proxy_url": "",
         "request_timeout": 15,
         "request_retries": 2,
+        "dev_channel": False,
         "version": "0.1.0",
         "version_type": "dev",
     }

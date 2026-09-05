@@ -24,6 +24,8 @@ default_config: dict[str, Any] = {
         "proxy_url": "",
         "request_timeout": 15,
         "request_retries": 2,
+        # 开发者通道：向插件开发工具箱暴露本地 WebSocket 服务。
+        "dev_channel": False,
     },
     "game": {
         "minecraft_paths": [],

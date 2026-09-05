@@ -22,6 +22,7 @@ from ECL.events import EventBus
 from ECL.game import InstancesManager
 from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
+from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
 from ECL.services.processes import ProcessService
@@ -230,6 +231,7 @@ class ApplicationContext:
     connector: ConnectorService
     plugins: PluginManager
     processes: ProcessService
+    dev_channel: DevChannelService | None = None  # 按需启动的开发者通道，未开启时为 None
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
@@ -243,7 +245,11 @@ class ApplicationContext:
                 return
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭后台服务")
-            for resource in (self.plugins, self.processes, self.game, self.connector, self.accounts, self.http):
+            # 开发者通道先于插件关闭，避免通道继续处理请求时依赖已被释放。
+            resources: tuple[Any, ...] = (self.dev_channel, self.plugins, self.processes, self.game, self.connector, self.accounts, self.http)
+            for resource in resources:
+                if resource is None:
+                    continue
                 try:
                     close = resource.close
                     if inspect.iscoroutinefunction(close):
@@ -395,6 +401,19 @@ def create_application(
         created.append(plugins)
         plugins.initialize(state.data_path, state.resource_path)
         logger.debug("插件管理器已初始化")
+
+        dev_channel: DevChannelService | None = None
+        if bool(launcher_config.get("dev_channel", False)):
+            logger.info("正在启动开发者通道")
+            dev_channel = DevChannelService(
+                plugins=plugins,
+                events=events,
+                data_path=state.data_path,
+                launcher_version=__version__,
+                debug=state.debug,
+            )
+            dev_channel.start()
+            created.append(dev_channel)
     except Exception:
         logger.exception("后端服务初始化失败，正在释放已创建的资源")
         for resource in reversed(created):
@@ -421,6 +440,7 @@ def create_application(
         connector=connector,
         plugins=plugins,
         processes=processes,
+        dev_channel=dev_channel,
     )
 
     def update_runtime_config(section: str, data: Any) -> None:
