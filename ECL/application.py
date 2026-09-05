@@ -411,6 +411,7 @@ def create_application(
                 data_path=state.data_path,
                 launcher_version=__version__,
                 debug=state.debug,
+                frontend_dist=state.resource_path / "frontend" / "dist",
             )
             dev_channel.start()
             created.append(dev_channel)

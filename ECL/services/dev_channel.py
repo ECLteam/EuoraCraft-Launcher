@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import logging
+import mimetypes
 import os
 import secrets
 import threading
@@ -11,10 +12,14 @@ from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
+from websockets.http11 import Request, Response
 
 from ECL.plugins import PluginActionResult
 from ECL.services.frontend_events import subscribe_frontend_event
@@ -102,6 +107,7 @@ class DevChannelService:
         data_path: Path,
         launcher_version: str,
         debug: bool,
+        frontend_dist: Path | None = None,
     ) -> None:
         """
         收集依赖并生成一次性访问令牌，服务尚未启动。
@@ -111,6 +117,7 @@ class DevChannelService:
         :param data_path: 启动器数据目录，发现文件写入其中
         :param launcher_version: 当前启动器版本号
         :param debug: 是否处于调试模式
+        :param frontend_dist: 前端构建产物目录，存在时在同端口托管内嵌前端，供工具箱加载
         """
         self.logger = get_logger("DevChannel")  # 服务专用日志器
         self._plugins = plugins  # 插件管理器
@@ -118,6 +125,9 @@ class DevChannelService:
         self._data_path = Path(data_path)  # 启动器数据目录
         self._launcher_version = launcher_version  # 启动器版本号
         self._debug = debug  # 调试模式标记
+        self._frontend_dist = Path(frontend_dist) if frontend_dist else None  # 前端构建产物目录
+        self._frontend_enabled = bool(self._frontend_dist and self._frontend_dist.is_dir())  # 是否托管内嵌前端
+        self._index_template: bytes | None = None  # 注入连接信息后的内嵌前端入口缓存
         self._discovery_path = self._data_path / DISCOVERY_FILENAME  # 连接发现文件路径
         self._token = secrets.token_urlsafe(32)  # 一次性访问令牌，随进程生成
         self._port: int | None = None  # 实际监听端口
@@ -155,6 +165,15 @@ class DevChannelService:
         返回实际监听端口，服务未启动时为 None。
         """
         return self._port
+
+    @property
+    def frontend_url(self) -> str | None:
+        """
+        返回内嵌前端入口地址；未托管或服务未启动时为 None。
+        """
+        if not self._frontend_enabled or self._port is None:
+            return None
+        return f"http://127.0.0.1:{self._port}/"
 
     def install_frontend_handlers(self, handlers: dict[str, Callable[..., Any]]) -> None:
         """
@@ -234,7 +253,13 @@ class DevChannelService:
         # 在独立事件循环中承载 WebSocket 服务，直到收到关闭信号。
         async def main() -> None:
             try:
-                server = await serve(self._handle, "127.0.0.1", 0, max_size=MAX_PAYLOAD_BYTES)
+                server = await serve(
+                    self._handle,
+                    "127.0.0.1",
+                    0,
+                    max_size=MAX_PAYLOAD_BYTES,
+                    process_request=self._process_http_request,
+                )
             except OSError as exc:
                 failures.append(exc)
                 started.set()
@@ -269,6 +294,7 @@ class DevChannelService:
             "pid": os.getpid(),
             "launcherVersion": self._launcher_version,
             "protocolVersion": PROTOCOL_VERSION,
+            "frontendUrl": self.frontend_url,
         }
         self._data_path.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self._discovery_path, json.dumps(payload, ensure_ascii=False, indent=2))
@@ -299,6 +325,66 @@ class DevChannelService:
         finally:
             self._cleanup_session(session)
             self._sessions.discard(session)
+
+    def _process_http_request(self, _connection: Any, request: Request) -> Response | None:
+        # 同端口托管内嵌前端：普通 HTTP 请求返回静态资源，WebSocket 升级请求继续握手。
+        if not self._frontend_enabled:
+            return None
+        if (request.headers.get("Upgrade") or "").strip().lower() == "websocket":
+            return None
+        resolved = self._resolve_static(str(request.path))
+        if resolved is None:
+            return None
+        status, body, content_type = resolved
+        headers = Headers(
+            {
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Cache-Control": "no-store",
+            }
+        )
+        return Response(status, HTTPStatus(status).phrase, headers, body)
+
+    def _resolve_static(self, request_path: str) -> tuple[int, bytes, str] | None:
+        # 映射请求路径到静态资源，返回 (状态码, 字节, 内容类型)；禁用内嵌前端时返回 None。
+        if not self._frontend_dist or not self._frontend_dist.is_dir():
+            return None
+        base = self._frontend_dist.resolve()
+        index = base / "index.html"
+        rel = unquote(request_path).split("?", 1)[0].lstrip("/")
+        if not rel:
+            rel = "index.html"
+        target = (base / rel).resolve()
+        try:
+            target.relative_to(base)
+        except ValueError:
+            target = index  # 越界路径一律回退到位移后的资源根目录入口
+        if target.is_file():
+            if target == index:
+                # 入口页需注入连接信息；路径为 / 或 /index.html 时都命中此处。
+                return HTTPStatus.OK.value, self._injected_index(), "text/html; charset=utf-8"
+            content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            return HTTPStatus.OK.value, target.read_bytes(), content_type
+        # 带扩展名的缺包资源返回 404，无扩展名路径按页面路由回退到入口。
+        if Path(rel).suffix:
+            return HTTPStatus.NOT_FOUND.value, b"not found", "text/plain; charset=utf-8"
+        if index.is_file():
+            return HTTPStatus.OK.value, self._injected_index(), "text/html; charset=utf-8"
+        return None
+
+    def _injected_index(self) -> bytes:
+        # 在内嵌前端入口注入 Dev Channel 连接信息，使嵌入页面无需宿主转发即可连回启动器。
+        if self._index_template is not None:
+            return self._index_template
+        assert self._frontend_dist is not None
+        html = (self._frontend_dist / "index.html").read_bytes().decode("utf-8", errors="replace")
+        script = f'<script>window.__ECL_DEV_WS__={{port:{self._port},token:"{self._token}"}};</script>'
+        if "</head>" in html:
+            html = html.replace("</head>", script + "</head>", 1)
+        else:
+            html += script
+        self._index_template = html.encode("utf-8")
+        return self._index_template
 
     async def _authenticate(self, websocket: ServerConnection) -> bool:
         # 等待首条鉴权消息并校验令牌，失败时回复错误信封并断开。
@@ -471,6 +557,7 @@ class DevChannelService:
             "devChannel": True,
             "dataPath": str(self._data_path),
             "pluginDir": str(self._data_path / "plugins"),
+            "frontendUrl": self.frontend_url,
         }
 
     def _method_plugin_list(self, session: _Session, params: dict[str, Any]) -> list[dict[str, Any]]:

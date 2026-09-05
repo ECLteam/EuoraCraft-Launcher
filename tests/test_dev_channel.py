@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -21,13 +22,14 @@ def _action_result(name: str, action: PluginAction, status: str, message: str = 
     return PluginActionResult(plugin_name=name, action=action, status=status, message=message)
 
 
-def _make_service(tmp_path, plugins: Mock | None = None, events: EventBus | None = None) -> DevChannelService:
+def _make_service(tmp_path, plugins: Mock | None = None, events: EventBus | None = None, frontend_dist=None) -> DevChannelService:
     return DevChannelService(
         plugins=plugins or Mock(),
         events=events or EventBus(),
         data_path=tmp_path / "ECL_data",
         launcher_version="0.1.0",
         debug=False,
+        frontend_dist=frontend_dist,
     )
 
 
@@ -416,3 +418,114 @@ async def test_frontend_subscribe_idempotent_and_unsubscribe(service) -> None:
             await asyncio.wait_for(websocket.recv(), timeout=0.1)
     finally:
         await websocket.close()
+
+
+def _make_frontend_dist(tmp_path):
+    # 构造最小前端构建产物：入口与一个静态脚本。
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><head></head><body>ok</body></html>", encoding="utf-8")
+    assets = dist / "assets"
+    assets.mkdir()
+    (assets / "app.js").write_text("console.log('hello');", encoding="utf-8")
+    return dist
+
+
+async def _http_get(service: DevChannelService, path: str) -> httpx.Response:
+    with httpx.Client(trust_env=False) as client:
+        return client.get(f"http://127.0.0.1:{service.port}{path}")
+
+
+async def test_frontend_serving_serves_index_with_injected_connection(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        discovery = _read_discovery(service)
+        assert discovery["frontendUrl"] == f"http://127.0.0.1:{service.port}/"
+        assert service.frontend_url == f"http://127.0.0.1:{service.port}/"
+
+        response = await _http_get(service, "/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["Content-Type"]
+        assert f'window.__ECL_DEV_WS__={{port:{service.port},token:"{discovery["token"]}"}}' in response.text
+        # 命中 get 断言的是注入后的连接信息，不存在原始 token 泄露之外的误匹配
+        assert response.headers["Cache-Control"] == "no-store"
+    finally:
+        service.close()
+
+
+async def test_frontend_serving_serves_static_asset(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        response = await _http_get(service, "/assets/app.js")
+        assert response.status_code == 200
+        assert response.text == "console.log('hello');"
+        assert "javascript" in response.headers["Content-Type"]
+    finally:
+        service.close()
+
+
+async def test_frontend_serving_returns_404_for_missing_asset(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        response = await _http_get(service, "/assets/missing.js")
+        assert response.status_code == 404
+    finally:
+        service.close()
+
+
+async def test_frontend_serving_falls_back_to_index_for_route(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        response = await _http_get(service, "/overview")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["Content-Type"]
+        assert "window.__ECL_DEV_WS__" in response.text
+    finally:
+        service.close()
+
+
+async def test_frontend_serving_blocks_traversal(tmp_path) -> None:
+    dist = _make_frontend_dist(tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top-secret", encoding="utf-8")
+    service = _make_service(tmp_path, frontend_dist=dist)
+    service.start()
+    try:
+        with httpx.Client(trust_env=False, follow_redirects=False) as client:
+            response = client.get(f"http://127.0.0.1:{service.port}/../secret.txt")
+        assert response.status_code in (200, 404)
+        assert "top-secret" not in response.text
+    finally:
+        service.close()
+
+
+async def test_frontend_serving_disabled_without_dist(tmp_path) -> None:
+    service = _make_service(tmp_path)
+    service.start()
+    try:
+        discovery = _read_discovery(service)
+        assert discovery["frontendUrl"] is None
+        assert service.frontend_url is None
+        with httpx.Client(trust_env=False) as client:
+            response = client.get(f"http://127.0.0.1:{service.port}/")
+        assert response.status_code == 426  # websockets 对非升级请求返回 426 Upgrade Required
+    finally:
+        service.close()
+
+
+async def test_launcher_info_reports_frontend_url(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            reply = await _request(websocket, 22, "launcher.info")
+            assert reply["data"]["frontendUrl"] == f"http://127.0.0.1:{service.port}/"
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
