@@ -262,6 +262,12 @@ class PluginLifecycle(_PluginState):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(target_name)):
             return PluginActionResult(str(target_name), PluginAction.INSTALL, "invalid", "插件名包含非法字符")
         target_dir = self._plugin_dir / str(target_name)
+        # 覆盖安装前先卸载已加载的旧实例：重复安装即同步最新代码（插件工具箱
+        # 热重载依赖该语义），否则 _load_plugin 会因插件重复而跳过、_enable 随即拒绝。
+        if target_name in self._plugins:
+            unloaded = self.unload(target_name, _persist_state=False)
+            if not unloaded.success:
+                return PluginActionResult(target_name, PluginAction.INSTALL, "failed", unloaded.message)
         # 用 shutil.copytree 复制整个插件目录，覆盖已存在的
 
         if target_dir.exists():
