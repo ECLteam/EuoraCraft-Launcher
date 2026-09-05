@@ -274,7 +274,7 @@ def create_application(
     state = ApplicationState(
         app_path=runtime_info["app_path"],
         resource_path=runtime_info["resource_path"],
-        data_path=runtime_info["app_path"] / "ECL_data",
+        data_path=runtime_info["data_path"],
         is_frozen=runtime_info["is_frozen"],
     )
     events = EventBus()

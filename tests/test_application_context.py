@@ -93,6 +93,7 @@ def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_p
             {
                 "app_path": tmp_path,
                 "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
                 "is_frozen": False,
             }
         )
@@ -133,6 +134,7 @@ def test_composition_reports_loaded_state_before_services_are_created(monkeypatc
             {
                 "app_path": tmp_path,
                 "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
                 "is_frozen": False,
             },
             on_state_ready=lambda state: observed.append((state.debug, bool(state.config))),
@@ -216,6 +218,7 @@ def test_none_proxy_mode_sets_no_proxy_env(monkeypatch, tmp_path: Path) -> None:
             {
                 "app_path": tmp_path,
                 "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
                 "is_frozen": False,
             }
         )
@@ -258,6 +261,7 @@ def test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path: Path) 
             {
                 "app_path": tmp_path,
                 "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
                 "is_frozen": False,
             }
         )

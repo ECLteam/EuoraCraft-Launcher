@@ -34,7 +34,7 @@ class EuoraCraftLauncher:
         self.runtime_info = get_runtime_info()
         self.app_path: Path = self.runtime_info["app_path"]  # 启动器数据与运行文件所在目录
         self.resource_path: Path = self.runtime_info["resource_path"]  # 打包资源或源码资源所在目录
-        self.data_path = self.app_path / "ECL_data"  # 后端持久化数据目录
+        self.data_path: Path = self.runtime_info["data_path"]  # 后端持久化数据目录
         self.launcher_version = __version__  # 启动器版本号
         self.launcher_version_type = __version_type__  # 启动器版本类型（alpha/beta/release；dev 表示源码启动）
         self.is_frozen = self.runtime_info["is_frozen"]  # 是否运行于打包后的可执行文件

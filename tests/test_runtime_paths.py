@@ -9,6 +9,7 @@ from ECL.plugins import PluginManager
 def test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkeypatch) -> None:
     executable_path = tmp_path / "program" / "EuoraCraft Launcher.exe"
     extracted_path = tmp_path / "_MEI12345"
+    monkeypatch.delenv("ECL_DATA_PATH", raising=False)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(extracted_path), raising=False)
     monkeypatch.setattr(sys, "executable", str(executable_path))
@@ -18,6 +19,17 @@ def test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkey
     assert runtime_info["is_frozen"] is True
     assert runtime_info["app_path"] == executable_path.parent.resolve()
     assert runtime_info["resource_path"] == extracted_path.resolve()
+    assert runtime_info["data_path"] == executable_path.parent.resolve() / "ECL_data"
+
+
+def test_data_path_env_override_redirects_sandbox_directory(tmp_path, monkeypatch) -> None:
+    sandbox_path = tmp_path / "sandbox" / "ECL_data"
+    monkeypatch.setenv("ECL_DATA_PATH", str(sandbox_path))
+
+    runtime_info = get_runtime_info()
+
+    assert runtime_info["data_path"] == sandbox_path.resolve()
+    assert runtime_info["data_path"] != runtime_info["app_path"] / "ECL_data"
 
 
 def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:

@@ -31,12 +31,13 @@ class RuntimeInfo(TypedDict):
     is_frozen: bool
     app_path: Path
     resource_path: Path
+    data_path: Path
 
 
 def get_runtime_info() -> RuntimeInfo:
     """
     获取当前运行环境的信息。
-    :return: 是否冻结打包，以及应用与资源目录路径
+    :return: 是否冻结打包，以及应用、资源与持久化数据目录路径
     """
     is_frozen = bool(getattr(sys, "frozen", False)) or _is_nuitka_build()
     nuitka_binary_dir = _get_nuitka_binary_dir()
@@ -57,10 +58,19 @@ def get_runtime_info() -> RuntimeInfo:
     else:
         app_path = Path(__file__).resolve().parent.parent.parent
         resource_path = app_path
+    # 外部工具（如插件开发工具箱）通过该环境变量将数据目录重定向到沙箱位置，
+    # 使开发版启动器与正式安装完全隔离。
+    env_data_path = os.environ.get("ECL_DATA_PATH")
+    data_path = (
+        Path(env_data_path).expanduser().resolve()
+        if env_data_path
+        else app_path / "ECL_data"
+    )
     return {
         "is_frozen": is_frozen,
         "app_path": app_path,
         "resource_path": resource_path,
+        "data_path": data_path,
     }
 
 
