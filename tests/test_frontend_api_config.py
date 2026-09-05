@@ -302,6 +302,8 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
         "debug": True,
         "debug_log_level": "info",
         "disable_ssl_verify": False,
+        "api_proxy_mode": "none",
+        "api_proxy_url": "",
         "proxy_mode": "none",
         "proxy_url": "",
         "request_timeout": 15,

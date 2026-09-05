@@ -208,7 +208,7 @@ def test_fetch_project_versions_keeps_required_dependency_metadata(tmp_path: Pat
 
     service = GameService(_FakeAccounts(), resource_path=tmp_path)
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         assert url.endswith("/project/sodium/version")
         response = type("R", (), {})()
         response.raise_for_status = lambda: None
@@ -286,7 +286,7 @@ def test_search_online_resources_mod_facet_excludes_modpack(tmp_path: Path) -> N
     service = GameService(_FakeAccounts(), resource_path=tmp_path)
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["url"] = url
         captured["params"] = params
         response = type("R", (), {})()
@@ -309,7 +309,7 @@ def test_search_online_resources_omits_empty_facets(tmp_path: Path) -> None:
     service = GameService(_FakeAccounts(), resource_path=tmp_path)
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["url"] = url
         captured["params"] = params
         response = type("R", (), {})()
@@ -334,7 +334,7 @@ def test_search_curseforge_403_raises_key_invalid(tmp_path: Path) -> None:
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["url"] = url
         captured["headers"] = headers
         response = type("R", (), {})()
@@ -355,7 +355,7 @@ def test_search_curseforge_uses_hmcl_style_params(tmp_path: Path) -> None:
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["url"] = url
         captured["params"] = params
         response = type("R", (), {})()
@@ -384,7 +384,7 @@ def test_search_curseforge_maps_sort_and_resource_type(tmp_path: Path) -> None:
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["params"] = params
         response = type("R", (), {})()
         response.status_code = 200
@@ -410,7 +410,7 @@ def test_search_curseforge_worlds_uses_world_class_and_mapping(tmp_path: Path) -
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
     captured: dict[str, object] = {}
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         captured["params"] = params
         response = type("R", (), {})()
         response.status_code = 200
@@ -445,7 +445,7 @@ def test_curseforge_world_detail_and_files_are_mapped(tmp_path: Path) -> None:
 
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
 
-    def fake_get(url, params=None, headers=None, timeout=None):
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
         response = type("R", (), {})()
         response.status_code = 200
         response.raise_for_status = lambda: None
@@ -509,7 +509,7 @@ def test_curseforge_file_uses_download_url_endpoint_as_fallback(tmp_path: Path) 
 
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, **kwargs):
         response = type("R", (), {})()
         response.status_code = 200
         response.raise_for_status = lambda: None
