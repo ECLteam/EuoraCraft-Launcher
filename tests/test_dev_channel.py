@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -339,5 +340,79 @@ async def test_multi_argument_event_forwards_as_list(service) -> None:
         notification = json.loads(await websocket.recv())
         assert notification["event"] == "game:state"
         assert notification["data"] == ["running", 42]
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_subscribe_rewrites_event_name_and_payload(service) -> None:
+    events = service._events
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(
+            websocket, 15, "frontend.subscribe", {"events": ["accounts_changed", "plugin:status_changed"]}
+        )
+        assert reply["data"]["subscribed"] == ["accounts_changed", "plugin:status_changed"]
+
+        events.emit("accounts:changed", {"id": "a1"})
+        notification = json.loads(await websocket.recv())
+        assert notification["event"] == "accounts_changed"
+        assert notification["data"] == {"id": "a1"}
+
+        events.emit("plugin:enabled", SimpleNamespace(name="demo"))
+        notification = json.loads(await websocket.recv())
+        assert notification["event"] == "plugin:status_changed"
+        assert notification["data"] == {"name": "demo", "action": "enabled", "result": True}
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_subscribe_reshapes_positional_event(service) -> None:
+    events = service._events
+    websocket = await _authed_client(service)
+    try:
+        await _request(websocket, 16, "frontend.subscribe", {"events": ["plugin:css_injected"]})
+        events.emit("plugin:css_injected", "demo", "body { color: red }", "theme-key")
+        notification = json.loads(await websocket.recv())
+        assert notification["event"] == "plugin:css_injected"
+        assert notification["data"] == {"plugin": "demo", "css": "body { color: red }", "key": "theme-key"}
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_subscribe_ignores_unregistered_event(service) -> None:
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 17, "frontend.subscribe", {"events": ["launcher:error"]})
+        assert reply["data"]["subscribed"] == []
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_subscribe_rejects_invalid_payload(service) -> None:
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 18, "frontend.subscribe", {"events": "accounts_changed"})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "INVALID_PARAMS"
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_subscribe_idempotent_and_unsubscribe(service) -> None:
+    events = service._events
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 19, "frontend.subscribe", {"events": ["accounts_changed"]})
+        assert reply["data"]["subscribed"] == ["accounts_changed"]
+        reply = await _request(
+            websocket, 20, "frontend.subscribe", {"events": ["accounts_changed", "unknown_frontend_event"]}
+        )
+        assert reply["data"]["subscribed"] == ["accounts_changed"]
+
+        reply = await _request(websocket, 21, "frontend.unsubscribe", {"events": ["accounts_changed"]})
+        assert reply["data"]["unsubscribed"] == ["accounts_changed"]
+        events.emit("accounts:changed", {"id": "a2"})
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(websocket.recv(), timeout=0.1)
     finally:
         await websocket.close()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from websockets.asyncio.server import ServerConnection, serve
 
 from ECL.plugins import PluginActionResult
+from ECL.services.frontend_events import subscribe_frontend_event
 from ECL.utils import PluginCommandError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import LOGGER_NAME, get_logger
@@ -59,6 +60,8 @@ class _Session:
         self.websocket = websocket  # 已通过鉴权的连接
         self.log_subscribed = False  # 是否订阅了 log.line 推送
         self.event_unsubscribers: dict[str, Callable[[], None]] = {}  # 事件名到退订函数的映射
+        self.frontend_subscribed: set[str] = set()  # 已订阅的前端事件名集合
+        self.frontend_unsubscribers: dict[str, list[Callable[[], None]]] = {}  # 前端事件名到退订函数列表
 
 
 class _ChannelLogHandler(logging.Handler):
@@ -141,6 +144,8 @@ class DevChannelService:
             "events.subscribe": self._method_events_subscribe,
             "events.unsubscribe": self._method_events_unsubscribe,
             "frontend.invoke": self._method_frontend_invoke,
+            "frontend.subscribe": self._method_frontend_subscribe,
+            "frontend.unsubscribe": self._method_frontend_unsubscribe,
         }
         self._frontend_handlers: dict[str, Callable[..., Any]] = {}  # 启动器前端命令表，装入后供预览调用
 
@@ -269,10 +274,15 @@ class DevChannelService:
         atomic_write_text(self._discovery_path, json.dumps(payload, ensure_ascii=False, indent=2))
 
     def _cleanup_session(self, session: _Session) -> None:
-        # 退订该会话的全部事件，日志订阅标记一并复位。
+        # 退订该会话的全部后端事件、前端事件与日志订阅，标记一并复位。
         for unsubscribe in session.event_unsubscribers.values():
             unsubscribe()
         session.event_unsubscribers.clear()
+        for unsubscribers in session.frontend_unsubscribers.values():
+            for unsubscribe in unsubscribers:
+                unsubscribe()
+        session.frontend_unsubscribers.clear()
+        session.frontend_subscribed.clear()
         session.log_subscribed = False
 
     async def _handle(self, websocket: ServerConnection) -> None:
@@ -414,6 +424,43 @@ class DevChannelService:
             raise DevChannelError("METHOD_NOT_FOUND", f"前端命令不存在: {command}")
         result = await handler(body)
         return {"command": command, "result": result}
+
+    async def _method_frontend_subscribe(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        # 按前端事件名订阅（与 Tauri 主窗口同一套事件转换），把结果转发给工具箱内嵌前端。
+        events = params.get("events")
+        if not isinstance(events, list) or not all(isinstance(item, str) for item in events):
+            raise DevChannelError("INVALID_PARAMS", "参数 events 必须为字符串数组")
+        subscribed = []
+        for event in events:
+            if event in session.frontend_subscribed:
+                subscribed.append(event)
+                continue
+            def emit(frontend_event: str, payload: Any) -> None:
+                self._notify(session, frontend_event, payload)
+
+            unsubscribers = subscribe_frontend_event(self._events, event, emit)
+            if not unsubscribers:
+                continue  # 未在事件桥注册的前端事件名，直接忽略
+            session.frontend_unsubscribers[event] = unsubscribers
+            session.frontend_subscribed.add(event)
+            subscribed.append(event)
+        return {"subscribed": subscribed}
+
+    async def _method_frontend_unsubscribe(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        # 退订指定前端事件，未订阅的名称直接忽略。
+        events = params.get("events")
+        if not isinstance(events, list) or not all(isinstance(item, str) for item in events):
+            raise DevChannelError("INVALID_PARAMS", "参数 events 必须为字符串数组")
+        unsubscribed = []
+        for event in events:
+            unsubscribers = session.frontend_unsubscribers.pop(event, None)
+            if not unsubscribers:
+                continue
+            for unsubscribe in unsubscribers:
+                unsubscribe()
+            session.frontend_subscribed.discard(event)
+            unsubscribed.append(event)
+        return {"unsubscribed": unsubscribed}
 
     def _method_launcher_info(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 返回启动器基本信息，供工具箱展示当前接入的运行实例。
