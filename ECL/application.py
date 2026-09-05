@@ -443,6 +443,12 @@ def create_application(
         dev_channel=dev_channel,
     )
 
+    if dev_channel is not None:
+        from ECL.api import FrontendApi
+        from ECL.api.registry import command_handlers
+
+        dev_channel.install_frontend_handlers(command_handlers(FrontendApi(context)))
+
     def update_runtime_config(section: str, data: Any) -> None:
         """
         在启动器设置变化后刷新运行状态和日志级别。

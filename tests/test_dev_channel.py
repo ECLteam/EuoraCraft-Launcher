@@ -152,6 +152,56 @@ async def test_plugin_list_maps_fields(tmp_path) -> None:
         service.close()
 
 
+def test_install_frontend_handlers_purges_and_fills(service) -> None:
+    # 同一服务只安装于一个应用上下文，重复安装应整体替换而非累积。
+    service.install_frontend_handlers({"system_ping": lambda body: {"pong": True}})
+    service.install_frontend_handlers({"launcher_info": lambda body: {"version": "x"}})
+    assert list(service._frontend_handlers) == ["launcher_info"]
+
+
+async def test_frontend_invoke_dispatches_to_installed_handler(service) -> None:
+    called: dict[str, Any] = {}
+
+    async def handler(body: dict[str, Any]) -> dict[str, Any]:
+        called.update(body)
+        return {"echo": body.get("value")}
+
+    service.install_frontend_handlers({"system_ping": handler})
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 4, "frontend.invoke", {"command": "system_ping", "payload": {"value": 42}})
+        assert reply["ok"] is True
+        assert reply["data"]["command"] == "system_ping"
+        assert reply["data"]["result"] == {"echo": 42}
+        assert called == {"value": 42}
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_invoke_without_payload_uses_empty_body(service) -> None:
+    async def handler(body: dict[str, Any]) -> dict[str, Any]:
+        return {"got": body}
+
+    service.install_frontend_handlers({"system_ping": handler})
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 5, "frontend.invoke", {"command": "system_ping"})
+        assert reply["ok"] is True
+        assert reply["data"]["result"] == {"got": {}}
+    finally:
+        await websocket.close()
+
+
+async def test_frontend_invoke_unknown_command_returns_error(service) -> None:
+    websocket = await _authed_client(service)
+    try:
+        reply = await _request(websocket, 6, "frontend.invoke", {"command": "no_such_command"})
+        assert reply["ok"] is False
+        assert reply["error"]["code"] == "METHOD_NOT_FOUND"
+    finally:
+        await websocket.close()
+
+
 async def test_plugin_reload_forwards_and_reports_missing(tmp_path) -> None:
     plugins = Mock()
     plugins.reload.side_effect = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -139,7 +140,9 @@ class DevChannelService:
             "logs.unsubscribe": self._method_logs_unsubscribe,
             "events.subscribe": self._method_events_subscribe,
             "events.unsubscribe": self._method_events_unsubscribe,
+            "frontend.invoke": self._method_frontend_invoke,
         }
+        self._frontend_handlers: dict[str, Callable[..., Any]] = {}  # 启动器前端命令表，装入后供预览调用
 
     @property
     def port(self) -> int | None:
@@ -147,6 +150,16 @@ class DevChannelService:
         返回实际监听端口，服务未启动时为 None。
         """
         return self._port
+
+    def install_frontend_handlers(self, handlers: dict[str, Callable[..., Any]]) -> None:
+        """
+        装入启动器前端命令表，使工具箱内嵌前端可通过 frontend.invoke 驱动后端。
+
+        :param handlers: command_handlers(FrontendApi(context)) 返回的命令名到处理器映射
+        """
+        self._frontend_handlers.clear()
+        self._frontend_handlers.update(handlers)
+        self.logger.debug("前端命令表已装入: count=%d", len(handlers))
 
     def start(self) -> None:
         """
@@ -324,6 +337,8 @@ class DevChannelService:
             return
         try:
             data = handler(session, params if isinstance(params, dict) else {})
+            if inspect.isawaitable(data):
+                data = await data
         except DevChannelError as exc:
             await self._send_error(
                 websocket=session.websocket, request_id=request_id, code=exc.code, message=exc.message
@@ -383,6 +398,22 @@ class DevChannelService:
         if not isinstance(value, str) or not value.strip():
             raise DevChannelError("INVALID_PARAMS", f"参数 {key} 缺失或非法")
         return value
+
+    async def _method_frontend_invoke(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        # 按命令名分发到启动器前端命令表，供工具箱内嵌前端复用与 Tauri 相同的后端处理器。
+        command = params.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise DevChannelError("INVALID_PARAMS", "参数 command 缺失或非法")
+        body = params.get("payload")
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            raise DevChannelError("INVALID_PARAMS", "参数 payload 必须为对象")
+        handler = self._frontend_handlers.get(command)
+        if handler is None:
+            raise DevChannelError("METHOD_NOT_FOUND", f"前端命令不存在: {command}")
+        result = await handler(body)
+        return {"command": command, "result": result}
 
     def _method_launcher_info(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 返回启动器基本信息，供工具箱展示当前接入的运行实例。
