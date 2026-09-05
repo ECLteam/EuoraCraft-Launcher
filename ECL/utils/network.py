@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from time import sleep
 from typing import Any
@@ -7,6 +8,21 @@ from typing import Any
 import httpx
 
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+DOWNLOAD_PROXY_ENV_KEY = "ECL_DOWNLOAD_PROXY"
+
+
+def download_proxy_url() -> str | None:
+    """
+    读取游戏下载通道的代理地址。
+
+    启动器把"游戏下载"代理配置同步到进程环境变量 ECL_DOWNLOAD_PROXY，
+    与启动器网络代理（账户登录等，api_proxy_*）相互独立；
+    下载类请求应显式传入该地址，避免 trust_env 误用启动器环境代理。
+
+    :return: 代理地址；未配置时返回 None 表示直连
+    """
+    return os.environ.get(DOWNLOAD_PROXY_ENV_KEY) or None
 
 
 def get_with_retries(

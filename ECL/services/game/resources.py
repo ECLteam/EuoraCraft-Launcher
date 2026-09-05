@@ -20,10 +20,30 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ECL.utils import atomic_write_text
 from ECL.utils.nbt import Compound, List, String, load
+from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
 from .operations import OperationContext
 from .workspace import delete_path, resolve_relative_id, safe_extract_zip
+
+
+def _proxied_get(url: str, **kwargs: Any) -> httpx.Response:
+    # 下载类 GET 统一附带游戏下载代理，与启动器网络代理相互独立。
+    kwargs.setdefault("proxy", download_proxy_url())
+    return httpx.get(url, **kwargs)
+
+
+def _proxied_post(url: str, **kwargs: Any) -> httpx.Response:
+    # 下载类 POST 统一附带游戏下载代理。
+    kwargs.setdefault("proxy", download_proxy_url())
+    return httpx.post(url, **kwargs)
+
+
+def _proxied_stream(method: str, url: str, **kwargs: Any) -> Any:
+    # 下载类流式请求统一附带游戏下载代理。
+    kwargs.setdefault("proxy", download_proxy_url())
+    return httpx.stream(method, url, **kwargs)
+
 
 RESOURCE_DIRECTORIES = {
     "mod": "mods",
@@ -600,7 +620,7 @@ class ResourceCoordinator:
             }
             if sort:
                 params["index"] = sort
-            response = httpx.get(
+            response = _proxied_get(
                 "https://api.modrinth.com/v2/search",
                 params=params,
                 headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
@@ -630,7 +650,7 @@ class ResourceCoordinator:
                 "index": offset,
                 "pageSize": min(limit, 50),
             }
-            response = httpx.get(
+            response = _proxied_get(
                 "https://api.curseforge.com/v1/mods/search",
                 params=params,
                 headers={"x-api-key": key},
@@ -722,7 +742,7 @@ class ResourceCoordinator:
         :return: 项目详情字典
         """
         if source == "curseforge":
-            response = httpx.get(
+            response = _proxied_get(
                 f"https://api.curseforge.com/v1/mods/{project_id}",
                 headers=self._curseforge_headers(),
                 timeout=10,
@@ -763,7 +783,7 @@ class ResourceCoordinator:
             }
         if source != "modrinth":
             raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
-        response = httpx.get(
+        response = _proxied_get(
             f"https://api.modrinth.com/v2/project/{project_id}",
             headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
             timeout=10,
@@ -798,7 +818,7 @@ class ResourceCoordinator:
             params: dict[str, Any] = {"pageSize": 50, "index": 0}
             if game_version:
                 params["gameVersion"] = game_version
-            response = httpx.get(
+            response = _proxied_get(
                 f"https://api.curseforge.com/v1/mods/{project_id}/files",
                 params=params,
                 headers=self._curseforge_headers(),
@@ -836,7 +856,7 @@ class ResourceCoordinator:
             params["game_versions"] = json.dumps([game_version])
         if loader:
             params["loaders"] = json.dumps([loader.casefold()])
-        response = httpx.get(
+        response = _proxied_get(
             f"https://api.modrinth.com/v2/project/{project_id}/version",
             params=params,
             headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
@@ -881,7 +901,7 @@ class ResourceCoordinator:
 
     def _fetch_online_version(self, version_id_str: str) -> dict[str, Any]:
         # 获取 Modrinth 版本详情并返回主下载文件，无可用文件时抛出错误。
-        response = httpx.get(
+        response = _proxied_get(
             f"https://api.modrinth.com/v2/version/{version_id_str}",
             headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
             timeout=10,
@@ -899,7 +919,7 @@ class ResourceCoordinator:
     def _fetch_curseforge_file(self, project_id: str, file_id: str) -> dict[str, Any]:
         # 获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。
         headers = self._curseforge_headers()
-        response = httpx.get(
+        response = _proxied_get(
             f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}",
             headers=headers,
             timeout=10,
@@ -911,7 +931,7 @@ class ResourceCoordinator:
             raise GameServiceError("CurseForge 文件详情无效", "CURSEFORGE_FILE_INVALID")
         url = data.get("downloadUrl")
         if not url:
-            download_response = httpx.get(
+            download_response = _proxied_get(
                 f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}/download-url",
                 headers=headers,
                 timeout=10,
@@ -940,7 +960,7 @@ class ResourceCoordinator:
 
     def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
         # 流式下载在线资源到临时文件，并按需上报字节进度与实时速度。
-        with httpx.stream("GET", url, timeout=15, follow_redirects=True) as stream:
+        with _proxied_stream("GET", url, timeout=15, follow_redirects=True) as stream:
             stream.raise_for_status()
             total = int(stream.headers.get("content-length") or 0)
             with temp.open("wb") as output:
@@ -1145,7 +1165,7 @@ class ResourceCoordinator:
             raise GameServiceError("资源 SHA-512 格式无效", "INVALID_RESOURCE_HASH")
         candidates: list[dict[str, Any]] = []
         try:
-            response = httpx.post(
+            response = _proxied_post(
                 "https://api.modrinth.com/v2/version_files",
                 json={"hashes": [sha512], "algorithm": "sha512"},
                 headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
@@ -1237,7 +1257,7 @@ class ResourceCoordinator:
             destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
             temp = root / f".{destination.name}.ecl-download"
             try:
-                with httpx.stream("GET", str(selected["url"]), timeout=15, follow_redirects=True) as response:
+                with _proxied_stream("GET", str(selected["url"]), timeout=15, follow_redirects=True) as response:
                     response.raise_for_status()
                     with temp.open("wb") as stream:
                         for chunk in response.iter_bytes(1024 * 1024):

@@ -16,6 +16,10 @@ default_config: dict[str, Any] = {
         "debug": False,
         "debug_log_level": "info",
         "disable_ssl_verify": False,
+        # 启动器通道代理（账户登录、元数据等），与下载通道相互独立。
+        "api_proxy_mode": "none",
+        "api_proxy_url": "",
+        # 下载通道代理（游戏文件、Mod 与资源包），经 ECL_DOWNLOAD_PROXY 下发。
         "proxy_mode": "none",
         "proxy_url": "",
         "request_timeout": 15,

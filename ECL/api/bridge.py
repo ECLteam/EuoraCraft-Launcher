@@ -35,6 +35,7 @@ from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
+from ECL.utils.network import download_proxy_url
 
 _queued_frontend_events = frozenset(
     {
@@ -182,12 +183,13 @@ def _guess_image_extension(response: httpx.Response, url: str) -> str:
 
 
 async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
-    # 使用独立客户端流式下载远程图片，并限制响应大小。
+    # 使用独立客户端流式下载远程图片，并限制响应大小；图片属于下载通道，走游戏下载代理。
     async with (
         httpx.AsyncClient(
             follow_redirects=True,
             timeout=_REMOTE_IMAGE_TIMEOUT,
             headers={"User-Agent": "EuoraCraft-Launcher"},
+            proxy=download_proxy_url(),
         ) as client,
         client.stream("GET", url) as response,
     ):

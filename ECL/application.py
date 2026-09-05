@@ -61,23 +61,49 @@ def _network_retries(value: Any) -> int:
 
 
 def _http_transport(launcher_config: Mapping[str, Any]) -> httpx.HTTPTransport:
-    """按启动器网络配置构造共享客户端的传输层。
+    """按启动器网络配置构造启动器通道的传输层。
+
+    启动器通道（账户登录、元数据等）使用 api_proxy_* 配置，与游戏下载代理
+    （proxy_mode/proxy_url，经 ECL_DOWNLOAD_PROXY 下发）相互独立。
 
     :param launcher_config: launcher 配置分区，提供代理模式与重试次数
     :return: 配置好代理与重试的 HTTP 传输层
     """
-    proxy_mode = _proxy_mode(launcher_config)
-    custom_proxy_url = str(launcher_config.get("proxy_url") or "").strip()
-    if proxy_mode == "none":
-        # httpx 默认通过 urllib 读取系统/环境代理，代理异常时所有请求都会失败，
-        # 这里统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
-        os.environ["NO_PROXY"] = "*"
-        os.environ["no_proxy"] = "*"
-    proxy_url = _resolve_proxy_url(proxy_mode, custom_proxy_url)
+    proxy_mode = _proxy_mode(launcher_config, mode_key="api_proxy_mode")
+    proxy_url = _resolve_proxy_url(proxy_mode, str(launcher_config.get("api_proxy_url") or "").strip())
     return httpx.HTTPTransport(
         retries=_network_retries(launcher_config.get("request_retries", 2)),
         proxy=httpx.Proxy(url=proxy_url) if proxy_url else None,
     )
+
+
+def _sync_download_proxy_env(launcher_config: Mapping[str, Any]) -> None:
+    """将游戏下载代理同步到进程环境变量 ECL_DOWNLOAD_PROXY。
+
+    下载代理沿用 proxy_mode/proxy_url 配置，与启动器网络代理（api_proxy_*）相互独立；
+    主仓库下载类请求与 ECL/game 子模块下载器都从该变量读取代理地址，
+    账户登录等启动器通道客户端 trust_env=False 不受影响。
+
+    :param launcher_config: launcher 配置分区
+    """
+    proxy_mode = _proxy_mode(launcher_config)
+    if proxy_mode == "none":
+        # httpx 默认读取系统/环境代理，代理异常时所有请求都会失败，
+        # 统一置 NO_PROXY=* 让全部网络请求直连，规避坏代理的影响。
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+        os.environ.pop("ECL_DOWNLOAD_PROXY", None)
+        return
+    # 仅清除本应用此前设置的 NO_PROXY=*，不覆盖用户自行配置的排除列表
+    if os.environ.get("NO_PROXY") == "*":
+        os.environ["NO_PROXY"] = ""
+    if os.environ.get("no_proxy") == "*":
+        os.environ["no_proxy"] = ""
+    proxy_url = _resolve_proxy_url(proxy_mode, str(launcher_config.get("proxy_url") or "").strip())
+    if proxy_url:
+        os.environ["ECL_DOWNLOAD_PROXY"] = proxy_url
+    else:
+        os.environ.pop("ECL_DOWNLOAD_PROXY", None)
 
 
 def _apply_http_network_settings(client: httpx.Client, launcher_config: Mapping[str, Any]) -> None:
@@ -100,11 +126,13 @@ def _apply_http_network_settings(client: httpx.Client, launcher_config: Mapping[
 _PROXY_MODES = ("none", "system", "custom")
 
 
-def _proxy_mode(launcher_config: Mapping[str, Any]) -> str:
-    # 读取代理模式，兼容旧版 ignore_proxy 布尔配置（true→直连、false→系统代理）。
-    mode = launcher_config.get("proxy_mode")
+def _proxy_mode(launcher_config: Mapping[str, Any], mode_key: str = "proxy_mode") -> str:
+    # 读取代理模式；proxy_mode 兼容旧版 ignore_proxy 布尔配置（true→直连、false→系统代理）。
+    mode = launcher_config.get(mode_key)
     if mode in _PROXY_MODES:
         return mode
+    if mode_key != "proxy_mode":
+        return "none"
     return "none" if launcher_config.get("ignore_proxy", True) else "system"
 
 
@@ -272,11 +300,14 @@ def create_application(
         request_retries = _network_retries(launcher_config.get("request_retries", 2))
         ssl_verify_context = ssl.create_default_context()
         _apply_ssl_verify(ssl_verify_context, not disable_ssl_verify)
+        _sync_download_proxy_env(launcher_config)
         http = httpx.Client(
             timeout=httpx.Timeout(request_timeout, connect=min(10.0, request_timeout)),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             verify=ssl_verify_context,
+            # 启动器通道固定不读代理环境变量，账户登录等请求不受下载代理影响
+            trust_env=False,
             transport=_http_transport(launcher_config),
         )
         created.append(http)
@@ -408,6 +439,7 @@ def create_application(
             ssl_verify_context,
             not bool((data or {}).get("disable_ssl_verify", False)),
         )
+        _sync_download_proxy_env(launcher_config)
         _apply_http_network_settings(http, launcher_config)
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 

@@ -105,10 +105,12 @@ class AuthlibAccountManager:
         self.token_path = self.account_path / "yggdrasil_accounts"
         self.token_path.mkdir(parents=True, exist_ok=True)
         self.client = client or YggdrasilClient()
+        # 启动器通道客户端固定不读代理环境变量，账户登录等请求不受下载代理影响
         self.http = http_client or httpx.Client(
             timeout=httpx.Timeout(15, connect=10),
             follow_redirects=True,
             headers={"User-Agent": "EuoraCraft-Launcher"},
+            trust_env=False,
         )
         self.accounts: dict[str, dict] = {}
         self.tokens: dict[str, dict[str, str]] = {}
