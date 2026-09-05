@@ -17,9 +17,9 @@ from ECL.services.game.worlds import WorldCoordinator
 from ECL.utils.nbt import Byte, Compound, File, Int, Long, String, load
 
 
-def test_resolve_instance_target_matches_current_isolation_semantics(tmp_path: Path) -> None:
-    shared = resolve_instance_target(tmp_path, "1.21.8", True)
-    isolated = resolve_instance_target(tmp_path, "1.21.8", False)
+def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> None:
+    shared = resolve_instance_target(tmp_path, "1.21.8", False)
+    isolated = resolve_instance_target(tmp_path, "1.21.8", True)
 
     assert shared.data_path == tmp_path / "versions"
     assert isolated.data_path == tmp_path / "versions" / "1.21.8"
@@ -96,6 +96,7 @@ def test_world_patch_preserves_unknown_nbt_and_creates_backup(tmp_path: Path) ->
         "test",
         "world",
         {"difficulty": 3, "allowCommands": True, "difficultyLocked": True},
+        version_isolation=True,
     )
 
     loaded = load(version / "saves" / "world" / "level.dat")

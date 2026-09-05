@@ -575,7 +575,7 @@ def _fullscreen_launch_fixture(tmp_path, monkeypatch):
 
 def test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_path, monkeypatch) -> None:
     service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
-    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    options_path = game_path / "versions" / "options.txt"
     options_path.write_text("lang:zh_CN\nfullscreen:false\nmusicVolume:0.8\n", encoding="utf-8")
 
     asyncio.run(
@@ -602,7 +602,7 @@ def test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monke
         )
     )
 
-    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    options_path = game_path / "versions" / "options.txt"
     assert options_path.read_text(encoding="utf-8") == "fullscreen:false\n"
     service.close()
 
@@ -620,8 +620,8 @@ def test_launch_fullscreen_uses_versions_directory_when_isolated(tmp_path, monke
         )
     )
 
-    assert (game_path / "versions" / "options.txt").read_text(encoding="utf-8") == "fullscreen:true\n"
-    assert not (game_path / "versions" / "1.21.8" / "options.txt").exists()
+    assert (game_path / "versions" / "1.21.8" / "options.txt").read_text(encoding="utf-8") == "fullscreen:true\n"
+    assert not (game_path / "versions" / "options.txt").exists()
     service.close()
 
 
