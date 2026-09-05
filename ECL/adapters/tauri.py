@@ -9,6 +9,7 @@ from pytauri_wheel.lib import builder_factory, context_factory
 from ECL.api import FrontendApi
 from ECL.api.registry import command_handlers
 from ECL.application import ApplicationContext
+from ECL.services.frontend_events import subscribe_all_frontend_events
 from ECL.utils import get_logger
 
 
@@ -88,143 +89,26 @@ class Adapter:
         logger.debug("IPC 命令注册完成: count=%d", len(handlers))
 
     def _register_events(self) -> None:
-        # 订阅后端事件总线，将各类事件统一转发到前端。
+        # 复用共享事件桥完成「后端事件 → 前端事件」的纯转换，仅保留含副作用的订阅。
         api = self.frontend_api_instance
         bus = self.events
         logger = getattr(self, "logger", get_logger("Adapter"))
         logger.debug("正在注册后端到前端的事件转发")
 
-        bus.subscribe(
-            "config:updated",
-            lambda section, data: api.emit_to_frontend("config:updated", {"section": section, "data": data}),
-        )
-        bus.subscribe(
-            "accounts:changed",
-            lambda data: api.emit_to_frontend("accounts_changed", data),
-        )
+        subscribe_all_frontend_events(bus, api.emit_to_frontend)
+
+        # 严重错误需要保留待确认的内存副本，供前端轮询补录；窗口侧副作用只在这些订阅里处理。
+        bus.subscribe("launcher:error", api.emit_error_to_frontend)
         bus.subscribe(
             "accounts:microsoft_login_status",
-            self._forward_microsoft_login_status,
-        )
-        bus.subscribe("launcher:error", api.emit_error_to_frontend)
-        bus.subscribe("launcher:popup", api.emit_popup_to_frontend)
-        for event_name in (
-            "launcher:notify",
-            "game:install_progress",
-            "game:launch_progress",
-            "game:versions_changed",
-            "game:instances_changed",
-            "game:operation_progress",
-            "launcher:log",
-            "process:instance_log",
-            "process:instances_changed",
-        ):
-            bus.subscribe(
-                event_name,
-                lambda payload, event_name=event_name: api.emit_to_frontend(event_name, payload),
-            )
-
-        # 插件状态发生变化时，前端只接收统一的 status_changed 事件
-        bus.subscribe(
-            "plugin:enabled",
-            lambda plugin: api.emit_to_frontend(
-                "plugin:status_changed", {"name": plugin.name, "action": "enabled", "result": True}
-            ),
+            lambda data: api.focus_window() if data.get("focus") else None,
         )
         bus.subscribe(
             "plugin:disabled",
-            lambda plugin: (
-                api.close_plugin_windows(plugin.name),
-                api.emit_to_frontend(
-                    "plugin:status_changed", {"name": plugin.name, "action": "disabled", "result": True}
-                ),
-            ),
+            lambda plugin: api.close_plugin_windows(plugin.name),
         )
         bus.subscribe(
             "plugin:unloaded",
-            lambda name: (
-                api.close_plugin_windows(name),
-                api.emit_to_frontend(
-                    "plugin:status_changed", {"name": name, "action": "unloaded", "result": True}
-                ),
-            ),
-        )
-        bus.subscribe(
-            "plugin:installed",
-            lambda name: api.emit_to_frontend("plugin:installed", {"name": name}),
-        )
-        bus.subscribe(
-            "plugin:css_injected",
-            lambda plugin, css, key: api.emit_to_frontend(
-                "plugin:css_injected", {"plugin": plugin, "css": css, "key": key}
-            ),
-        )
-        bus.subscribe(
-            "plugin:html_injected",
-            lambda plugin, slot, html, key, context_key=None: api.emit_to_frontend(
-                "plugin:html_injected",
-                {"plugin": plugin, "slot": slot, "html": html, "key": key, "contextKey": context_key},
-            ),
-        )
-        bus.subscribe(
-            "plugin:script_injected",
-            lambda plugin, script: api.emit_to_frontend("plugin:script_injected", {"plugin": plugin, "script": script}),
-        )
-        bus.subscribe(
-            "plugin:typescript_injected",
-            lambda plugin, script: api.emit_to_frontend(
-                "plugin:typescript_injected", {"plugin": plugin, "script": script}
-            ),
-        )
-        bus.subscribe(
-            "plugin:route_registered",
-            lambda plugin, path, title, icon="": api.emit_to_frontend(
-                "plugin:route_registered",
-                {"plugin": plugin, "path": path, "title": title, "icon": icon},
-            ),
-        )
-        bus.subscribe(
-            "plugin:settings_changed",
-            lambda plugin, key, old_value, new_value: api.emit_to_frontend(
-                "plugin:settings_changed",
-                {"plugin": plugin, "key": key, "old_value": old_value, "new_value": new_value},
-            ),
-        )
-        bus.subscribe(
-            "plugin:vue_slot_registered",
-            lambda plugin, slot, component_name, template, script, style, context_key=None: api.emit_to_frontend(
-                "plugin:vue_slot_registered",
-                {
-                    "plugin": plugin,
-                    "slot": slot,
-                    "component_name": component_name,
-                    "template": template,
-                    "script": script,
-                    "style": style,
-                    "contextKey": context_key,
-                },
-            ),
-        )
-        bus.subscribe(
-            "plugin:vue_route_registered",
-            lambda plugin, path, title, component_name, template, script, style, icon="": api.emit_to_frontend(
-                "plugin:vue_route_registered",
-                {
-                    "plugin": plugin,
-                    "path": path,
-                    "title": title,
-                    "component_name": component_name,
-                    "template": template,
-                    "script": script,
-                    "style": style,
-                    "icon": icon,
-                },
-            ),
+            lambda name: api.close_plugin_windows(name),
         )
         logger.debug("后端到前端的事件转发注册完成")
-
-    def _forward_microsoft_login_status(self, data: dict[str, Any]) -> None:
-        # 转发微软账号登录状态事件，需要聚焦时唤起应用窗口。
-        if data.get("focus"):
-            self.frontend_api_instance.focus_window()
-        self.frontend_api_instance.emit_to_frontend("accounts_microsoft_login_status", data)
