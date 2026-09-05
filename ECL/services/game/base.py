@@ -249,7 +249,7 @@ class _GameState:
         with self._lock:
             existing = self._contexts.get(key)
             if existing is not None:
-                self.logger.debug("复用 Game Core 上下文: path=%s, source=%s", path, normalized_source)
+                self.logger.debug("复用游戏核心: path=%s, source=%s", path, normalized_source)
                 return existing
 
             api_client = self._api_client_factory(self._api_config(normalized_source))
@@ -266,7 +266,7 @@ class _GameState:
                 games=GetGames(files_checker, loader_installer, path),
             )
             self._contexts[key] = context
-            self.logger.debug("创建 Game Core 上下文: path=%s, source=%s", path, normalized_source)
+            self.logger.debug("创建游戏核心: path=%s, source=%s", path, normalized_source)
             return context
 
     def _query_context(self, source: Any = "official") -> _CoreContext:

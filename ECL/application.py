@@ -239,10 +239,10 @@ class ApplicationContext:
         """
         with self._close_lock:
             if self._closed:
-                logger.debug("忽略重复的应用上下文关闭请求")
+                logger.debug("忽略重复的后台服务关闭请求")
                 return
             object.__setattr__(self, "_closed", True)
-            logger.debug("开始关闭应用上下文中的共享资源")
+            logger.debug("开始关闭后台服务")
             for resource in (self.plugins, self.processes, self.game, self.connector, self.accounts, self.http):
                 try:
                     close = resource.close
@@ -254,7 +254,7 @@ class ApplicationContext:
                 except Exception:
                     logger.exception("关闭后端资源失败: %s", type(resource).__name__)
             self.events.clear()
-            logger.debug("应用上下文已关闭")
+            logger.debug("后台服务已关闭")
 
 
 def create_application(
@@ -285,7 +285,7 @@ def create_application(
     if on_state_ready is not None:
         on_state_ready(state)
     logger.debug(
-        "正在构造后端依赖图: data_path=%s, frozen=%s, debug=%s",
+        "正在初始化后端服务: data_path=%s, frozen=%s, debug=%s",
         state.data_path,
         state.is_frozen,
         state.debug,
@@ -396,7 +396,7 @@ def create_application(
         plugins.initialize(state.data_path, state.resource_path)
         logger.debug("插件管理器已初始化")
     except Exception:
-        logger.exception("后端依赖图构造失败，正在回收已创建的资源")
+        logger.exception("后端服务初始化失败，正在释放已创建的资源")
         for resource in reversed(created):
             close = getattr(resource, "close", None)
             if callable(close):
@@ -444,7 +444,7 @@ def create_application(
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
-    logger.info("后端依赖图构造完成")
+    logger.info("后端服务初始化完成")
     return context
 
 

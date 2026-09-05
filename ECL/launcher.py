@@ -71,7 +71,7 @@ class EuoraCraftLauncher:
             self.logger.info("启动前端")
             Adapter(self._require_context()).run()
         except Exception:
-            self.logger.exception("前端适配器运行失败")
+            self.logger.exception("前端界面运行失败")
             return LauncherExitCode.FRONTEND_FAILED
         finally:
             self._shutdown()
