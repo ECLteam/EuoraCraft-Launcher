@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from ECL.game.Core.MicrosoftAuth import _friendly_network_error
@@ -174,3 +176,47 @@ async def test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> No
         assert "设备码流程已进入" in str(error)
     else:
         raise AssertionError("允许设备码流程时应进入设备码流程")
+
+
+async def test_save_account_list_persists_atomically(tmp_path) -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+
+    manager = MicrosoftAuthManager(client_id="test-client", cache_path=tmp_path)
+    try:
+        manager.microsoft_accounts["acc1"] = {"AccountId": "acc1", "Email": "a@b.c"}
+        manager._save_account_list()
+
+        loaded = json.loads(manager.account_list_file.read_text(encoding="utf-8"))
+        assert loaded["acc1"]["Email"] == "a@b.c"
+        # 原子写入不应在目录中残留临时文件
+        assert list(tmp_path.rglob("*.tmp")) == []
+    finally:
+        await manager.aclose()
+
+
+async def test_load_accounts_tolerates_corrupted_list(tmp_path) -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+
+    list_file = tmp_path / "accounts" / "ms_accounts_list.json"
+    list_file.parent.mkdir(parents=True, exist_ok=True)
+    list_file.write_text("{not-valid-json", encoding="utf-8")
+
+    manager = MicrosoftAuthManager(client_id="test-client", cache_path=tmp_path)
+    try:
+        # 被截断的列表文件不应中断账户加载
+        assert manager.get_microsoft_accounts() == {}
+    finally:
+        await manager.aclose()
+
+
+async def test_save_cache_writes_valid_json(tmp_path) -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    cache_file = tmp_path / "cache.json"
+    auth = MicrosoftAuth(client_id="test-client", cache_file=cache_file, client=_RefreshFailingClient())
+    auth._cache["refresh_token"] = "rt"
+
+    auth._save_cache()
+
+    loaded = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert loaded["refresh_token"] == "rt"
