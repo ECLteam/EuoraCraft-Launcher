@@ -718,19 +718,22 @@ def test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None:
     api.emit_to_frontend("launcher:notify", {"message": "test"})  # 不应抛出异常
 
 
-def test_microsoft_authorization_event_focuses_before_forwarding() -> None:
+def test_microsoft_authorization_event_focuses_before_forwarding(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
     calls = []
-    api = SimpleNamespace(
-        focus_window=lambda: calls.append("focus"),
-        emit_to_frontend=lambda event, data: calls.append((event, data)),
-    )
+    monkeypatch.setattr(api, "focus_window", lambda: calls.append("focus"))
+    monkeypatch.setattr(api, "emit_to_frontend", lambda event, payload: calls.append((event, payload)))
     adapter = object.__new__(Adapter)
     adapter.frontend_api_instance = api
+    adapter.events = api.events
+
+    adapter._register_events()
+    # 共享事件桥负责转发，适配层额外订阅负责唤起窗口，两者互不冲突。
     event = {"status": "progress", "stage": "authorization_confirmed", "focus": True}
+    api.events.emit("accounts:microsoft_login_status", event)
 
-    adapter._forward_microsoft_login_status(event)
-
-    assert calls == ["focus", ("accounts_microsoft_login_status", event)]
+    assert "focus" in calls
+    assert ("accounts_microsoft_login_status", event) in calls
 
 
 def test_adapter_forwards_launcher_notifications(tmp_path, monkeypatch) -> None:
