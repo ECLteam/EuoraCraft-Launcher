@@ -64,8 +64,16 @@ def test_parse_version_returns_none_for_invalid_input() -> None:
     assert parse_version("1.4.2-alpha.") is None
 
 
-def test_alpha_version_disables_check() -> None:
-    http = FakeHttp()
+def test_alpha_channel_considers_all_release_types() -> None:
+    http = FakeHttp(
+        _response(
+            json=[
+                _release("v1.4.2-alpha.1", prerelease=True),
+                _release("v1.4.2-beta.1", prerelease=True),
+                _release("v1.4.2", prerelease=False, body="正式版"),
+            ]
+        )
+    )
 
     result = UpdateChecker(
         http,
@@ -73,10 +81,30 @@ def test_alpha_version_disables_check() -> None:
         version_type="alpha",
     ).check()
 
-    assert result.status == "disabled"
+    assert result.status == "update_available"
     assert result.channel == "alpha"
-    assert result.latest_version is None
-    assert not http.calls
+    assert result.latest_version == "1.4.2"
+    assert result.latest_notes == "正式版"
+    assert http.calls
+
+
+def test_alpha_channel_up_to_date_when_current_is_global_latest() -> None:
+    http = FakeHttp(
+        _response(
+            json=[
+                _release("v1.4.2-alpha.1", prerelease=True),
+                _release("v1.4.2-beta.1", prerelease=True),
+            ]
+        )
+    )
+
+    result = UpdateChecker(
+        http,
+        current_version="1.4.2-beta.1+20260906",
+        version_type="alpha",
+    ).check()
+
+    assert result.status == "up_to_date"
 
 
 def test_beta_channel_finds_newer_prerelease() -> None:

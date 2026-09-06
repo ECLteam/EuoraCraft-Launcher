@@ -133,14 +133,12 @@ class UpdateChecker:
             current_version=self.current_version,
             channel=channel,
         )
-        if channel == "alpha":
-            base.status = "disabled"
-            base.message = "Alpha 版本不参与更新检测"
-            return base
         releases = self._fetch_releases(base)
         if releases is None:
             return base
-        best_tag, best_release = self._select_best_release(releases, want_prerelease=channel == "beta")
+        # alpha 查看全部版本类型的最新版本；beta/rc 只看预发布；正式版只看正式 release
+        want_prerelease = None if channel == "alpha" else (channel == "beta")
+        best_tag, best_release = self._select_best_release(releases, want_prerelease=want_prerelease)
         if best_release is None:
             base.status = "up_to_date"
             return base
@@ -189,13 +187,13 @@ class UpdateChecker:
 
     @staticmethod
     def _select_best_release(
-        releases: list[dict[str, Any]], *, want_prerelease: bool
+        releases: list[dict[str, Any]], *, want_prerelease: bool | None
     ) -> tuple[str, dict[str, Any] | None]:
         """
         按通道筛选 Release 列表并返回其中版本号最高的一项。
 
         :param releases: GitHub Releases 返回的 Release 列表
-        :param want_prerelease: 是否只看预发布版本
+        :param want_prerelease: 是否只看预发布版本；None 表示不过滤全部版本
         :return: ``(最高版本号, 对应 Release 对象)``；无可匹配项时返回空串与 None
         """
         best_tag = ""
@@ -203,7 +201,7 @@ class UpdateChecker:
         for release in releases:
             if not isinstance(release, dict):
                 continue
-            if bool(release.get("prerelease")) != want_prerelease:
+            if want_prerelease is not None and bool(release.get("prerelease")) != want_prerelease:
                 continue
             tag = str(release.get("tag_name") or "").strip()
             if parse_version(tag) is None:
