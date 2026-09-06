@@ -112,28 +112,33 @@ jobs:
         shell: bash
         run: |
           TAG="${{ github.ref_name }}"
-          # Strip v prefix, then extract version and type
+          # Strip v prefix, then extract version, type and build metadata
           if [[ "$TAG" == v* ]]; then
             VER="${TAG#v}"
-            # Determine version type from suffix
+            # Determine version type from pre-release suffix
             if [[ "$VER" == *-beta* ]]; then
               echo "type=beta" >> "$GITHUB_OUTPUT"
             elif [[ "$VER" == *-alpha* ]]; then
               echo "type=alpha" >> "$GITHUB_OUTPUT"
+            elif [[ "$VER" == *-rc* ]]; then
+              echo "type=rc" >> "$GITHUB_OUTPUT"
             else
               echo "type=release" >> "$GITHUB_OUTPUT"
             fi
-            # Strip pre-release suffix for the semver version
+            # Strip pre-release suffix for the semver core version
             CLEAN_VER="${VER%-*}"
             if [ "$CLEAN_VER" = "$VER" ]; then
-              # No suffix, use as-is
+              # No pre-release suffix, use as-is
               echo "version=$VER" >> "$GITHUB_OUTPUT"
             else
               echo "version=$CLEAN_VER" >> "$GITHUB_OUTPUT"
             fi
+            # Full version (pre-release and build metadata included) for runtime injection
+            echo "full_version=$VER" >> "$GITHUB_OUTPUT"
           else
             echo "type=" >> "$GITHUB_OUTPUT"
             echo "version=" >> "$GITHUB_OUTPUT"
+            echo "full_version=" >> "$GITHUB_OUTPUT"
           fi
           if [[ "$TAG" == v* ]]; then
             echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
@@ -142,7 +147,8 @@ jobs:
             VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
             TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
             if [ -n "$VER_PY" ]; then
-              if [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
+              # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
+              if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
                 echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
               else
                 echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
@@ -156,7 +162,7 @@ jobs:
         shell: bash
         env:
           VTYPE: ${{ steps.version_info.outputs.type }}
-          VVER: ${{ steps.version_info.outputs.version }}
+          VVER: ${{ steps.version_info.outputs.full_version }}
         run: |
           python - <<'PY'
           import os, re
@@ -166,7 +172,7 @@ jobs:
               path = "ECL/common/version.py"
               with open(path, encoding="utf-8") as f:
                   text = f.read()
-              # Update __version__
+              # Update __version__ with the full version (pre-release and build metadata included)
               text = re.sub(
                   r"""__version__\s*=\s*['"][^'"]*['"]""",
                   f'__version__ = "{vver}"',
@@ -215,7 +221,7 @@ jobs:
               CONSOLE_MODE="force"
             elif [ "${ECL_CONSOLE:-}" = "0" ]; then
               CONSOLE_MODE="disable"
-            elif [ "$VTYPE" = "beta" ] || [ "$VTYPE" = "release" ]; then
+            elif [ "$VTYPE" = "beta" ] || [ "$VTYPE" = "rc" ] || [ "$VTYPE" = "release" ]; then
               CONSOLE_MODE="disable"
             fi
             ARGS+=(--windows-console-mode="$CONSOLE_MODE")
@@ -324,11 +330,16 @@ jobs:
               VTYPE="beta"
             elif [[ "$VER" == *-alpha* ]]; then
               VTYPE="alpha"
+            elif [[ "$VER" == *-rc* ]]; then
+              VTYPE="rc"
             else
               VTYPE="release"
             fi
+            echo "full_version=$VER" >> "$GITHUB_OUTPUT"
             CLEAN="${VER%-*}"
             [ "$CLEAN" != "$VER" ] && VER="$CLEAN"
+          else
+            echo "full_version=" >> "$GITHUB_OUTPUT"
           fi
           echo "tagname=$TAG" >> "$GITHUB_OUTPUT"
           echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
@@ -340,7 +351,8 @@ jobs:
             VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
             TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
             if [ -n "$VER_PY" ]; then
-              if [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
+              # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
+              if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
                 echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
               else
                 echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
@@ -389,7 +401,7 @@ jobs:
         shell: bash
         env:
           VTYPE: ${{ steps.ver.outputs.version_type }}
-          VVER: ${{ steps.ver.outputs.pkgver }}
+          VVER: ${{ steps.ver.outputs.full_version }}
         run: |
           .venv-arch/bin/python - <<'PY'
           import os, re
