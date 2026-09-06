@@ -8,6 +8,7 @@ from anyio import to_thread
 
 from ECL.api.contracts import success
 from ECL.services.maintenance import schedule_debug_maintenance
+from ECL.services.updates import UpdateChecker
 
 from .bridge import _FrontendState, _ipc_handler
 
@@ -89,6 +90,34 @@ class SystemHandlers(_FrontendState):
                 "debug": bool(launcher_config.get("debug", False)),
             },
         }
+
+    @_ipc_handler("UPDATE_CHECK_FAILED")
+    async def launcher_check_update(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        按当前版本通道检查 GitHub Releases 是否有新版本。
+
+        :param body: 必须为空的请求对象
+        :return: 包含检测状态、通道与最新版本信息的响应
+        """
+        if body:
+            return {"success": False, "message": "launcher_check_update 不接受参数", "errorCode": "INVALID_REQUEST"}
+        checker = UpdateChecker(
+            self.http,
+            current_version=self.launcher.launcher_version,
+            version_type=self.launcher.launcher_version_type,
+        )
+        result = await to_thread.run_sync(checker.check)
+        return success(
+            {
+                "status": result.status,
+                "current_version": result.current_version,
+                "channel": result.channel,
+                "latest_version": result.latest_version,
+                "latest_url": result.latest_url,
+                "latest_notes": result.latest_notes,
+                "message": result.message,
+            }
+        )
 
     async def info_card_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """

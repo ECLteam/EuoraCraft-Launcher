@@ -20,6 +20,7 @@ COMMAND_NAMES = (
     "system_ping",
     "system_memory",
     "launcher_info",
+    "launcher_check_update",
     "info_card_get",
     "user_agreement_get",
     "user_agreement_save",
