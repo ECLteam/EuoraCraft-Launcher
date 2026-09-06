@@ -133,8 +133,8 @@ def _build_api(tmp_path):
         data_path=tmp_path / "ECL_data",
         config={"launcher": {"debug": False}},
         debug=False,
-        launcher_version="0.1.0",
-        launcher_version_type="dev",
+        launcher_version="1.4.2-alpha.3+20260906",
+        launcher_version_type="alpha",
     )
     bus = EventBus()
     context = SimpleNamespace(

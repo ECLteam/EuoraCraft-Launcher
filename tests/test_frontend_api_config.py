@@ -272,8 +272,8 @@ def _build_api(tmp_path) -> FrontendApi:
         data_path=tmp_path / "ECL_data",
         config={"launcher": {"debug": True}},
         debug=True,
-        launcher_version="0.1.0",
-        launcher_version_type="dev",
+        launcher_version="1.4.2-alpha.3+20260906",
+        launcher_version_type="alpha",
     )
     bus = EventBus()
     context = SimpleNamespace(
@@ -309,8 +309,8 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
         "request_timeout": 15,
         "request_retries": 2,
         "dev_channel": False,
-        "version": "0.1.0",
-        "version_type": "dev",
+        "version": "1.4.2-alpha.3+20260906",
+        "version_type": "alpha",
     }
 
 
@@ -321,8 +321,8 @@ def test_launcher_info_matches_effective_launcher_config(tmp_path) -> None:
 
     assert result["success"] is True
     assert result["data"]["debug"] is True
-    assert result["data"]["version"] == "0.1.0"
-    assert result["data"]["version_type"] == "dev"
+    assert result["data"]["version"] == "1.4.2-alpha.3+20260906"
+    assert result["data"]["version_type"] == "alpha"
 
 
 def test_info_card_delegates_to_registered_service(tmp_path) -> None:

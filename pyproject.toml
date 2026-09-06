@@ -66,11 +66,32 @@ version = {attr = "ECL.common.version.__version__"}
 
 [tool.semantic_release]
 version_variables = ["ECL/common/version.py:__version__"]
-branch = "main"
+tag_format = "v{version}"
 upload_to_pypi = false
 upload_to_release = true
 build_command = "pip install build && python -m build"
 changelog_file = "CHANGELOG.md"
+
+# 版本格式：正式版为 vX.Y.Z；预发布在对应分支上生成 vX.Y.Z-{token}.{序号}，
+# 发布时可用 --build-metadata 追加构建日期（如 v1.4.2-alpha.3+20260906）。
+[tool.semantic_release.branches.main]
+match = "^(main|master)$"
+prerelease = false
+
+[tool.semantic_release.branches.alpha]
+match = "alpha/.+"
+prerelease = true
+prerelease_token = "alpha"
+
+[tool.semantic_release.branches.beta]
+match = "beta/.+"
+prerelease = true
+prerelease_token = "beta"
+
+[tool.semantic_release.branches.rc]
+match = "rc/.+"
+prerelease = true
+prerelease_token = "rc"
 
 [tool.semantic_release.commit_parser_options]
 allowed_tags = ["feat", "fix", "perf", "docs", "style", "refactor", "test", "chore"]
@@ -82,7 +103,7 @@ type = "github"
 asyncio_mode = "auto"
 
 [tool.euoracraft]
-version_type = "dev"
+version_type = "alpha"
 build_number = 0
 
 [tool.pyinstaller]

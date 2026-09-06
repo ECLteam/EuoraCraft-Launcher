@@ -27,7 +27,7 @@ def _make_service(tmp_path, plugins: Mock | None = None, events: EventBus | None
         plugins=plugins or Mock(),
         events=events or EventBus(),
         data_path=tmp_path / "ECL_data",
-        launcher_version="0.1.0",
+        launcher_version="1.4.2-alpha.3+20260906",
         debug=False,
         frontend_dist=frontend_dist,
     )
@@ -58,7 +58,7 @@ async def _authed_client(service: DevChannelService):
     reply = json.loads(await websocket.recv())
     assert reply["op"] == "auth_ok"
     assert reply["protocolVersion"] == 1
-    assert reply["launcherVersion"] == "0.1.0"
+    assert reply["launcherVersion"] == "1.4.2-alpha.3+20260906"
     return websocket
 
 
@@ -72,7 +72,7 @@ def test_start_writes_discovery_file(service) -> None:
 
     assert discovery["port"] == service.port
     assert discovery["pid"] > 0
-    assert discovery["launcherVersion"] == "0.1.0"
+    assert discovery["launcherVersion"] == "1.4.2-alpha.3+20260906"
     assert discovery["protocolVersion"] == 1
     assert len(discovery["token"]) > 20
 
@@ -103,7 +103,7 @@ async def test_launcher_info_reports_runtime_state(service, tmp_path) -> None:
         assert reply["id"] == 1
         assert reply["ok"] is True
         data = reply["data"]
-        assert data["version"] == "0.1.0"
+        assert data["version"] == "1.4.2-alpha.3+20260906"
         assert data["debug"] is False
         assert data["devChannel"] is True
         assert data["dataPath"] == str(tmp_path / "ECL_data")

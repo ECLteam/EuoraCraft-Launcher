@@ -35,8 +35,8 @@ class EuoraCraftLauncher:
         self.app_path: Path = self.runtime_info["app_path"]  # 启动器数据与运行文件所在目录
         self.resource_path: Path = self.runtime_info["resource_path"]  # 打包资源或源码资源所在目录
         self.data_path: Path = self.runtime_info["data_path"]  # 后端持久化数据目录
-        self.launcher_version = __version__  # 启动器版本号
-        self.launcher_version_type = __version_type__  # 启动器版本类型（alpha/beta/release；dev 表示源码启动）
+        self.launcher_version = __version__  # 启动器完整版本号（含预发布与构建日期）
+        self.launcher_version_type = __version_type__  # 启动器版本类型（alpha/beta/rc/release；dev 表示源码启动）
         self.is_frozen = self.runtime_info["is_frozen"]  # 是否运行于打包后的可执行文件
         self.debug = False  # 是否启用调试模式（调试工具与标签显示）
         self.debug_log_level = "info"  # 控制台日志级别
@@ -59,7 +59,7 @@ class EuoraCraftLauncher:
 
         :return: 本次运行的结果退出码（LauncherExitCode 枚举值）
         """
-        self.logger.info("正在启动 EuoraCraft Launcher V%s %s", self.launcher_version, self.launcher_version_type)
+        self.logger.info("正在启动 EuoraCraft Launcher V%s", self.launcher_version)
         try:
             self._initialize()
         except Exception:
