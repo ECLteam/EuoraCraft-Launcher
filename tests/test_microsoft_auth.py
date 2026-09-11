@@ -1,4 +1,5 @@
 import json
+import time
 
 import httpx
 
@@ -102,7 +103,36 @@ async def test_refresh_network_error_preserves_refresh_token() -> None:
     assert auth._cache.get("refresh_token") == "test-refresh-token"
 
 
-async def test_refresh_invalid_grant_clears_cache() -> None:
+async def test_refresh_invalid_grant_clears_cache_when_access_expired() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+    auth._cache["access_token"] = "test-access-token"
+    auth._cache["expires_at"] = time.time() - 1
+
+    result = await auth._refresh_token()
+
+    assert result is None
+    assert auth._cache.get("refresh_token") is None
+
+
+async def test_refresh_invalid_grant_preserves_cache_when_access_valid() -> None:
+    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+
+    auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
+    auth._cache["refresh_token"] = "test-refresh-token"
+    auth._cache["access_token"] = "test-access-token"
+    auth._cache["expires_at"] = time.time() + 300
+
+    result = await auth._refresh_token()
+
+    assert result is None
+    assert auth._cache.get("refresh_token") == "test-refresh-token"
+    assert auth._cache.get("access_token") == "test-access-token"
+
+
+async def test_refresh_invalid_grant_clears_cache_without_access_token() -> None:
     from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
