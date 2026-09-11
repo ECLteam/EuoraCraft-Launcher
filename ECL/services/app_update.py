@@ -261,6 +261,7 @@ class UpdateApplier:
             raise AppUpdateError("未找到与当前系统匹配的安装包", error_code="UPDATE_ASSET_NOT_FOUND", phase="select")
 
         version = str(release.get("tag_name") or "unknown").lstrip("vV")
+        self.logger.info("开始准备更新：版本 %s，安装包 %s", version, asset.name)
         stage_root = stage_dir or self.updates_dir / version
         stage_root.mkdir(parents=True, exist_ok=True)
         if downloaded is None:
@@ -280,6 +281,7 @@ class UpdateApplier:
             backup=stage_root / "launcher.old.exe" if self._platform == "win32" else stage_root / "launcher.old",
         )
         self._write_pending(staged)
+        self.logger.info("更新替换计划已就绪：%s -> %s", staged.new_binary, resolve_target)
         return staged, new_binary.resolve()
 
     def _default_target(self) -> Path:
@@ -295,6 +297,7 @@ class UpdateApplier:
         temporary = stage_root / f"{asset.name}.part"
         received = 0
         try:
+            self.logger.info("开始下载安装包：%s", asset.name)
             with self.http.stream("GET", asset.url, follow_redirects=True) as response:
                 response.raise_for_status()
                 with temporary.open("wb") as handle:
@@ -307,6 +310,7 @@ class UpdateApplier:
             self.logger.warning("安装包下载失败: %s", exc)
             raise AppUpdateError("请升级包下载失败，请检查网络后重试", error_code="UPDATE_DOWNLOAD_FAILED", phase="download") from exc
         self._emit_progress(asset, received, phase="complete")
+        self.logger.info("安装包下载完成：%s（%.2f MB）", asset.name, received / (1024 * 1024))
         if asset.size > 0 and received != asset.size:
             temporary.unlink(missing_ok=True)
             raise AppUpdateError("请升级包下载不完整，请重试", error_code="UPDATE_VERIFY_FAILED", phase="verify")

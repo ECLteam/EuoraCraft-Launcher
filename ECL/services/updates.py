@@ -128,6 +128,7 @@ class UpdateChecker:
 
     def check(self) -> UpdateCheckResult:
         channel = self._channel()
+        self.logger.info("开始检查更新：当前版本 %s，通道 %s", self.current_version, channel)
         base = UpdateCheckResult(
             status="error",
             current_version=self.current_version,
@@ -135,20 +136,24 @@ class UpdateChecker:
         )
         releases = self._fetch_releases(base)
         if releases is None:
+            self.logger.warning("检查更新失败：%s", base.message)
             return base
         # alpha 查看全部版本类型的最新版本；beta/rc 只看预发布；正式版只看正式 release
         want_prerelease = None if channel == "alpha" else (channel == "beta")
         best_tag, best_release = self._select_best_release(releases, want_prerelease=want_prerelease)
         if best_release is None:
             base.status = "up_to_date"
+            self.logger.info("未找到可更新的版本，当前已是最新")
             return base
         if compare_versions(best_tag, self.current_version) > 0:
             base.status = "update_available"
             base.latest_version = best_tag.lstrip("vV")
             base.latest_url = str(best_release.get("html_url") or "") or None
             base.latest_notes = str(best_release.get("body") or "").strip() or None
+            self.logger.info("发现新版本：%s", base.latest_version)
             return base
         base.status = "up_to_date"
+        self.logger.info("当前已是最新版本")
         return base
 
     def latest_release(self) -> dict[str, Any] | None:
@@ -167,6 +172,7 @@ class UpdateChecker:
         best_tag, best_release = self._select_best_release(releases, want_prerelease=want_prerelease)
         if best_release is None or compare_versions(best_tag, self.current_version) <= 0:
             return None
+        self.logger.info("自动更新可用版本：%s", best_tag)
         return best_release
 
     def _channel(self) -> str:
