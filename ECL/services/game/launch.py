@@ -216,6 +216,8 @@ class LaunchCoordinator(_GameState):
         jvm_args: Any = None,
         game_args: Any = None,
         version_isolation: Any = False,
+        lock_memory: Any = False,
+        process_priority: Any = "normal",
     ) -> dict[str, str]:
         """
         检查游戏文件并启动实例。
@@ -231,6 +233,8 @@ class LaunchCoordinator(_GameState):
         :param jvm_args: 附加的 JVM 参数列表
         :param game_args: 附加的 Minecraft 参数列表
         :param version_isolation: 是否启用版本目录隔离
+        :param lock_memory: 是否锁定 JVM 初始堆与最大堆一致（-Xms=-Xmx）
+        :param process_priority: 游戏进程优先级: idle / below_normal / normal / above_normal / high
         """
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
@@ -262,6 +266,8 @@ class LaunchCoordinator(_GameState):
         fullscreen_enabled = bool(fullscreen)
         custom_jvm_args = self._normalize_string_list(jvm_args, "JVM 参数")
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
+        lock_memory_enabled = bool(lock_memory)
+        normalized_priority = self._normalize_process_priority(process_priority)
         context = self._context(path, self._normalize_source(source))
         isolated = bool(version_isolation)
         # 插件启动钩子需要访问最终游戏目录，提前计算以避免在命令构建后再移动。
@@ -468,6 +474,7 @@ class LaunchCoordinator(_GameState):
                 game_path=path,
                 version_name=version_name,
                 use_ram=ram,
+                lock_memory=lock_memory_enabled,
                 player_name=credentials["player_name"],
                 auth_uuid=credentials["uuid"],
                 user_type=credentials["user_type"],
@@ -520,6 +527,7 @@ class LaunchCoordinator(_GameState):
                     cwd=launch_context.working_directory or (path / "versions" / version_name),
                     new_session=True,
                     env=instance_env,
+                    priority=normalized_priority,
                     log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
                     exit_callback=on_instance_exit,
                 )

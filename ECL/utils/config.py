@@ -33,6 +33,10 @@ default_config: dict[str, Any] = {
         "java_path": "",
         "memory_auto": True,
         "memory_size": 4096,
+        # 锁定初始堆与最大堆一致，避免游戏启动后频繁扩容/收缩导致卡顿。
+        "lock_memory": False,
+        # 游戏进程优先级: idle / below_normal / normal / above_normal / high。
+        "process_priority": "normal",
         "game_width": 854,
         "game_height": 480,
         "jvm_args": [],

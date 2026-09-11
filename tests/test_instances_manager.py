@@ -106,3 +106,40 @@ def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> N
     )
 
     assert exits == [(1, instance_id)]
+
+
+def test_apply_priority_skips_normal(monkeypatch) -> None:
+    module = importlib.import_module("ECL.game.Core.InstancesManager")
+
+    class FakeProc:
+        pid = 4242
+
+    def rejected(pid) -> object:
+        raise AssertionError("normal 优先级不应触碰进程")
+
+    monkeypatch.setattr(module.psutil, "Process", rejected)
+
+    InstancesManager._apply_priority(FakeProc(), "normal")
+
+
+def test_apply_priority_sets_posix_nice_for_high(monkeypatch) -> None:
+    module = importlib.import_module("ECL.game.Core.InstancesManager")
+
+    class FakeProc:
+        pid = 4242
+
+    seen: list[int] = []
+
+    class FakeProcess:
+        def __init__(self, pid) -> None:
+            pass
+
+        def nice(self, value: int) -> None:
+            seen.append(value)
+
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(module.psutil, "Process", FakeProcess)
+
+    InstancesManager._apply_priority(FakeProc(), "high")
+
+    assert seen == [-10]

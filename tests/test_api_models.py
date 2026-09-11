@@ -49,6 +49,36 @@ def test_request_models_reject_invalid_payloads(model, payload) -> None:
         model.model_validate(payload)
 
 
+def test_launch_request_accepts_memory_lock_and_priority_options() -> None:
+    launch = LaunchRequest.model_validate(
+        {
+            "version_id": "1.21.1",
+            "game_path": ".minecraft",
+            "lock_memory": True,
+            "process_priority": "high",
+        }
+    )
+
+    assert launch.lock_memory is True
+    assert launch.process_priority == "high"
+
+
+def test_launch_request_rejects_invalid_process_priority() -> None:
+    with pytest.raises(ValidationError):
+        LaunchRequest.model_validate(
+            {"version_id": "1.21.1", "game_path": ".minecraft", "process_priority": "urgent"}
+        )
+
+
+def test_normalize_process_priority_falls_back_to_normal() -> None:
+    from ECL.services.game.base import _GameState
+
+    assert _GameState._normalize_process_priority("Above_Normal") == "above_normal"
+    assert _GameState._normalize_process_priority("unknown") == "normal"
+    assert _GameState._normalize_process_priority(None) == "normal"
+    assert _GameState._normalize_process_priority("") == "normal"
+
+
 def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 

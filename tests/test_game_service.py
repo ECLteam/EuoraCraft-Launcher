@@ -822,6 +822,52 @@ def test_command_builder_places_neoforge_game_arguments_after_main_class(tmp_pat
     assert command.index('"net.neoforged.fml.startup.Client"') < command.index("--fml.neoForgeVersion")
 
 
+def test_command_builder_lock_memory_pins_initial_heap_to_max(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.json").write_text(
+        json.dumps(
+            {
+                "id": "1.21",
+                "mainClass": "net.minecraft.client.main.Main",
+                "arguments": {"jvm": [], "game": []},
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (version_path / "1.21.jar").write_bytes(b"jar")
+
+    unlocked = build_minecraft_cmd(
+        LaunchConfig(
+            java_path="java.exe",
+            game_path=game_path,
+            version_name="1.21",
+            use_ram=4096,
+            lock_memory=False,
+            player_name="Player",
+            auth_uuid="0" * 32,
+        )
+    )
+    locked = build_minecraft_cmd(
+        LaunchConfig(
+            java_path="java.exe",
+            game_path=game_path,
+            version_name="1.21",
+            use_ram=4096,
+            lock_memory=True,
+            player_name="Player",
+            auth_uuid="0" * 32,
+        )
+    )
+
+    # 未锁定时初始堆固定为 256M；锁定时与最大堆一致。
+    assert "-Xms256M" in unlocked and "-Xmx4096M" in unlocked
+    assert "-Xms4096M" in locked and "-Xmx4096M" in locked
+    assert "-Xms256M" not in locked
+
+
 def test_launch_downloads_missing_inherited_version_metadata_before_file_check(tmp_path, monkeypatch) -> None:
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "neoforge"

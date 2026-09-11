@@ -238,6 +238,14 @@ class _GameState:
             raise GameServiceError(f"{field_name}必须是字符串数组", "INVALID_GAME_OPTION")
         return [item.strip() for item in value if item.strip()]
 
+    # 支持的进程优先级白名单；非法值回退到 normal。
+    _PROCESS_PRIORITIES = frozenset({"idle", "below_normal", "normal", "above_normal", "high"})
+
+    @classmethod
+    def _normalize_process_priority(cls, value: Any) -> str:
+        normalized = str(value or "normal").strip().casefold()
+        return normalized if normalized in cls._PROCESS_PRIORITIES else "normal"
+
     @staticmethod
     def _api_config(source: str) -> ApiUrlConfig:
         return BmclApiUrl() if source == "bmclapi" else ApiUrlConfig()
