@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sys
+import threading
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,7 @@ from typing import Any
 from ECL.adapters import Adapter
 from ECL.application import ApplicationContext, ApplicationState, create_application
 from ECL.common import __version__, __version_type__, get_runtime_info
+from ECL.services.app_update import clear_stale_pending_update
 from ECL.services.maintenance import apply_pending_debug_maintenance
 from ECL.utils import configure_logging
 from ECL.utils.logging import resolve_log_level
@@ -95,6 +98,14 @@ class EuoraCraftLauncher:
                 removed = "、".join(result.removed_targets) or "无"
                 self.logger.warning("已执行调试维护操作 %s，删除目标: %s", result.action, removed)
 
+        cleared = False
+        try:
+            cleared = clear_stale_pending_update(self.data_path)
+        except OSError:
+            self.logger.exception("清理待应用的启动器更新标记失败")
+        if cleared:
+            self.logger.info("已清理遗留的启动器更新标记")
+
         self.context = create_application(self.runtime_info, on_state_ready=self._apply_bootstrap_state)
         self.config = self.context.state.config
         self.debug = self.context.state.debug
@@ -102,6 +113,7 @@ class EuoraCraftLauncher:
         self._apply_log_level()
         self.logging.install_frontend_handler(self.context.events)
         self.context.events.subscribe("config:updated", self._on_config_updated)
+        self.context.events.subscribe("launcher:request_restart", lambda _data: self._schedule_update_restart())
         self.logger.debug(
             "后端服务已就绪: accounts=%s, game=%s, plugins=%s",
             type(self.context.accounts).__name__,
@@ -156,6 +168,21 @@ class EuoraCraftLauncher:
         self.debug_log_level = self._config_log_level()
         self._apply_log_level()
         self.logger.debug("控制台日志级别已更新: %s", self.debug_log_level)
+
+    def _schedule_update_restart(self) -> None:
+        # 延迟触发一次自动更新的重启：先让 IPC 响应与前端进度刷新完成。
+        delay = 1.0
+        timer = threading.Timer(delay, self._restart_for_update)
+        timer.daemon = True  # 不阻塞进程退出兜底
+        timer.start()
+
+    def _restart_for_update(self) -> None:
+        # 优雅关闭后端后结束当前进程，交由更新引导脚本完成替换并重启。
+        self.logger.info("收到自动更新重启请求，正在退出以完成替换")
+        try:
+            self._shutdown()
+        finally:
+            os._exit(0)
 
 
 __all__ = ["EuoraCraftLauncher", "LauncherExitCode"]

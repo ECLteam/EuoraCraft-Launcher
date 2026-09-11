@@ -7,6 +7,7 @@ import psutil
 from anyio import to_thread
 
 from ECL.api.contracts import success
+from ECL.services.app_update import AppUpdateError, UpdateApplier
 from ECL.services.maintenance import schedule_debug_maintenance
 from ECL.services.updates import UpdateChecker
 
@@ -127,6 +128,81 @@ class SystemHandlers(_FrontendState):
         """
         data = await to_thread.run_sync(self.info_card.get_info_card)
         return {"success": True, "data": data}
+
+    def _update_applier(self) -> UpdateApplier:
+        # 构造启动器自动更新的执行器，携带当前运行环境与事件总线。
+        return UpdateApplier(
+            app_path=self.launcher.app_path,
+            data_path=self.launcher.data_path,
+            is_frozen=self.launcher.is_frozen,
+            version_type=self.launcher.launcher_version_type,
+            current_version=self.launcher.launcher_version,
+            http=self.http,
+            event_bus=self.events,
+        )
+
+    async def launcher_update_status(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        返回当前运行形态是否允许自动更新。
+
+        :param body: 必须为空的请求对象
+        :return: 包含 ``enabled`` 布尔值的响应
+        """
+        if body:
+            return {"success": False, "message": "launcher_update_status 不接受参数", "errorCode": "INVALID_REQUEST"}
+        return {"success": True, "data": {"enabled": self._update_applier().enabled()}}
+
+    @_ipc_handler("APP_UPDATE_DOWNLOAD_FAILED")
+    async def launcher_update_download(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        下载当前通道最新版本的安装包并落盘替换计划。
+
+        :param body: 必须为空的请求对象
+        :return: 包含目标版本与二进制路径的响应
+        """
+        if body:
+            return {"success": False, "message": "launcher_update_download 不接受参数", "errorCode": "INVALID_REQUEST"}
+        applier = self._update_applier()
+        if not applier.enabled():
+            return {"success": False, "message": "当前通道不支持自动更新", "errorCode": "UPDATE_NOT_SUPPORTED"}
+        checker = UpdateChecker(
+            self.http,
+            current_version=self.launcher.launcher_version,
+            version_type=self.launcher.launcher_version_type,
+        )
+        release = await to_thread.run_sync(checker.latest_release)
+        if release is None:
+            return {"success": False, "message": "暂时没有可用的更新", "errorCode": "UPDATE_NONE"}
+        try:
+            staged, new_binary = await to_thread.run_sync(applier.stage, release)
+        except AppUpdateError as exc:
+            self.logger.warning("自动更新下载失败: %s", exc)
+            return {"success": False, "message": str(exc), "errorCode": exc.error_code}
+        return success(
+            {
+                "version": staged.version,
+                "target": str(staged.target),
+                "new_binary": str(new_binary),
+                "downloaded": True,
+            }
+        )
+
+    async def launcher_update_apply(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        拉起引导脚本完成替换，并请求当前启动器退出以重启。
+
+        :param body: 必须为空的请求对象
+        :return: 是否已触发重启流程的成功响应
+        """
+        if body:
+            return {"success": False, "message": "launcher_update_apply 不接受参数", "errorCode": "INVALID_REQUEST"}
+        applier = self._update_applier()
+        staged = applier.load_pending()
+        if staged is None:
+            return {"success": False, "message": "没有待应用的更新", "errorCode": "UPDATE_NO_PENDING"}
+        applier.apply(staged)
+        self.events.emit("launcher:request_restart", {})
+        return success({"version": staged.version, "restarting": True})
 
     async def user_agreement_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """

@@ -17,6 +17,7 @@ FRONTEND_EVENT_BRIDGES: dict[str, list[tuple[str, Callable[..., Any]]]] = {
     "launcher:popup": [("launcher:popup", lambda payload: payload if isinstance(payload, dict) else None)],
     "launcher:notify": [("launcher:notify", lambda payload: payload)],
     "game:install_progress": [("game:install_progress", lambda payload: payload)],
+    "update:progress": [("update:progress", lambda payload: payload)],
     "game:launch_progress": [("game:launch_progress", lambda payload: payload)],
     "game:versions_changed": [("game:versions_changed", lambda payload: payload)],
     "game:instances_changed": [("game:instances_changed", lambda payload: payload)],

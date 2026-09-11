@@ -127,7 +127,7 @@ class UpdateChecker:
         self._request_retries = max(0, int(request_retries))
 
     def check(self) -> UpdateCheckResult:
-        channel = "alpha" if self.version_type == "alpha" else ("beta" if self.version_type in ("beta", "rc") else "release")
+        channel = self._channel()
         base = UpdateCheckResult(
             status="error",
             current_version=self.current_version,
@@ -150,6 +150,30 @@ class UpdateChecker:
             return base
         base.status = "up_to_date"
         return base
+
+    def latest_release(self) -> dict[str, Any] | None:
+        """
+        返回当前通道匹配到的最高版本 Release 对象，供自动更新提取安装包。
+
+        :return: 最高版本的 Release 对象；检测失败或无可用版本时返回 None
+        """
+        channel = self._channel()
+        releases = self._fetch_releases(
+            UpdateCheckResult(status="error", current_version=self.current_version, channel=channel)
+        )
+        if releases is None:
+            return None
+        want_prerelease = None if channel == "alpha" else (channel == "beta")
+        best_tag, best_release = self._select_best_release(releases, want_prerelease=want_prerelease)
+        if best_release is None or compare_versions(best_tag, self.current_version) <= 0:
+            return None
+        return best_release
+
+    def _channel(self) -> str:
+        # 按版本类型映射检测通道，alpha 归入预发布通道。
+        if self.version_type == "alpha":
+            return "alpha"
+        return "beta" if self.version_type in ("beta", "rc") else "release"
 
     def _fetch_releases(self, base: UpdateCheckResult) -> list[dict[str, Any]] | None:
         """
