@@ -116,3 +116,117 @@ def test_instance_profile_cover_field_is_preserved(tmp_path: Path) -> None:
 
     store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
     assert store.read_profile(tmp_path, "test")["cover"]["value"] == "cover.png"
+
+
+def test_world_patch_expanded_fields_updates_nbt(tmp_path: Path) -> None:
+    version = tmp_path / "versions" / "test"
+    _write_level_dat(version / "saves" / "world")
+    harness = _WorldHarness(tmp_path / "app-data")
+
+    result = harness.patch_world(
+        tmp_path,
+        "test",
+        "world",
+        {
+            "gameMode": 1,
+            "raining": True,
+            "thundering": True,
+            "seed": 987654,
+            "spawn": {"x": 10, "y": 64, "z": -20},
+        },
+        version_isolation=True,
+    )
+
+    loaded = load(version / "saves" / "world" / "level.dat")
+    assert int(loaded["Data"]["GameType"]) == 1
+    assert int(loaded["Data"]["raining"]) == 1
+    assert int(loaded["Data"]["thundering"]) == 1
+    assert int(loaded["Data"]["RandomSeed"]) == 987654
+    assert int(loaded["Data"]["SpawnX"]) == 10
+    assert int(loaded["Data"]["SpawnY"]) == 64
+    assert int(loaded["Data"]["SpawnZ"]) == -20
+    assert result["gameModeId"] == 1
+    assert result["gameMode"] == "创造"
+    assert result["weather"] == {"raining": True, "thundering": True}
+    assert str(loaded["Data"]["EclUnknownField"]) == "keep-me"
+
+
+@pytest.mark.parametrize("field,value,code", [
+    ("gameMode", 7, "INVALID_WORLD_GAMEMODE"),
+    ("seed", "not-an-int", "INVALID_WORLD_SEED"),
+    ("seed", True, "INVALID_WORLD_SEED"),
+    ("spawn", {"x": 99999999, "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
+    ("spawn", {"x": "a", "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
+])
+def test_world_patch_rejects_invalid_values(tmp_path: Path, field: str, value, code: str) -> None:
+    version = tmp_path / "versions" / "test"
+    _write_level_dat(version / "saves" / "world")
+    harness = _WorldHarness(tmp_path / "app-data")
+
+    with pytest.raises(GameServiceError) as raised:
+        harness.patch_world(
+            tmp_path, "test", "world", {field: value}, version_isolation=True
+        )
+    assert raised.value.error_code == code
+
+
+def _options_harness(tmp_path: Path):
+    from ECL.services.game.instance_options import InstanceOptionsCoordinator
+
+    class _Harness(InstanceOptionsCoordinator, WorkspaceCoordinator):
+        def __init__(self) -> None:
+            self._data_path = tmp_path
+
+        def list_instances(self) -> list[dict[str, object]]:
+            return []
+
+    instance = tmp_path / "versions" / "iso"
+    instance.mkdir(parents=True)
+    (instance / "options.txt").write_text(
+        "language:zh_cn\nrenderDistance:12\nfullscreen:false\nsoundCategory_music:0.8\nunknownKey:a\n",
+        encoding="utf-8",
+    )
+    return _Harness()
+
+
+def test_options_read_structurizes_known_lines_and_counts_unknown(tmp_path: Path) -> None:
+    harness = _options_harness(tmp_path)
+    result = harness.read_options(tmp_path, "iso", version_isolation=True)
+    entries = {item["key"]: item for item in result["options"]}
+    assert entries["language"]["value"] == "zh_cn"
+    assert entries["renderDistance"]["value"] == 12
+    assert entries["renderDistance"]["max"] == 32
+    assert entries["fullscreen"]["value"] is False
+    assert entries["soundCategory_music"]["value"] == 0.8
+    assert result["ignoredCount"] == 1
+
+
+def test_options_patch_replaces_and_appends_keeping_unknown(tmp_path: Path) -> None:
+    harness = _options_harness(tmp_path)
+    result = harness.patch_options(
+        tmp_path,
+        "iso",
+        {"renderDistance": 24, "fullscreen": True, "gamma": 1.2},
+        version_isolation=True,
+    )
+    assert result["updated"] == 3
+    lines = (tmp_path / "versions" / "iso" / "options.txt").read_text(encoding="utf-8").splitlines()
+    assert "renderDistance:24" in lines
+    assert "fullscreen:true" in lines
+    assert "gamma:1.2" in lines
+    assert "unknownKey:a" in lines
+    assert "language:zh_cn" in lines
+    assert lines.index("renderDistance:24") < lines.index("gamma:1.2")
+
+
+@pytest.mark.parametrize("patch,code", [
+    ({"gamemode": 1}, "UNSUPPORTED_GAME_OPTION"),
+    ({"fullscreen": 1}, "INVALID_GAME_OPTION"),
+    ({"renderDistance": 99}, "INVALID_GAME_OPTION"),
+    ({"fov": "abc"}, "INVALID_GAME_OPTION"),
+])
+def test_options_patch_rejects_invalid_keys_and_values(tmp_path: Path, patch: dict, code: str) -> None:
+    harness = _options_harness(tmp_path)
+    with pytest.raises(GameServiceError) as raised:
+        harness.patch_options(tmp_path, "iso", patch, version_isolation=True)
+    assert raised.value.error_code == code

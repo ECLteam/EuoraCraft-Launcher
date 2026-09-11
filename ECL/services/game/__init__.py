@@ -1,6 +1,7 @@
 from .base import GameServiceError, VersionScanError
 from .catalog import CatalogCoordinator
 from .install import InstallCoordinator
+from .instance_options import InstanceOptionsCoordinator
 from .launch import LaunchCoordinator
 from .mods import ModCoordinator
 from .profiles import ProfileCoordinator
@@ -16,6 +17,7 @@ class GameService(
     ProfileCoordinator,
     WorkspaceCoordinator,
     WorldCoordinator,
+    InstanceOptionsCoordinator,
     ScreenshotCoordinator,
     ServerCoordinator,
     ResourceCoordinator,

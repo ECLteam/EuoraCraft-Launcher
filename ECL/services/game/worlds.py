@@ -13,7 +13,7 @@ from urllib.parse import quote_plus
 from PIL import Image, UnidentifiedImageError
 
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Byte, load
+from ECL.utils.nbt import Byte, Compound, Int, Long, load
 
 from .base import GameServiceError
 from .operations import OperationContext
@@ -25,6 +25,20 @@ def _nbt_scalar(value: Any, default: Any = None) -> Any:
         return value.unpack(json=True) if hasattr(value, "unpack") else value
     except Exception:
         return default
+
+
+# 存档枚举字段：patch 键 → (NBT 键, 标签类型, 合法取值范围, 错误码, 提示文案)。
+_ENUM_WORLD_FIELDS: dict[str, tuple[str, type, range, str, str]] = {
+    "difficulty": ("Difficulty", Byte, range(4), "INVALID_WORLD_DIFFICULTY", "难度值无效"),
+    "gameMode": ("GameType", Int, range(4), "INVALID_WORLD_GAMEMODE", "游戏模式值无效"),
+}
+# 存档布尔字段：patch 键 → NBT 键。
+_BOOL_WORLD_FIELDS: dict[str, str] = {
+    "allowCommands": "allowCommands",
+    "difficultyLocked": "DifficultyLocked",
+    "raining": "raining",
+    "thundering": "thundering",
+}
 
 
 class WorldCoordinator:
@@ -68,6 +82,15 @@ class WorldCoordinator:
             "allowCommands": bool(_nbt_scalar(data.get("allowCommands"), False)),
             "version": str(version_name),
             "seed": str(_nbt_scalar(data.get("RandomSeed"), "")),
+            "spawn": {
+                "x": int(_nbt_scalar(data.get("SpawnX"), 0) or 0),
+                "y": int(_nbt_scalar(data.get("SpawnY"), 0) or 0),
+                "z": int(_nbt_scalar(data.get("SpawnZ"), 0) or 0),
+            },
+            "weather": {
+                "raining": bool(_nbt_scalar(data.get("raining"), False)),
+                "thundering": bool(_nbt_scalar(data.get("thundering"), False)),
+            },
             "lastPlayedAt": datetime.fromtimestamp(last_played / 1000, UTC).isoformat() if last_played else None,
             "modifiedAt": datetime.fromtimestamp(modified, UTC).isoformat(),
             "createdAt": datetime.fromtimestamp(world_path.stat().st_ctime, UTC).isoformat(),
@@ -128,7 +151,7 @@ class WorldCoordinator:
         version_isolation: Any = False,
     ) -> dict[str, Any]:
         """
-        备份后原子修改难度、作弊和难度锁定，保留所有未知 NBT 字段。
+        备份后原子修改存档常用字段，保留所有未知 NBT 字段。
         """
         target = self.resolve_instance(game_path, version_id, version_isolation)
         world_path = self._world_path(game_path, version_id, world_id, version_isolation)
@@ -138,21 +161,43 @@ class WorldCoordinator:
         try:
             document = load(level_path)
             data = document.get("Data", document)
-            if "difficulty" in patch:
-                difficulty = int(patch["difficulty"])
-                if difficulty not in range(4):
-                    raise GameServiceError("难度值无效", "INVALID_WORLD_DIFFICULTY")
-                data["Difficulty"] = Byte(difficulty)
-            if "allowCommands" in patch:
-                data["allowCommands"] = Byte(1 if patch["allowCommands"] else 0)
-            if "difficultyLocked" in patch:
-                data["DifficultyLocked"] = Byte(1 if patch["difficultyLocked"] else 0)
+            self._apply_world_patch(data, patch)
             self._atomic_save_nbt(document, level_path)
         except GameServiceError:
             raise
         except Exception as exc:
             raise GameServiceError(f"修改世界数据失败：{exc}", "WORLD_UPDATE_FAILED") from exc
         return self._read_world(world_path)
+
+    @staticmethod
+    def _apply_world_patch(data: Compound, patch: dict[str, Any]) -> None:
+        # 校验并写入存档常用字段；非法取值在落盘前被拒绝。
+        for field, (key, tag, valid, code, message) in _ENUM_WORLD_FIELDS.items():
+            if field in patch:
+                value = int(patch[field])
+                if value not in valid:
+                    raise GameServiceError(message, code)
+                data[key] = tag(value)
+        for field, key in _BOOL_WORLD_FIELDS.items():
+            if field in patch:
+                data[key] = Byte(1 if patch[field] else 0)
+        if "seed" in patch:
+            seed = patch["seed"]
+            if not isinstance(seed, int) or isinstance(seed, bool):
+                raise GameServiceError("种子必须是整数", "INVALID_WORLD_SEED")
+            data["RandomSeed"] = Long(seed)
+        if "spawn" in patch:
+            spawn = patch["spawn"]
+            if not isinstance(spawn, dict) or any(
+                not isinstance(spawn.get(axis), int) or isinstance(spawn.get(axis), bool)
+                for axis in ("x", "y", "z")
+            ):
+                raise GameServiceError("出生点坐标必须是整数", "INVALID_WORLD_SPAWN")
+            if any(not -30000000 <= int(spawn[axis]) <= 30000000 for axis in ("x", "y", "z")):
+                raise GameServiceError("出生点坐标超出世界范围", "INVALID_WORLD_SPAWN")
+            data["SpawnX"] = Int(spawn["x"])
+            data["SpawnY"] = Int(spawn["y"])
+            data["SpawnZ"] = Int(spawn["z"])
 
     def copy_world(
         self, game_path: Any, version_id: Any, world_id: Any, new_world_id: Any, version_isolation: Any = False

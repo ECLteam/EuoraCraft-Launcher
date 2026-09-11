@@ -378,6 +378,11 @@ class WorldPatchData(RequestModel):
     difficulty: int | None = Field(default=None, ge=0, le=3)
     allow_commands: bool | None = Field(default=None, alias="allowCommands")
     difficulty_locked: bool | None = Field(default=None, alias="difficultyLocked")
+    game_mode: int | None = Field(default=None, ge=0, le=3, alias="gameMode")
+    raining: bool | None = None
+    thundering: bool | None = None
+    seed: int | None = None
+    spawn: dict[str, int] | None = None
 
 
 class WorldPatchRequest(WorldRequest):
@@ -403,6 +408,10 @@ class WorldImportRequest(InstanceTarget):
 class WorldBackupRequest(WorldRequest):
     backup_id: str | None = Field(default=None, max_length=80)
     locked: bool | None = None
+
+
+class OptionsPatchRequest(InstanceTarget):
+    patch: dict[str, Any]
 
 
 class ScreenshotRequest(InstanceTarget):

@@ -89,6 +89,8 @@ COMMAND_NAMES = (
     "game_world_backup_restore",
     "game_world_backup_lock",
     "game_world_backup_delete",
+    "game_options_read",
+    "game_options_patch",
     "game_screenshot_list",
     "game_screenshot_thumbnail",
     "game_screenshot_copy",

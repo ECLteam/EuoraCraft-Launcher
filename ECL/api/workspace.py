@@ -14,6 +14,7 @@ from ECL.api.models import (
     InstancePackImportRequest,
     InstanceTarget,
     OperationRequest,
+    OptionsPatchRequest,
     ResourceDeleteRequest,
     ResourceHashRequest,
     ResourceInstallRequest,
@@ -276,6 +277,26 @@ class WorkspaceHandlers(_FrontendState):
             body,
             lambda request: self.game.delete_world_backup(
                 request.game_path, request.version_id, request.world_id, request.backup_id
+            ),
+        )
+
+    @_ipc_handler("GAME_OPTIONS_FAILED")
+    async def game_options_read(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceTarget,
+            body,
+            lambda request: self.game.read_options(
+                request.game_path, request.version_id, request.version_isolation
+            ),
+        )
+
+    @_ipc_handler("GAME_OPTIONS_FAILED")
+    async def game_options_patch(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            OptionsPatchRequest,
+            body,
+            lambda request: self.game.patch_options(
+                request.game_path, request.version_id, request.patch, request.version_isolation
             ),
         )
 
