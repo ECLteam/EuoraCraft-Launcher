@@ -568,5 +568,18 @@ class WorkspaceHandlers(_FrontendState):
             ),
         )
 
+    @_ipc_handler("SCHEMATIC_PREVIEW_FAILED")
+    async def game_schematic_preview(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            ResourceToggleRequest,
+            body,
+            lambda request: self.game.schematic_preview(
+                request.game_path,
+                request.version_id,
+                request.resource_id,
+                request.version_isolation,
+            ),
+        )
+
 
 __all__ = ["WorkspaceHandlers"]

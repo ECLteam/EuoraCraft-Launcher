@@ -112,6 +112,7 @@ COMMAND_NAMES = (
     "game_resource_identify",
     "game_resource_update_check",
     "game_resource_update",
+    "game_schematic_preview",
     "game_launch",
     "game_launch_cancel",
     "game_instance_stop",

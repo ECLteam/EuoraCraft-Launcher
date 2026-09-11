@@ -7,6 +7,7 @@ from .mods import ModCoordinator
 from .profiles import ProfileCoordinator
 from .resources import ResourceCoordinator
 from .scan import ScanCoordinator
+from .schematics import SchematicCoordinator
 from .screenshots import ScreenshotCoordinator
 from .servers import ServerCoordinator
 from .workspace import WorkspaceCoordinator
@@ -22,6 +23,7 @@ class GameService(
     ServerCoordinator,
     ResourceCoordinator,
     ModCoordinator,
+    SchematicCoordinator,
     LaunchCoordinator,
     InstallCoordinator,
     ScanCoordinator,
