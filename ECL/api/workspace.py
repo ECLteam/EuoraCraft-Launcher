@@ -1,3 +1,60 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例工作区 IPC 处理器：存档/截图/服务器/资源/设置的统一入口。
+#
+# 公开接口：
+#   - class WorkspaceHandlers — 暴露实例工作台、内容管理和长任务的 Pydantic IPC 边界。
+#       - game_instance_folder_open(body) -> ApiResponse
+#       - game_instance_clone(body) -> ApiResponse
+#       - game_instance_import(body) -> ApiResponse
+#       - game_instance_export(body) -> ApiResponse
+#       - game_instance_files_check(body) -> ApiResponse
+#       - game_instance_files_repair(body) -> ApiResponse
+#       - game_instance_delete(body) -> ApiResponse
+#       - game_operation_get(body) -> ApiResponse
+#       - game_operation_cancel(body) -> ApiResponse
+#       - game_world_list(body) -> ApiResponse
+#       - game_world_detail(body) -> ApiResponse
+#       - game_world_patch(body) -> ApiResponse
+#       - game_world_copy(body) -> ApiResponse
+#       - game_world_import(body) -> ApiResponse
+#       - game_world_export(body) -> ApiResponse
+#       - game_world_icon_set(body) -> ApiResponse
+#       - game_world_delete(body) -> ApiResponse
+#       - game_world_backup_list(body) -> ApiResponse
+#       - game_world_backup_create(body) -> ApiResponse
+#       - game_world_backup_restore(body) -> ApiResponse
+#       - game_world_backup_lock(body) -> ApiResponse
+#       - game_world_backup_delete(body) -> ApiResponse
+#       - game_options_read(body) -> ApiResponse
+#       - game_options_patch(body) -> ApiResponse
+#       - game_screenshot_list(body) -> ApiResponse
+#       - game_screenshot_thumbnail(body) -> ApiResponse
+#       - game_screenshot_copy(body) -> ApiResponse
+#       - game_screenshot_save_as(body) -> ApiResponse
+#       - game_screenshot_delete(body) -> ApiResponse
+#       - game_screenshot_set_cover(body) -> ApiResponse
+#       - game_screenshot_set_background(body) -> ApiResponse
+#       - game_server_list(body) -> ApiResponse
+#       - game_server_upsert(body) -> ApiResponse
+#       - game_server_delete(body) -> ApiResponse
+#       - game_server_reorder(body) -> ApiResponse
+#       - game_server_status_refresh(body) -> ApiResponse
+#       - game_resource_list(body) -> ApiResponse
+#       - game_resource_install(body) -> ApiResponse
+#       - game_resource_toggle(body) -> ApiResponse
+#       - game_resource_delete(body) -> ApiResponse
+#       - game_resource_manifest_export(body) -> ApiResponse
+#       - game_resource_search(body) -> ApiResponse
+#       - game_resource_identify(body) -> ApiResponse
+#       - game_resource_update_check(body) -> ApiResponse
+#       - game_resource_update(body) -> ApiResponse
+#       - game_schematic_preview(body) -> ApiResponse
+# ============================================================
+
 from __future__ import annotations
 
 from collections.abc import Callable

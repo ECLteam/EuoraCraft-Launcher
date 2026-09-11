@@ -1,3 +1,26 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：启动器自更新：通道检测、平台资源选择与下载落盘。
+#
+# 公开接口：
+#   - PENDING_UPDATE_FILE（str）
+#   - class AppUpdateError — 启动器自动更新流程中的用户可感知错误。
+#   - class UpdateAsset — Release 中与当前平台匹配的安装包。
+#   - class StagedUpdate — 一次已下载并待应用的新版本替换计划。
+#   - class UpdateApplier — 执行启动器自动更新：挑选安装包、下载校验、落盘替换计划并拉起重启。
+#       - enabled() -> bool — 判断当前运行形态是否允许自更新。
+#       - matching_asset(release) -> UpdateAsset | None — 从版本 Release 中挑选与当前平台匹配的安装包。
+#       - stage(release, asset, downloaded, stage_dir, target) -> tuple[StagedUpdate, Path] — 为新版本准备可替换的二进制并落盘替换计划标记。
+#       - bootstrap_script(staged, pid) -> tuple[str, str] — 生成在当前平台执行延迟替换的引导脚本内容。
+#       - apply(staged, pid, bootstrap_path) -> Path — 写入引导脚本并脱离当前进程拉起，随后由调用方请求退出重启。
+#       - clear_pending() -> bool — 清理遗留的待更新标记，并尽可能删除未应用的旧备份。
+#       - load_pending() -> StagedUpdate | None — 读取已落盘的待应用替换计划。
+#   - clear_stale_pending_update(data_path) -> bool — 清理遗留的待更新标记，并尽可能删除未应用的旧备份。
+# ============================================================
+
 from __future__ import annotations
 
 import json

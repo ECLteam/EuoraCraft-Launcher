@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 frontend_events 模块的自动化测试。
+#
+# 公开接口：
+#   - test_bridge_renames_accounts_changed() -> None
+#   - test_bridge_reshapes_config_updated() -> None
+#   - test_bridge_maps_plugin_status_events_to_single_event() -> None
+#   - test_bridge_puts_multiple_positional_args_into_frontend_object() -> None
+#   - test_bridge_passthrough_events_keep_name_and_payload() -> None
+#   - test_bridge_omits_side_effect_events() -> None
+#   - test_bridge_subscribe_returns_working_unsubscribers() -> None
+#   - test_bridge_ignores_unregistered_frontend_event() -> None
+# ============================================================
+
 """验证前端事件桥：后端事件总线到前端事件名与载荷的纯转换规则。"""
 
 from types import SimpleNamespace

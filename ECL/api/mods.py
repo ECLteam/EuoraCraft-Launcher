@@ -1,3 +1,25 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：模组领域 IPC 处理器：模组列表、在线搜索与详情（Modrinth/CurseForge/mcmod）。
+#
+# 公开接口：
+#   - class ModHandlers — 提供本地模组文件管理 IPC；在线目录尚未纳入当前 Game API。
+#       - get_mods(body) -> ApiResponse — 列出指定 Minecraft 根目录中的本地模组。
+#       - toggle_mod(body) -> ApiResponse — 切换指定本地模组的启用状态。
+#       - add_mod(body) -> ApiResponse — 将用户选择的 Jar 文件复制到目标 ``mods`` 目录。
+#       - remove_mod(body) -> ApiResponse — 删除目标 ``mods`` 目录中的一个文件。
+#       - open_mods_folder(body) -> ApiResponse — 创建并使用系统文件管理器打开目标 ``mods`` 目录。
+#       - search_mods(body) -> ApiResponse — 搜索在线模组（Modrinth/CurseForge），映射为前端在线模组卡片结构。
+#       - mod_source_config(body) -> ApiResponse — 返回在线资源来源的可用性配置，供前端禁用未配置的来源选项。
+#       - get_mod_info(body) -> ApiResponse — 获取在线模组项目详情。
+#       - get_mod_versions(body) -> ApiResponse — 获取在线模组兼容版本列表。
+#       - download_mod(body) -> ApiResponse — 下载在线模组到目标实例的 ``mods`` 目录。
+#       - download_mod_to_path(body) -> ApiResponse — 下载在线模组文件到用户指定的保存路径，不安装到任何实例。
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Any

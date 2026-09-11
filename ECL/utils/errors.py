@@ -1,3 +1,25 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：集中定义后端各领域共用的自定义异常。
+#
+# 公开接口：
+#   - class ConfigError — 配置读写的通用错误。
+#   - class ConfigValidationError — 配置参数不合法。
+#   - class PluginCommandError — 插件命令执行失败。
+#   - class AccountError — 表示可安全转换为稳定 IPC 错误码的账户操作失败。
+#   - class AuthlibError — 外置登录（authlib-injector）相关的通用错误。
+#   - class AuthlibProfileSelectionRequired — 外置登录账户存在多个角色，需要调用方主动指定本次登录使用的角色。
+#   - class ConnectorError — 联机服务通用错误。
+#   - class ConnectorNotAvailableError — 联机服务不可用（依赖缺失）。
+#   - class DebugMaintenanceError — 调试维护操作的目标或动作不合法。
+#   - class WardrobeError — 表示可安全返回给前端的衣柜业务错误。
+#   - class GameServiceError — 表示可安全转换为稳定 IPC 错误码的游戏操作失败。
+#   - class VersionScanError — 游戏版本扫描失败。
+# ============================================================
+
 """
 集中定义后端各领域共用的自定义异常。
 

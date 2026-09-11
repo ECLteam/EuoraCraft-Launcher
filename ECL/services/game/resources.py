@@ -1,3 +1,32 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例资源协调器：资源包/光影包/数据包/原理图清单与安装。
+#
+# 公开接口：
+#   - RESOURCE_DIRECTORIES（dict）
+#   - class ResourceCoordinator — 统一管理模组、资源包、光影包、数据包和原理图。
+#       - list_resources(game_path, version_id, resource_type, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 扫描资源文件、解析元数据，并标记重复哈希、重复模组 ID 与缺失依赖。
+#       - install_resources(game_path, version_id, resource_type, source_paths, version_isolation=…, world_id=…) -> dict[str, str] — 异步复制一个或多个本地资源，目标文件通过临时文件原子提交。
+#       - toggle_resource(game_path, version_id, resource_type, resource_id, enabled, version_isolation=…, world_id=…) -> dict[str, Any] — 按资源语义启停；原理图明确不提供无意义开关。
+#       - delete_resources(game_path, version_id, resource_type, resource_ids, version_isolation=…, world_id=…) -> None
+#       - export_resource_manifest(game_path, version_id, resource_type, output_path, output_format, version_isolation=…, world_id=…) -> dict[str, str]
+#       - curseforge_available() -> bool — 返回 CurseForge 在线搜索是否已配置 API Key。
+#       - search_online_resources(query, game_version, loader, source=…, curseforge_key=…, limit=…, resource_type=…, offset=…, sort=…) -> dict[str, Any] — 搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
+#       - map_search_hits(source, hits, resource_type=…) -> list[dict[str, Any]] — 将在线搜索命中结果映射为前端在线模组卡片所需的结构。
+#       - fetch_project_info(source, project_id, resource_type=…) -> dict[str, Any] — 获取 Modrinth 项目详情，映射为前端 ``ModInfo`` 结构。
+#       - fetch_project_versions(source, project_id, game_version=…, loader=…) -> list[dict[str, Any]] — 获取 Modrinth 项目版本列表，映射为前端 ``ModVersion`` 结构。
+#       - install_online_resource(game_path, version_id, resource_type, source, project_id, version_id_str, version_isolation=…, task_id=…, world_id=…) -> dict[str, Any] — 按版本 ID 下载在线资源到目标目录，并记录来源到清单。
+#       - download_resource_to_path(source, project_id, version_id_str, save_path, task_id=…) -> dict[str, Any] — 按版本 ID 下载在线资源文件到用户指定的保存路径，不写入任何实例目录。
+#       - identify_resource_hash(sha512, curseforge_key=…) -> dict[str, Any] — 用完整文件哈希查询 Modrinth 和 CurseForge，歧义时不猜测来源。
+#       - check_resource_updates(game_path, version_id, resource_type, game_version, loader, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 查询与当前游戏版本和加载器严格兼容的 Modrinth 更新候选。
+#       - update_resource(game_path, version_id, resource_type, resource_id, update, version_isolation=…, world_id=…) -> dict[str, str] — 下载校验更新文件后原子替换，旧文件直接删除。
+#       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
+#       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 安全导入 mrpack、CurseForge ZIP 或 ECL ZIP 的 overrides/实例内容。
+# ============================================================
+
 from __future__ import annotations
 
 import csv

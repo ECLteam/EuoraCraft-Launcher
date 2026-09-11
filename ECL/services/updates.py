@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：版本更新比较与 GitHub Releases 拉取。
+#
+# 公开接口：
+#   - RELEASES_API（str）
+#   - parse_version(version) -> tuple[tuple[int, ...], tuple[int, int] | None] | None — 解析 SemVer 版本为可比较结构，忽略构建元数据。
+#   - compare_versions(left, right) -> int — 按 SemVer 规则比较两个版本号：left 小于 right 返回负数、相等返回 0、大于返回正数。
+#   - class UpdateCheckResult — 一次版本检测的结果。
+#   - class UpdateChecker — 按当前版本通道检查 GitHub Releases 是否有新版本。
+#       - check() -> UpdateCheckResult
+#       - latest_release() -> dict[str, Any] | None — 返回当前通道匹配到的最高版本 Release 对象，供自动更新提取安装包。
+# ============================================================
+
 from __future__ import annotations
 
 from dataclasses import dataclass

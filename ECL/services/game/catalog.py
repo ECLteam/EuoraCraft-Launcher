@@ -1,3 +1,18 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：版本目录协调器：原版/加载器版本清单获取与缓存。
+#
+# 公开接口：
+#   - class CatalogCoordinator
+#       - minecraft_versions_classified(source=…) -> dict[str, list[dict[str, Any]]] — 查询并按正式版、快照和旧版本分类 Minecraft 版本。
+#       - minecraft_versions(filter_type=…, source=…) -> list[dict[str, Any]] — 查询 Minecraft 版本，可按版本类别过滤。
+#       - loader_versions(loader_type, game_version, source=…) -> list[str] — 查询指定游戏版本兼容的加载器版本。
+#       - fabric_api_versions(game_version) -> list[str] — 查询指定 Minecraft 版本可用的 Fabric API 版本。
+# ============================================================
+
 from typing import Any
 
 import httpx

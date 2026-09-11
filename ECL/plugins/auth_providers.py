@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：自定义账户/登录扩展点：插件注册第三方认证提供方并参与凭据解析。
+#
+# 公开接口：
+#   - class AuthField — 动态登录表单的单个输入项。
+#   - class AuthProvider — 插件注册的认证提供方。
+#       - to_dict() -> dict[str, Any] — 返回前端可安全消费的提供方定义。
+#   - class AuthProviderRegistry — 维护插件认证提供方，供账户服务聚合展示与凭据解析。
+#       - register(owner, provider_id, title, fields, authenticate, resolve_credentials, description=…) -> None — 注册或原位更新一个认证提供方。
+#       - unregister_owner(owner) -> None — 撤销指定插件注册的全部提供方。
+#       - get(provider_id) -> AuthProvider | None — 按稳定标识获取认证提供方。
+#       - list_providers() -> list[AuthProvider] — 按注册顺序返回全部提供方。
+# ============================================================
+
 """自定义账户/登录扩展点：插件注册第三方认证提供方并参与凭据解析。"""
 
 from __future__ import annotations

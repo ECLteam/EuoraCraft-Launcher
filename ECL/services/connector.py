@@ -1,3 +1,29 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：Scaffolding 联机服务：EasyTier 编排、节点列表与房间状态机。
+#
+# 公开接口：
+#   - class ConnectorService — 联机服务，封装 Florolding + EasyTier 的多人联机能力。
+#       - available() -> bool — 联机服务是否可用（依赖齐全）。
+#       - easytier_available() -> bool — EasyTier 是否可用。
+#       - easytier_version() -> str — EasyTier 版本号。
+#       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
+#       - get_status() -> dict[str, Any] — 获取当前联机状态。
+#       - get_easytier_status() -> dict[str, Any] — 获取 EasyTier 安装状态。
+#       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
+#       - host_port(port) -> dict[str, Any] — 以指定端口创建联机房间。
+#       - host_instance(game_path, version_id) -> dict[str, Any] — 为指定实例创建联机房间。
+#       - join(code) -> dict[str, Any] — 加入联机房间。
+#       - leave() -> dict[str, Any] — 退出联机房间。
+#       - close() -> None — 关闭联机服务，停止运行中的房间与 EasyTier 节点。
+#       - kick(machine_id) -> dict[str, Any] — 移出玩家。
+#       - detect_ports() -> dict[str, Any] — 探测本机 Java 进程开放的候选端口。
+#       - search_mc_port(ports) -> dict[str, Any] — 在候选端口中搜索确认 Minecraft 服务端口。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,22 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例兼容性扩展点：插件提供外部启动器的实例元数据识别。
+#
+# 公开接口：
+#   - class InstanceCompatibilityContext — 描述插件读取单个 Minecraft 实例元数据时可用的只读上下文。
+#   - class ExternalInstanceMetadata — 保存一个兼容来源针对单个实例提供的只读元数据。
+#   - class InstanceCompatibilityRegistry — 保存插件注册的实例兼容读取器，并隔离单个提供者的读取失败。
+#       - register(owner, source, title, reader, watch_paths) -> None — 注册或更新一个由插件拥有的实例元数据来源。
+#       - unregister_owner(owner) -> None — 移除指定插件拥有的全部实例兼容来源。
+#       - revision() -> int — 返回注册表变更序号，供扫描缓存将插件启停视为输入变化。
+#       - describe_sources() -> list[dict[str, str]] — 返回当前已注册来源的稳定标识、标题和所属插件。
+#       - read(context) -> list[ExternalInstanceMetadata] — 调用全部提供者并汇总元数据，单个插件异常会转换为来源警告。
+#       - resolve_watch_paths(options=…) -> list[tuple[str, Path]] — 汇总插件声明的外部监听文件，供版本扫描缓存自动失效。
+# ============================================================
+
 from __future__ import annotations
 
 import re

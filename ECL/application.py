@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：应用装配根：构建服务依赖图并管理关闭顺序。
+#
+# 公开接口：
+#   - class ApplicationState — 保存一次应用运行期间会变化的后端状态。
+#   - class ApplicationContext — 显式保存后端依赖图，并统一管理共享资源的生命周期。
+#       - close() -> None — 按依赖逆序关闭后端资源，并清空事件订阅。
+#   - create_application(runtime_info, on_state_ready) -> ApplicationContext — 构造一次应用运行所需的完整后端依赖图。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

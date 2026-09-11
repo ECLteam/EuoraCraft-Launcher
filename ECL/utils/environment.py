@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：环境变量应用：将进程环境映射到配置键。
+#
+# 公开接口：
+#   - class Environment — 面向组合根的环境变量读取器，路径一经创建即固定不变。
+#       - get_env() -> dict[str, str | None] — 获取环境变量。
+#       - get_value(default, *keys) -> str | None — 读取环境变量。
+#       - apply_to_config(config) -> dict[str, Any] — 使用环境变量覆盖配置。
+# ============================================================
+
 import os
 from copy import deepcopy
 from pathlib import Path

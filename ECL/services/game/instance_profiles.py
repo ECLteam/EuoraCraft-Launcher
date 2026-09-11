@@ -1,3 +1,28 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例资料存储：图标/封面/分类/标签等持久化。
+#
+# 公开接口：
+#   - PROFILE_FIELDS（常量）
+#   - EXTERNAL_SOURCES（常量）
+#   - BUILTIN_CATEGORIES（tuple）
+#   - class InstanceProfileStore — 管理 ECL 自有实例资料、分类和第三方只读元数据的解析结果。
+#       - read_profile(game_path, version_id) -> dict[str, Any] — 读取实例自有资料并过滤未知或损坏字段。
+#       - patch_profile(game_path, version_id, patch) -> dict[str, Any] — 合并实例资料覆盖字段，显式 ``False`` 会按原值保存。
+#       - reset_profile_fields(game_path, version_id, fields) -> dict[str, Any] — 删除指定覆盖字段，使它们重新跟随第三方或自动扫描值。
+#       - set_icon(game_path, version_id, icon_type, value=…, source_path=…) -> dict[str, Any] — 设置自动、内置、加载器或本地图片图标。
+#       - reorder_pins(entries) -> None — 按前端提交顺序为全部置顶实例写入稳定整数顺序。
+#       - get_categories() -> list[dict[str, Any]] — 返回内置分类与用户自定义分类的稳定有序视图。
+#       - upsert_category(category_id, name, color, order) -> dict[str, Any] — 新建或更新用户分类，内置分类不可修改。
+#       - delete_category(category_id) -> None — 删除用户自定义分类；资料中失效的分类 ID 会在展示时回退到未分类。
+#       - enrich_version(game_path, version, compatibility_options) -> dict[str, Any] — 将 ECL 覆盖、第三方来源和运行统计合并进扫描结果。
+#       - compatibility_watch_paths(options=…) -> list[tuple[str, Path]] — 返回插件兼容来源要求加入版本缓存快照的外部文件。
+#       - compatibility_revision() -> int — 返回实例兼容插件注册表的变更序号。
+# ============================================================
+
 from __future__ import annotations
 
 import json

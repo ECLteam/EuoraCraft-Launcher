@@ -1,3 +1,29 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件领域 IPC 处理器：插件列表、生命周期与设置/路由/槽位查询。
+#
+# 公开接口：
+#   - class PluginHandlers — 提供插件生命周期、路由、插槽与命令调用的正式 IPC 边界。
+#       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
+#       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
+#       - plugin_enable(body) -> dict[str, Any] — 启用插件。
+#       - plugin_disable(body) -> dict[str, Any] — 禁用插件。
+#       - plugin_unload(body) -> dict[str, Any] — 卸载并删除用户插件。
+#       - plugin_reload(body) -> dict[str, Any] — 重新加载插件。
+#       - plugin_install(body) -> dict[str, Any] — 安装插件。
+#       - plugin_get_routes(body) -> dict[str, Any] — 获取插件路由。
+#       - plugin_get_slots(body) -> dict[str, Any] — 获取插件插槽。
+#       - plugin_get_vue_slots(body) -> dict[str, Any] — 获取插件 Vue 插槽。
+#       - plugin_get_vue_components(body) -> dict[str, Any] — 获取插件 Vue 组件。
+#       - plugin_call_command(body) -> dict[str, Any] — 调用插件命令。
+#       - plugin_get_settings(body) -> dict[str, Any] — 获取插件设置。
+#       - plugin_update_setting(body) -> dict[str, Any] — 更新插件设置。
+#       - plugin_notify_sidebar_state(body) -> dict[str, Any] — 通知插件侧栏的折叠状态。
+# ============================================================
+
 from typing import Any
 
 from ECL.api.contracts import failure

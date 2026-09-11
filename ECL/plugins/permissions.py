@@ -1,3 +1,26 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件权限声明与校验模块。
+#
+# 公开接口：
+#   - class PermissionScope — 权限作用域。
+#   - class PermissionAction — 权限操作类型。
+#   - class Permission — 单个权限声明。
+#       - from_dict(data) -> Permission | None — 从字典解析权限声明，格式错误时返回 None。
+#       - to_dict() -> dict[str, Any] — 转换为字典表示。
+#       - matches(other) -> bool — 检查当前权限是否满足另一个权限请求。
+#   - class PermissionManager — 权限管理器，负责收集与校验插件声明的权限。
+#       - register_plugin_permissions(plugin_name, permissions) -> list[Permission] — 注册插件声明的权限，返回成功解析的权限列表。
+#       - get_plugin_permissions(plugin_name) -> list[Permission] — 获取指定插件声明的权限列表。
+#       - unregister_plugin(plugin_name) -> None — 移除指定插件已注册的权限声明。
+#       - has_permission(plugin_name, permission) -> bool — 检查插件是否拥有指定权限。
+#       - check_permission(plugin_name, permission) -> None — 校验插件是否拥有指定权限，缺失时抛出 PermissionError。
+#       - clear() -> None — 清空所有已注册的权限声明。
+# ============================================================
+
 """插件权限声明与校验模块。"""
 
 from __future__ import annotations

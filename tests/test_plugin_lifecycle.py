@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_lifecycle 模块的自动化测试。
+#
+# 公开接口：
+#   - test_reinstall_over_enabled_plugin_syncs_code(tmp_path) -> None — 对已启用插件重复 install 应覆盖沙箱副本并保持启用，供热重载同步使用。
+#   - test_reload_after_reinstall_keeps_plugin_enabled(tmp_path) -> None — 重装后的插件再 reload 应保持启用，覆盖工具箱热重载的完整调用序列。
+# ============================================================
+
 """插件生命周期操作（安装、重载、卸载）回归测试。"""
 
 import json

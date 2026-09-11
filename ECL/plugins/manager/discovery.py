@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件发现：扫描插件目录并解析 plugin.json 元数据。
+#
+# 公开接口：
+#   - class PluginDiscovery — 负责插件候选项的发现、依赖解析与实例化加载。
+# ============================================================
+
 import importlib.util
 import json
 import sys

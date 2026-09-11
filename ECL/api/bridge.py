@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：前端桥接辅助：远程图片抓取、运行时选项校验等跨领域公共逻辑。
+#
+# 公开接口：
+#   - guard_ipc_handler(state, operation, handler, timeout=…) -> Any — 为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
+# ============================================================
+
 import asyncio
 import base64
 import functools

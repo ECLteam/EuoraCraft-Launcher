@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 debug_maintenance 模块的自动化测试。
+#
+# 公开接口：
+#   - test_reset_launcher_data_deletes_only_declared_targets(tmp_path) -> None
+#   - test_clear_plugins_can_be_scheduled_with_data_reset(tmp_path) -> None
+#   - test_unknown_debug_maintenance_action_is_rejected(tmp_path) -> None
+# ============================================================
+
 import json
 
 import pytest

@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 app_update 模块的自动化测试。
+#
+# 公开接口：
+#   - test_enabled_depends_on_frozen_and_channel(tmp_path) -> None
+#   - test_matching_asset_selects_platform(tmp_path, platform, preferred, foreign) -> None
+#   - test_matching_asset_excludes_sidecars_but_prefers_executable(tmp_path) -> None
+#   - test_matching_asset_returns_none_without_suitable_asset(tmp_path) -> None
+#   - test_stage_writes_pending_marker(tmp_path) -> None
+#   - test_stage_raises_when_asset_missing(tmp_path) -> None
+#   - test_load_pending_returns_marker(tmp_path) -> None
+#   - test_load_pending_returns_none_for_corrupt_marker(tmp_path) -> None
+#   - test_clear_stale_pending_update_removes_marker_and_backup(tmp_path) -> None
+#   - test_clear_stale_pending_update_returns_false_without_marker(tmp_path) -> None
+# ============================================================
+
 import json
 
 import pytest

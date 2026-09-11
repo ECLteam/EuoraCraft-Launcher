@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件生命周期：安装/启用/禁用/重载/卸载的实现。
+#
+# 公开接口：
+#   - class PluginLifecycle — 负责插件的启用、禁用、卸载、重载与安装等生命周期管理。
+#       - enable(name) -> PluginActionResult — 启用插件。
+#       - disable(name, _persist_state=…) -> PluginActionResult — 禁用插件，清理其注册的前端内容与事件处理器。
+#       - unload(name, _persist_state=…) -> PluginActionResult — 卸载插件，清理其注册的路由、插槽内容与事件处理器。
+#       - uninstall(name) -> PluginActionResult — 卸载并删除用户插件的安装目录。
+#       - reload(name) -> PluginActionResult — 重新加载插件。
+#       - install(source_path) -> PluginActionResult — 安装插件。
+#       - on_frontend_ready() -> None — 通知所有已启用插件前端已就绪；重复调用无效。
+#       - set_sidebar_state(collapsed) -> None — 记录侧栏状态，并在前端就绪后通知插件。
+#       - close() -> None — 按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
+# ============================================================
+
 import json
 import re
 import shutil

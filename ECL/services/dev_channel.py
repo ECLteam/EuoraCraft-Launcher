@@ -1,3 +1,27 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：开发者通道服务：本地 WebSocket 鉴权、方法分发与日志回放。
+#
+# 公开接口：
+#   - PROTOCOL_VERSION（int）
+#   - AUTH_TIMEOUT_SECONDS（int）
+#   - MAX_PAYLOAD_BYTES（int）
+#   - DISCOVERY_FILENAME（str）
+#   - LOG_HISTORY_LIMIT（int）
+#   - EVENT_PREFIX_WHITELIST（tuple）
+#   - class DevChannelError — 携带协议错误码的通道异常，用于把插件操作失败映射为响应错误信封。
+#   - class DevChannelService — 开发者通道服务：在本地回环地址上提供 WebSocket 服务，把插件管理与日志能力
+#       - port() -> int | None — 返回实际监听端口，服务未启动时为 None。
+#       - frontend_url() -> str | None — 返回内嵌前端入口地址；未托管或服务未启动时为 None。
+#       - install_frontend_handlers(handlers) -> None — 装入启动器前端命令表，使工具箱内嵌前端可通过 frontend.invoke 驱动后端。
+#       - start() -> None — 启动后台线程承载 WebSocket 服务，就绪后写入连接发现文件。
+#       - close() -> None — 停止服务线程、退订全部事件并删除连接发现文件，重复调用无副作用。
+#       - dispatch_log(record) -> None — 把一条日志转换为协议条目，写入历史缓存并推送给已订阅客户端。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

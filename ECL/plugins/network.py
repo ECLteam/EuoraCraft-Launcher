@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：受控网络能力：插件经权限门禁后使用共享 HTTP 客户端发起请求。
+#
+# 公开接口：
+#   - class PluginHttpError — 插件网络请求失败或超出权限时抛出。
+#   - class PluginHttpResponse — 插件可安全读取的 HTTP 响应视图，不暴露底层客户端对象。
+# ============================================================
+
 """受控网络能力：插件经权限门禁后使用共享 HTTP 客户端发起请求。"""
 
 from __future__ import annotations

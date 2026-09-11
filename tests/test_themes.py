@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 themes 模块的自动化测试。
+#
+# 公开接口：
+#   - test_builtin_theme_ids_are_classic_and_folia() -> None
+#   - test_normalize_theme_id_accepts_builtin_and_rejects_unknown() -> None
+# ============================================================
+
 from __future__ import annotations
 
 from ECL.services.themes import BUILTIN_THEME_IDS, normalize_theme_id

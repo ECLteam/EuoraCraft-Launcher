@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：前端事件桥：后端事件总线到前端事件名的订阅注册。
+#
+# 公开接口：
+#   - subscribe_frontend_event(bus, frontend_event, emit, owner) -> list[Unsubscribe] — 订阅指定前端事件对应的全部后端事件，把转换后的载荷回调给 emit。
+#   - subscribe_all_frontend_events(bus, emit, owner) -> list[Unsubscribe] — 订阅事件桥注册的全部前端事件，供主窗口适配器在启动时一次性接通。
+# ============================================================
+
 from __future__ import annotations
 
 from collections.abc import Callable

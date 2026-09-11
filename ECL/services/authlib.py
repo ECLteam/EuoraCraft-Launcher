@@ -1,3 +1,27 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：外置登录服务：authlib-injector 下载维护与外置账户管理。
+#
+# 公开接口：
+#   - class AuthlibInjector — 管理 authlib-injector 组件的版本、下载与校验。
+#       - needs_download() -> bool — 本地 jar 缺失或校验失配时需要重新下载。
+#       - ensure() -> Path — 返回可用的 authlib-injector；本地缺失时下载最新版。
+#       - close() -> None — 关闭下载客户端。
+#   - class AuthlibAccountManager — 持久化并维护外置登录（Yggdrasil）账户与访问令牌。
+#       - list_accounts() -> dict[str, dict] — 返回全部外置登录账户。
+#       - resolve_server(server_url) -> str — 通过 ALI 返回实际的 Yggdrasil API 地址。
+#       - add_account(server_url, username, password) -> tuple[str, dict] — 登录外置账户并保存令牌与角色资料。
+#       - select_profile(account_id, profile_id) -> tuple[str, dict] — 为一次待完成的多角色登录绑定单个角色并保存账户。
+#       - delete_account(account_id) -> None — 删除本地外置账户。
+#       - refresh_account(account_id) -> dict — 刷新外置账户的令牌与角色资料。
+#       - get_token(account_id) -> dict[str, str] — 返回可启动游戏的有效外置登录令牌。
+#       - get_texture_urls(account_id) -> dict[str, str] — 从外置登录会话档案中解析完整皮肤与披风 URL。
+#       - close() -> None — 关闭认证客户端。
+# ============================================================
+
 from __future__ import annotations
 
 import base64

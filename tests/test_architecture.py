@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 architecture 模块的自动化测试。
+#
+# 公开接口：
+#   - ECL_ROOT（常量）
+#   - test_application_imports_game_only_through_public_entrypoint() -> None
+#   - test_no_service_locator_api_or_duplicate_libs_remains() -> None
+#   - test_no_internal_compatibility_aliases_remain() -> None
+#   - test_ipc_registry_has_no_retired_compatibility_commands() -> None
+#   - test_game_package_root_contains_only_public_boundary_modules() -> None
+#   - test_game_service_raw_body_is_not_typed_as_any() -> None
+#   - test_production_docstrings_are_multiline_and_have_no_placeholders() -> None
+# ============================================================
+
 from __future__ import annotations
 
 import ast

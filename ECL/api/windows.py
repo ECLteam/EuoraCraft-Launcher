@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：窗口领域 IPC 处理器：窗口列表/创建/焦点/边界管理。
+#
+# 公开接口：
+#   - class WindowHandlers — Host-owned, local-only WebView window lifecycle boundary.
+#       - window_list(body) -> dict[str, Any]
+#       - window_open(body, app_handle) -> dict[str, Any]
+#       - window_focus(body) -> dict[str, Any]
+#       - window_close(body) -> dict[str, Any]
+#       - window_update_bounds(body) -> dict[str, Any]
+#       - close_plugin_windows(plugin_name) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

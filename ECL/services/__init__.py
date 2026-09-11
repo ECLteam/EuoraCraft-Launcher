@@ -1,3 +1,11 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：领域服务包。
+# ============================================================
+
 from ECL.services.accounts import AccountError, AccountManager
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError, AuthlibInjector
 from ECL.services.dev_channel import DevChannelError, DevChannelService

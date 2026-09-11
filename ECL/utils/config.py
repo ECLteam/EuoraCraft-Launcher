@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：JSON 配置存储：分节读写与默认游戏目录探测。
+#
+# 公开接口：
+#   - class ConfigStore — 以 JSON 文件为载体的启动器配置存储，归应用上下文所有。
+#       - default_minecraft_path() -> Path — 获取默认 Minecraft 目录。
+#       - get_config(section=…) -> Any — 获取配置数据
+#       - list_sections() -> list[str] — 获取全部配置分区名称
+#       - get_many(sections) -> dict[str, Any] — 批量获取配置分区
+#       - save_config(section, data) -> None — 保存配置分区
+# ============================================================
+
 from __future__ import annotations
 
 import json

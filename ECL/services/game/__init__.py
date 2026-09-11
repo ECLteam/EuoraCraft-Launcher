@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：游戏领域服务门面：GameService 聚合各协调器。
+#
+# 公开接口：
+#   - class GameService — 面向 IPC 边界公开的统一游戏服务门面。
+# ============================================================
+
 from .base import GameServiceError, VersionScanError
 from .catalog import CatalogCoordinator
 from .install import InstallCoordinator

@@ -1,3 +1,18 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例兼容性读取：外部实例元数据与监视路径解析。
+#
+# 公开接口：
+#   - class InstanceCompatibilityReader — 读取第三方启动器的实例元数据，不对第三方文件执行任何写入。
+#       - read_instance(game_path, version_id, vanilla_name, primary_loader, options) -> list[ExternalInstanceMetadata] — 汇总指定实例可用的第三方元数据来源。
+#       - describe_sources() -> list[dict[str, str]] — 返回内置和插件提供的兼容来源描述。
+#       - resolve_watch_paths(options=…) -> list[tuple[str, Path]] — 返回插件兼容来源要求监听的外部文件。
+#       - revision() -> int — 返回插件兼容来源注册表的当前变更序号。
+# ============================================================
+
 from __future__ import annotations
 
 import json

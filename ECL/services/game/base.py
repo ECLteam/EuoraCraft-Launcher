@@ -1,3 +1,11 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：游戏服务内部共享基类。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

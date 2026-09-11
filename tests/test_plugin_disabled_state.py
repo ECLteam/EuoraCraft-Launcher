@@ -1,3 +1,22 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_disabled_state 模块的自动化测试。
+#
+# 公开接口：
+#   - test_disabled_plugin_is_skipped_on_initialize(tmp_path) -> None — 被禁用的插件不应被实例化，状态应为 disabled。
+#   - test_disabled_plugin_shows_metadata_from_plugin_json(tmp_path) -> None — 被禁用且未实例化的插件，list_plugins 仍应从 plugin.json 读取元数据。
+#   - test_deleted_disabled_plugin_is_pruned_from_state_and_list(tmp_path) -> None — 插件目录已删除时，不应因为历史禁用记录继续显示幽灵条目。
+#   - test_uninstall_disabled_plugin_removes_files_state_and_list(tmp_path) -> None — 从界面卸载已禁用插件时，应同时删除目录与禁用记录。
+#   - test_disable_persists_to_state_file(tmp_path) -> None — 从前端禁用插件后，状态应写入 plugin_state.json。
+#   - test_enable_removes_from_state_file(tmp_path) -> None — 启用已禁用插件后，应从 plugin_state.json 中移除。
+#   - test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -> None — on_frontend_ready 重复调用只生效一次；前端就绪后重新启用的插件单独补调。
+#   - test_register_route_is_idempotent(tmp_path) -> None — 同一插件重复注册相同路径时，路由列表中只保留一条。
+#   - test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None — 框架关闭时不应把已加载插件全部写入 plugin_state.json。
+# ============================================================
+
 """插件禁用状态持久化测试。"""
 
 import json

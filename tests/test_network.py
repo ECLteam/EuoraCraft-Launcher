@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 network 模块的自动化测试。
+#
+# 公开接口：
+#   - test_get_with_retries_retries_transient_response() -> None
+#   - test_get_with_retries_stops_after_configured_network_failures() -> None
+# ============================================================
+
 from __future__ import annotations
 
 import httpx

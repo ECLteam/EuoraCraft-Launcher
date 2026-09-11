@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 instance_profiles 模块的自动化测试。
+#
+# 公开接口：
+#   - test_profile_keeps_explicit_false_and_resets_single_field(tmp_path) -> None
+#   - test_local_icon_is_validated_and_copied_into_ecl_directory(tmp_path) -> None
+#   - test_pcl_metadata_is_read_only_and_ecl_override_has_priority(tmp_path) -> None
+#   - test_external_stats_only_add_positive_deltas(tmp_path) -> None
+#   - test_qomicex_manual_index_maps_metadata_without_writing(tmp_path) -> None
+#   - test_qomicex_index_is_parsed_once_for_unchanged_scan(tmp_path, monkeypatch) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

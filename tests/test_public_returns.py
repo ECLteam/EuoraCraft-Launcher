@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 public_returns 模块的自动化测试。
+#
+# 公开接口：
+#   - test_config_save_uses_exceptions_instead_of_ambiguous_boolean(tmp_path) -> None
+#   - test_plugin_action_result_exposes_action_status_and_success() -> None
+#   - test_launcher_exit_codes_distinguish_failure_stages() -> None
+# ============================================================
+
 from __future__ import annotations
 
 import pytest

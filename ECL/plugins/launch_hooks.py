@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：启动钩子扩展点：插件参与 Minecraft 启动的参数准备与进程生命周期。
+#
+# 公开接口：
+#   - class LaunchContext — 插件可读写的启动准备上下文。
+#   - class LaunchHookRegistry — 按注册顺序维护插件启动钩子，并在四个阶段安全调用。
+#       - register(owner, name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册或原位更新一个启动钩子。
+#       - unregister_owner(owner) -> None — 撤销指定插件注册的全部启动钩子。
+#       - prepare(context) -> None — 参数准备阶段：允许插件追加 JVM 参数、游戏参数与环境变量。
+#       - pre_launch(context) -> None — 进程创建前阶段。
+#       - post_launch(context) -> None — 进程创建后阶段。
+#       - on_exit(context) -> None — 游戏进程退出阶段。
+# ============================================================
+
 """启动钩子扩展点：插件参与 Minecraft 启动的参数准备与进程生命周期。"""
 
 from __future__ import annotations

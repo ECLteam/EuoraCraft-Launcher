@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 process_service 模块的自动化测试。
+#
+# 公开接口：
+#   - wait_until(cond, timeout=…) -> bool — 轮询等待条件成立，超时返回 False，避免用固定 sleep 造成的时序脆弱。
+#   - make_service() -> tuple[ProcessService, EventBus, list[dict[str, Any]]] — 构造使用事件闭环子进程的服务实例。
+#   - test_spawn_captures_output_then_exits() -> None
+#   - test_stdin_writes_through_to_subprocess() -> None
+#   - test_stdin_rejected_without_stdin_pipe() -> None
+#   - test_stop_terminates_instance() -> None
+#   - test_same_name_instances_all_cleaned_up() -> None
+#   - test_spawn_validates_arguments() -> None
+#   - test_game_instance_registered_via_event_captures_output() -> None
+#   - test_close_keeps_running_game_instance() -> None
+# ============================================================
+
 import sys
 import time
 from collections.abc import Callable

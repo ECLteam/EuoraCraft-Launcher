@@ -1,3 +1,30 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 microsoft_auth 模块的自动化测试。
+#
+# 公开接口：
+#   - test_connect_error_yields_readable_hint_even_with_empty_message() -> None
+#   - test_network_error_nested_in_cause_chain_is_recognized() -> None
+#   - test_timeout_error_yields_timeout_hint() -> None
+#   - test_non_network_error_returns_none() -> None
+#   - test_device_flow_connect_error_message_is_readable() -> None
+#   - test_get_profile_429_raises_friendly_message() -> None
+#   - test_refresh_network_error_preserves_refresh_token() -> None
+#   - test_refresh_invalid_grant_clears_cache_when_access_expired() -> None
+#   - test_refresh_invalid_grant_preserves_cache_when_access_valid() -> None
+#   - test_refresh_invalid_grant_clears_cache_without_access_token() -> None
+#   - test_refresh_other_error_preserves_refresh_token() -> None
+#   - test_get_token_without_device_flow_raises_on_refresh_failure() -> None
+#   - test_manager_aclose_ignores_closed_loop_error(tmp_path) -> None
+#   - test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> None
+#   - test_save_account_list_persists_atomically(tmp_path) -> None
+#   - test_load_accounts_tolerates_corrupted_list(tmp_path) -> None
+#   - test_save_cache_writes_valid_json(tmp_path) -> None
+# ============================================================
+
 import json
 import time
 

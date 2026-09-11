@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：模组协调器：模组列表/开关/增删与图标处理。
+#
+# 公开接口：
+#   - class ModCoordinator — 管理 Minecraft 根目录中的本地模组文件。
+#       - list_mods(game_path) -> list[dict[str, Any]] — 列出目标 Minecraft 根目录中的 Jar 模组，并解析 jar 元数据。
+#       - toggle_mod(game_path, filename) -> bool — 通过 ``.disabled`` 后缀切换模组启用状态。
+#       - add_mod(game_path, source_path) -> str — 将本地 Jar 文件原子复制到目标 ``mods`` 目录。
+#       - remove_mod(game_path, filename) -> None — 删除目标 ``mods`` 目录中的单个模组文件。
+#       - mods_path(game_path) -> Path — 创建并返回目标 Minecraft 根目录中的 ``mods`` 目录。
+# ============================================================
+
 from __future__ import annotations
 
 import base64

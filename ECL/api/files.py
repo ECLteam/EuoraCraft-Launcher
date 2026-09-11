@@ -1,3 +1,31 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：文件领域 IPC 处理器：本地/远程文件读取与远程图片缓存。
+#
+# 公开接口：
+#   - class FileHandlers — 提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。
+#       - file_resolve(body) -> dict[str, Any] — 规整本地路径，供前端转换为可访问的资源 URL。
+#       - fs_exists(body) -> dict[str, Any] — 查询本地路径类型，不修改文件系统。
+#       - fs_read_dir(body) -> dict[str, Any] — 读取指定目录的一层条目及基础元数据。
+#       - fs_read_file(body) -> dict[str, Any] — 以 UTF-8 文本或 Base64 读取大小受限的本地文件。
+#       - image_fetch_data_url(body) -> dict[str, Any] — 下载远程图片并转换为受大小限制的 Data URL。
+#       - image_save_url(body) -> dict[str, Any] — 下载背景图片并缓存到本地数据目录。
+#       - image_save_as(body) -> dict[str, Any] — 保存背景图片。
+#       - image_read_file(body) -> dict[str, Any] — 读取图片（带 LRU 缓存）。
+#       - image_list_files(body) -> dict[str, Any] — 获取图片列表。
+#       - select_directory(body) -> dict[str, Any] — 选择目录。
+#       - select_java(body) -> dict[str, Any] — 选择 Java。
+#       - select_image(body) -> dict[str, Any] — 按使用场景选择图片；皮肤和披风只允许 PNG。
+#       - select_file(body) -> dict[str, Any] — 选择文件。
+#       - select_files(body) -> dict[str, Any] — 按实例工作台用途选择多个本地文件。
+#       - select_save_file(body) -> dict[str, Any] — 按导出用途打开系统 ZIP 文件保存对话框。
+#       - open_folder(body) -> dict[str, Any] — 打开目录。
+#       - open_url(body) -> dict[str, Any] — 打开链接。
+# ============================================================
+
 import base64
 import hashlib
 import webbrowser

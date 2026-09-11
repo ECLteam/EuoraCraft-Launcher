@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：启动器编排：装配应用上下文、运行主循环并给出退出码。
+#
+# 公开接口：
+#   - class LauncherExitCode
+#   - class EuoraCraftLauncher — 编排一次桌面应用的完整运行周期。
+#       - run() -> LauncherExitCode — 初始化后端并运行前端事件循环。
+# ============================================================
+
 from __future__ import annotations
 
 import os

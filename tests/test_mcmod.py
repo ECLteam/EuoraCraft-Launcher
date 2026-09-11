@@ -1,3 +1,34 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 mcmod 模块的自动化测试。
+#
+# 公开接口：
+#   - test_lookup_by_slug(tmp_path) -> None
+#   - test_lookup_by_local_mod_alias(tmp_path) -> None
+#   - test_search_chinese_prefers_exact_and_prefix(tmp_path) -> None
+#   - test_to_english_query_uses_exact_match(tmp_path) -> None
+#   - test_mcmod_url_and_wiki_info(tmp_path) -> None
+#   - test_missing_data_file_returns_empty(tmp_path) -> None
+#   - test_corrupted_data_file_returns_empty(tmp_path) -> None
+#   - test_list_local_mod_uses_chinese_display_name(tmp_path) -> None
+#   - test_map_search_hits_fills_wiki_and_chinese_title(tmp_path) -> None
+#   - test_map_search_hits_skips_wiki_for_unknown_slug(tmp_path) -> None
+#   - test_fetch_project_versions_keeps_required_dependency_metadata(tmp_path) -> None
+#   - test_map_search_hits_maps_curseforge_format(tmp_path) -> None
+#   - test_search_online_resources_mod_facet_excludes_modpack(tmp_path) -> None
+#   - test_search_online_resources_omits_empty_facets(tmp_path) -> None
+#   - test_search_curseforge_403_raises_key_invalid(tmp_path) -> None
+#   - test_search_curseforge_uses_hmcl_style_params(tmp_path) -> None
+#   - test_search_curseforge_maps_sort_and_resource_type(tmp_path) -> None
+#   - test_search_curseforge_worlds_uses_world_class_and_mapping(tmp_path) -> None
+#   - test_curseforge_world_detail_and_files_are_mapped(tmp_path) -> None
+#   - test_curseforge_file_uses_download_url_endpoint_as_fallback(tmp_path) -> None
+#   - test_install_online_world_downloads_then_imports_archive(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

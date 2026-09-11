@@ -1,3 +1,48 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：账户领域 IPC 处理器：登录、账户列表、皮肤与衣橱等操作转发到账户服务。
+#
+# 公开接口：
+#   - class AccountHandlers — 提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。
+#       - accounts_list(body) -> dict[str, Any] — 获取账户列表。
+#       - accounts_current(body) -> dict[str, Any] — 获取当前账户。
+#       - accounts_auth_providers(body) -> dict[str, Any] — 获取插件注册的全部认证提供方定义。
+#       - accounts_add_plugin(body) -> dict[str, Any] — 通过插件认证提供方新增账户。
+#       - accounts_add_offline(body) -> dict[str, Any] — 添加离线账户。
+#       - accounts_default_skins(body) -> dict[str, Any] — 获取可供离线账户选择的默认皮肤列表。
+#       - accounts_set_offline_skin(body) -> dict[str, Any] — 设置离线账户的默认皮肤。
+#       - accounts_add_authlib(body) -> dict[str, Any] — 添加外置登录账户。
+#       - accounts_select_authlib_profile(body) -> dict[str, Any] — 为多角色外置账户选择本次登录使用的单个角色。
+#       - authlib_resolve_server(body) -> dict[str, Any] — 解析外置登录网站实际使用的 API 地址。
+#       - accounts_start_microsoft_login(body) -> dict[str, Any] — 开始微软登录。
+#       - accounts_microsoft_login_config(body) -> dict[str, Any] — 获取微软登录配置。
+#       - accounts_authlib_login_config(body) -> dict[str, Any] — 获取外置登录可用性配置。
+#       - accounts_poll_microsoft_login(body) -> dict[str, Any] — 获取微软登录状态。
+#       - accounts_cancel_microsoft_login(body) -> dict[str, Any] — 取消微软登录。
+#       - accounts_complete_microsoft_login(body) -> dict[str, Any] — 完成微软登录。
+#       - accounts_switch(body) -> dict[str, Any] — 切换账户。
+#       - accounts_remove(body) -> dict[str, Any] — 删除账户。
+#       - accounts_set_favorite(body) -> dict[str, Any] — 设置账户是否收藏。
+#       - accounts_set_pinned(body) -> dict[str, Any] — 设置账户是否置顶。
+#       - accounts_refresh_profile(body) -> dict[str, Any] — 刷新账户信息。
+#       - accounts_texture_urls(body) -> dict[str, Any] — 返回账户完整皮肤与当前披风地址，图片裁切和渲染由前端完成。
+#       - wardrobe_list(body) -> dict[str, Any] — 返回本地衣柜元数据，不包含纹理字节或本地绝对路径。
+#       - wardrobe_sync_account_skin(body) -> dict[str, Any] — 将账户当前穿戴的远程皮肤下载到本地衣柜，重复纹理沿用已有条目。
+#       - wardrobe_import(body) -> dict[str, Any] — 将用户选择的 PNG 复制到启动器衣柜，并返回去重结果。
+#       - wardrobe_update(body) -> dict[str, Any] — 修改衣柜条目的名称或皮肤模型，不转换原始图片。
+#       - wardrobe_delete(body) -> dict[str, Any] — 删除本地收藏；已经上传到外部账户的皮肤不受影响。
+#       - wardrobe_texture(body) -> dict[str, Any] — 将衣柜中的小型 PNG 原样编码为 Data URL 供 WebView 渲染。
+#       - wardrobe_export(body) -> dict[str, Any] — 通过原生保存对话框导出衣柜中的原始 PNG，不经过前端 Base64 往返传输。
+#       - wardrobe_apply_skin(body) -> dict[str, Any] — 将衣柜中的标准 64×64 皮肤上传到指定 Microsoft 账户。
+#       - microsoft_reset_skin(body) -> dict[str, Any] — 将正版账户皮肤重置为默认。
+#       - microsoft_set_cape(body) -> dict[str, Any] — 为正版账户选择已解锁的披风。
+#       - microsoft_reset_cape(body) -> dict[str, Any] — 取消正版账户当前佩戴的披风。
+#       - authlib_servers(body) -> dict[str, Any] — 获取外置登录服务器。
+# ============================================================
+
 import base64
 import re
 from pathlib import Path

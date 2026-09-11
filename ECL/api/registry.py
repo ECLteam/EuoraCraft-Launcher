@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：IPC 命令注册表：命令名到处理器方法的映射。
+#
+# 公开接口：
+#   - COMMAND_NAMES（tuple）
+#   - command_handlers(api) -> dict[str, Callable[..., Any]] — 返回 PyTauri 需要注册的唯一正式 IPC 命令表。
+# ============================================================
+
 from __future__ import annotations
 
 from collections.abc import Callable

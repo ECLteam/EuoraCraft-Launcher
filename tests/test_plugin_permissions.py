@@ -1,3 +1,25 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_permissions 模块的自动化测试。
+#
+# 公开接口：
+#   - test_permission_from_dict_and_matches() -> None
+#   - test_permission_prefix_wildcard_matches() -> None — 前缀通配 resource 如 demo:* 应匹配同一命名空间下的所有资源。
+#   - test_permission_manager_register_and_check() -> None
+#   - test_system_plugin_skips_permission_check(tmp_path) -> None
+#   - test_normal_plugin_requires_declared_permission() -> None
+#   - test_normal_plugin_with_permission_can_operate(tmp_path) -> None
+#   - test_plugin_can_subscribe_to_another_plugin_event(tmp_path) -> None
+#   - test_framework_loads_permissions_from_metadata(tmp_path) -> None
+#   - test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None
+#   - test_instance_error_is_returned_to_plugin_management(tmp_path) -> None
+#   - test_sidebar_state_is_emitted_after_frontend_is_ready() -> None
+#   - test_system_plugin_ignores_permission_declaration(tmp_path) -> None
+# ============================================================
+
 """插件权限声明与校验测试。"""
 
 import json

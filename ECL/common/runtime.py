@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：运行时环境信息：可执行/资源/数据目录解析（兼容冻结打包）。
+#
+# 公开接口：
+#   - class RuntimeInfo — 运行环境信息。
+#   - get_runtime_info() -> RuntimeInfo — 获取当前运行环境的信息。
+#   - get_pyproject_data(app_path) -> dict | None — 读取 pyproject.toml 的解析结果。
+# ============================================================
+
 import builtins
 import os
 import sys

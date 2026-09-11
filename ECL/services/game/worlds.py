@@ -1,3 +1,30 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：存档协调器：世界清单、详情修改、备份与导入导出。
+#
+# 公开接口：
+#   - class WorldCoordinator — 管理实例实际游戏目录中的世界、备份与数据包元数据。
+#       - list_worlds(game_path, version_id, version_isolation=…) -> list[dict[str, Any]] — 读取全部有效存档；损坏存档以错误状态返回而不是阻断列表。
+#       - world_detail(game_path, version_id, world_id, version_isolation=…) -> dict[str, Any]
+#       - patch_world(game_path, version_id, world_id, patch, version_isolation=…) -> dict[str, Any] — 备份后原子修改存档常用字段，保留所有未知 NBT 字段。
+#       - copy_world(game_path, version_id, world_id, new_world_id, version_isolation=…) -> dict[str, str] — 异步复制世界目录，目标目录只允许安全相对名称。
+#       - set_world_icon(game_path, version_id, world_id, source_path, version_isolation=…) -> dict[str, str] — 校验并原子写入世界图标，原始图片不被修改。
+#       - delete_world(game_path, version_id, world_id, version_isolation=…) -> None
+#       - export_world(game_path, version_id, world_id, output_path, version_isolation=…) -> dict[str, str]
+#       - import_world(game_path, version_id, source_path, version_isolation=…) -> dict[str, str]
+#       - create_world_backup(game_path, version_id, world_id, version_isolation=…, automatic) -> dict[str, Any] — 创建带元数据的 ZIP 备份并只保留最近十个未锁定备份。
+#       - start_world_backup(game_path, version_id, world_id, version_isolation=…) -> dict[str, str] — 在统一长任务协调器中创建世界备份并返回任务标识。
+#       - list_world_backups(game_path, version_id, world_id) -> list[dict[str, Any]]
+#       - lock_world_backup(game_path, version_id, world_id, backup_id, locked) -> dict[str, Any]
+#       - delete_world_backup(game_path, version_id, world_id, backup_id) -> None — 把指定备份及其元数据直接删除。
+#       - restore_world_backup(game_path, version_id, world_id, backup_id, version_isolation=…) -> dict[str, str]
+#       - world_quick_play_capability(game_path, version_id) -> dict[str, Any]
+#       - chunkbase_url(game_path, version_id, world_id, version_isolation=…) -> dict[str, str]
+# ============================================================
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 logging_paths 模块的自动化测试。
+#
+# 公开接口：
+#   - test_logger_files_are_created_under_data_path(tmp_path) -> None
+#   - test_debug_records_remain_in_complete_log_when_console_is_info(tmp_path) -> None
+# ============================================================
+
 import logging
 from pathlib import Path
 

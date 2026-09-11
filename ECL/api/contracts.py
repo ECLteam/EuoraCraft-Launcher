@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：统一 IPC 响应契约：ApiSuccess/ApiFailure 与 success/failure 构造器。
+#
+# 公开接口：
+#   - class ApiSuccess — IPC 成功响应。
+#   - class ApiFailure — IPC 失败响应。
+#   - success(data=…) -> ApiSuccess[T | None] — 创建成功响应。
+#   - failure(message, error_code, presentation, error_id, title, detail) -> ApiFailure — 创建失败响应。
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar

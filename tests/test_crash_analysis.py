@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 crash_analysis 模块的自动化测试。
+#
+# 公开接口：
+#   - test_manual_analysis_matches_structured_rules(tmp_path, line, expected_code) -> None
+#   - test_runtime_analysis_filters_old_logs_and_redacts_secrets(tmp_path) -> None
+#   - test_archive_rejects_path_traversal(tmp_path) -> None
+#   - test_archive_rejects_nested_archives_and_binary_files(tmp_path) -> None
+#   - test_manual_file_rejects_oversize_input(tmp_path, monkeypatch) -> None
+#   - test_stack_fallback_maps_package_to_fabric_mod_metadata(tmp_path) -> None
+#   - test_report_is_session_only_and_removed_on_close(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

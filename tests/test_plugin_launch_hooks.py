@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_launch_hooks 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> None — 普通插件可注册启动钩子并修改 JVM 参数与环境变量，禁用时宿主自动清理。
+#   - test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None — 未声明 launch 权限的插件注册启动钩子时 enable 失败。
+#   - test_launch_hook_exception_is_isolated(tmp_path) -> None — 单个钩子抛异常不阻断其余钩子。
+# ============================================================
+
 import json
 
 from ECL.plugins import LaunchContext, PluginManager

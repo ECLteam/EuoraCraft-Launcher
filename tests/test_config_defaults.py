@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 config_defaults 模块的自动化测试。
+#
+# 公开接口：
+#   - test_ui_defaults_start_collapsed_with_full_background_brightness() -> None
+#   - test_launcher_network_defaults_are_bounded() -> None
+# ============================================================
+
 from ECL.utils.config import default_config
 
 

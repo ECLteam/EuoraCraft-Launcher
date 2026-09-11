@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 schematics 模块的自动化测试。
+#
+# 公开接口：
+#   - test_block_color_resolves_base_name_and_falls_back() -> None
+#   - test_schematic_preview_rejects_missing_file(tmp_path) -> None
+#   - test_schematic_preview_invalid_content_fails_gracefully(tmp_path) -> None
+#   - test_litematic_preview_returns_palette_and_regions(tmp_path) -> None
+#   - test_schem_preview_parses_sponge_layout(tmp_path) -> None
+#   - test_downsample_caps_voxel_count(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 from pathlib import Path

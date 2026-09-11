@@ -1,3 +1,95 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 frontend_api_config 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeAccounts
+#       - list_accounts() -> Any
+#       - microsoft_login_config() -> Any
+#       - texture_urls(account_id) -> Any
+#       - add_offline(username, custom_uuid=…, skin=…) -> Any
+#       - default_skins() -> Any
+#       - set_offline_skin(account_id, skin) -> Any
+#       - add_authlib(server_url, username, password) -> Any
+#       - resolve_authlib_server(server_url) -> Any
+#       - select_authlib_profile(account_id, profile_id) -> Any
+#       - upload_skin(account_id, model, texture) -> Any
+#   - class FakePlugins
+#       - on_frontend_ready() -> None
+#       - list_plugins() -> Any
+#       - set_sidebar_state(collapsed) -> None
+#   - class FakeWardrobe
+#       - list_items() -> Any
+#       - read_texture(item_id) -> Any
+#       - import_bytes(texture, kind, name, model) -> Any
+#   - class FakeHttpResponse
+#       - raise_for_status() -> Any
+#       - iter_bytes(_chunk_size) -> Any
+#   - class FakeHttp
+#       - stream(method, url) -> Any
+#   - class FakeInfoCard
+#       - get_info_card() -> Any
+#   - class FakeGame
+#       - curseforge_available() -> Any
+#       - scan_versions(paths, force, compatibility_options) -> Any
+#       - scan_java(user_paths) -> Any
+#       - install_version(body, **options) -> Any
+#       - launch_instance(body, **options) -> Any
+#       - analyze_crash_file(file_path, game_path, version_id) -> Any
+#       - get_crash_output(report_id) -> Any
+#       - export_crash_report(report_id, output_path=…) -> Any
+#   - class FakeWebviewWindow
+#       - show() -> None
+#       - unminimize() -> None
+#       - set_focus() -> None
+#       - run_on_main_thread(handler) -> None
+#   - test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None
+#   - test_launcher_info_matches_effective_launcher_config(tmp_path) -> None
+#   - test_info_card_delegates_to_registered_service(tmp_path) -> None
+#   - test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None
+#   - test_java_scan_delegates_to_game_service(tmp_path) -> None
+#   - test_scan_versions_delegates_to_registered_service(tmp_path) -> None
+#   - test_install_version_delegates_to_game_service_with_runtime_options(tmp_path) -> None
+#   - test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> None
+#   - test_crash_report_commands_validate_and_delegate(tmp_path) -> None
+#   - test_crash_report_id_rejects_invalid_values(tmp_path) -> None
+#   - test_select_save_file_uses_system_dialog_and_normalizes_zip_suffix(tmp_path, monkeypatch) -> None
+#   - test_select_save_file_accepts_mod_default_directory_and_filename(tmp_path, monkeypatch) -> None
+#   - test_select_save_file_instance_export_uses_mrpack_suffix(tmp_path, monkeypatch) -> None
+#   - test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkeypatch) -> None
+#   - test_offline_account_delegates_to_registered_service(tmp_path) -> None
+#   - test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None
+#   - test_offline_account_forwards_optional_skin(tmp_path) -> None
+#   - test_offline_default_skins_handler(tmp_path) -> None
+#   - test_offline_set_skin_handler(tmp_path) -> None
+#   - test_authlib_login_uses_account_manager_and_remembers_server(tmp_path, monkeypatch) -> None
+#   - test_authlib_profile_selection_is_forwarded_to_account_manager(tmp_path) -> None
+#   - test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None
+#   - test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None
+#   - test_focus_window_restores_and_focuses_webview(tmp_path) -> None
+#   - test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None
+#   - test_microsoft_authorization_event_focuses_before_forwarding(tmp_path, monkeypatch) -> None
+#   - test_adapter_forwards_launcher_notifications(tmp_path, monkeypatch) -> None
+#   - test_sidebar_state_is_forwarded_to_plugins(tmp_path) -> None
+#   - test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path, monkeypatch) -> None
+#   - test_guarded_call_timeout_cancels_slow_operation(tmp_path) -> None
+#   - test_guarded_call_without_timeout_runs_to_completion(tmp_path) -> None
+#   - test_guarded_call_treats_auth_exception_as_known_error(tmp_path) -> None
+#   - test_critical_persistence_error_returns_modal_metadata_and_emits_event(tmp_path, monkeypatch) -> None
+#   - test_frontend_ready_pushes_cacheable_development_warning(tmp_path, monkeypatch) -> None
+#   - test_important_backend_events_wait_until_frontend_is_ready(tmp_path, monkeypatch) -> None
+#   - test_ready_frontend_events_are_marshaled_to_main_thread(tmp_path, monkeypatch) -> None
+#   - test_serious_errors_remain_available_until_frontend_acknowledges_them(tmp_path) -> None
+#   - test_wardrobe_list_delegates_to_registered_store(tmp_path) -> None
+#   - test_wardrobe_sync_downloads_current_account_skin_into_store(tmp_path) -> None
+#   - test_wardrobe_apply_skin_uploads_internal_texture_without_base64_body(tmp_path) -> None
+#   - test_debug_maintenance_requires_debug_mode(tmp_path) -> None
+#   - test_debug_maintenance_schedules_allowed_action(tmp_path) -> None
+# ============================================================
+
 import asyncio
 import json
 import sys

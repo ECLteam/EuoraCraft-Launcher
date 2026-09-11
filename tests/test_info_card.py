@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 info_card 模块的自动化测试。
+#
+# 公开接口：
+#   - NOW（常量）
+#   - test_info_card_uses_backend_content_and_remote_announcements(tmp_path) -> None
+#   - test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tmp_path) -> None
+#   - test_info_card_uses_last_valid_cache_when_remote_request_fails(tmp_path) -> None
+#   - test_info_card_returns_empty_announcements_when_remote_and_cache_are_invalid(tmp_path) -> None
+#   - test_info_card_does_not_refetch_within_refresh_window(tmp_path) -> None
+#   - test_info_card_injected_client_does_not_pass_verify_per_request(tmp_path) -> None
+# ============================================================
+
 import json
 from datetime import UTC, datetime
 

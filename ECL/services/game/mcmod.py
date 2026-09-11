@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：mcmod.cn 中文译名查询：本地索引、别名与中文搜索。
+#
+# 公开接口：
+#   - class McmodTranslator — MC百科译名离线查询器。
+#       - lookup_by_modrinth_slug(slug) -> dict[str, Any] | None — 按 Modrinth slug 精确查找译名条目。
+#       - lookup_by_curseforge_slug(slug) -> dict[str, Any] | None — 按 CurseForge slug 精确查找译名条目。
+#       - lookup_by_alias(*aliases) -> dict[str, Any] | None — 按英文名、平台 slug 或模组 ID 查询译名。
+#       - search_chinese(query, limit=…) -> list[dict[str, Any]] — 按中文名匹配搜索译名条目，精确/前缀命中优先，其次按名称长度升序。
+#       - to_english_query(query) -> str — 将中文关键词转换为英文搜索词，供 Modrinth/CurseForge 搜索使用。
+#       - mcmod_url(mcmod_id) -> str — 生成 MC百科模组详情页 URL。
+#       - to_wiki_info(mod) -> dict[str, str] — 将译名条目转换为前端 ``McmodInfo`` 结构。
+# ============================================================
+
 from __future__ import annotations
 
 import json

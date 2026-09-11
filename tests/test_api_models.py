@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 api_models 模块的自动化测试。
+#
+# 公开接口：
+#   - test_request_models_accept_valid_payloads() -> None
+#   - test_request_models_reject_invalid_payloads(model, payload) -> None
+#   - test_launch_request_accepts_memory_lock_and_priority_options() -> None
+#   - test_launch_request_rejects_invalid_process_priority() -> None
+#   - test_normalize_process_priority_falls_back_to_normal() -> None
+#   - test_request_schema_contains_every_consolidated_typed_command() -> None
+#   - test_invalid_ipc_payload_uses_stable_error_code() -> None
+#   - test_version_stats_ipc_validates_and_forwards_target() -> None
+# ============================================================
+
 from __future__ import annotations
 
 from types import SimpleNamespace

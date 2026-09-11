@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：设置领域 IPC 处理器：配置读写与 Java 扫描。
+#
+# 公开接口：
+#   - class SettingsHandlers — 提供启动器设置和 Java 运行时查询的正式 IPC 边界。
+#       - settings_get(body) -> ApiResponse — 按单个分区、多个分区或完整配置读取启动器设置。
+#       - settings_set(body) -> ApiResponse — 校验并全量保存一个配置分区。
+#       - game_java_scan(body) -> ApiResponse — 扫描系统和用户配置路径中的 Java 运行时。
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Any

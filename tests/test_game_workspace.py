@@ -1,3 +1,24 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 game_workspace 模块的自动化测试。
+#
+# 公开接口：
+#   - test_resolve_instance_target_matches_isolation_semantics(tmp_path) -> None
+#   - test_resolve_relative_id_rejects_escape(tmp_path, relative_id) -> None
+#   - test_safe_extract_zip_rejects_path_traversal(tmp_path) -> None
+#   - test_safe_extract_zip_rejects_excessive_file_count(tmp_path) -> None
+#   - test_world_patch_preserves_unknown_nbt_and_creates_backup(tmp_path) -> None
+#   - test_instance_profile_cover_field_is_preserved(tmp_path) -> None
+#   - test_world_patch_expanded_fields_updates_nbt(tmp_path) -> None
+#   - test_world_patch_rejects_invalid_values(tmp_path, field, value, code) -> None
+#   - test_options_read_structurizes_known_lines_and_counts_unknown(tmp_path) -> None
+#   - test_options_patch_replaces_and_appends_keeping_unknown(tmp_path) -> None
+#   - test_options_patch_rejects_invalid_keys_and_values(tmp_path, patch, code) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

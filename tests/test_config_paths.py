@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 config_paths 模块的自动化测试。
+#
+# 公开接口：
+#   - test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path) -> None
+#   - test_existing_empty_game_paths_are_initialized(tmp_path) -> None
+# ============================================================
+
 import json
 
 from ECL.utils import ConfigStore

@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_connector 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_connector_extension_requires_permission_and_is_cleaned_on_disable(tmp_path) -> None
+#   - test_qomicex_system_plugin_implements_host_and_guest_extension_protocols(tmp_path) -> None
+#   - test_qomicex_plugin_uploads_and_registers_its_own_local_player_icon(tmp_path) -> None
+# ============================================================
+
 import asyncio
 import json
 from pathlib import Path

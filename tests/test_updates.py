@@ -1,3 +1,28 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 updates 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeHttp
+#       - get(url, **kwargs) -> httpx.Response
+#   - test_compare_versions(left, right, expected) -> None
+#   - test_parse_version_returns_none_for_invalid_input() -> None
+#   - test_alpha_channel_considers_all_release_types() -> None
+#   - test_alpha_channel_up_to_date_when_current_is_global_latest() -> None
+#   - test_beta_channel_finds_newer_prerelease() -> None
+#   - test_beta_channel_ignores_older_or_duplicate_prereleases() -> None
+#   - test_release_channel_only_considers_stable_releases() -> None
+#   - test_release_channel_finds_newer_stable_release() -> None
+#   - test_rc_channel_uses_prerelease_channel() -> None
+#   - test_empty_release_list_means_up_to_date() -> None
+#   - test_network_error_returns_friendly_message() -> None
+#   - test_http_error_status_returns_friendly_message() -> None
+#   - test_invalid_json_returns_friendly_message() -> None
+# ============================================================
+
 import httpx
 import pytest
 

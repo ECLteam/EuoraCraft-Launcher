@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件存储：插件数据目录与键值持久化。
+#
+# 公开接口：
+#   - class PluginStorage — 负责插件配置与禁用状态文件的读写及持久化。
+# ============================================================
+
 import json
 from typing import Any
 

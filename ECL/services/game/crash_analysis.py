@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：崩溃分析服务：日志读取、规则匹配与插件富化。
+#
+# 公开接口：
+#   - class CrashAnalyzer — 分析 Minecraft 与 JVM 日志，并管理一次启动器会话内的临时报告。
+#       - candidate_files(game_path, version_id, game_directory) -> list[dict[str, Any]] — 返回实例内候选日志的描述列表，供前端下拉选择。
+#       - analyze_runtime(version_id, game_path, game_directory, started_wall_time, output_lines, exit_code, detected_by) -> dict[str, Any] — 收集一次已退出游戏的相关日志并生成会话报告。
+#       - analyze_file(file_path, game_path, version_id) -> dict[str, Any] — 导入用户选择的文本日志或 ZIP 并生成会话报告。
+#       - output(report_id) -> dict[str, str] — 返回报告对应的已脱敏游戏输出。
+#       - export(report_id, output_path=…) -> dict[str, str] — 将当前会话中的单个报告原子导出为 ZIP。
+#       - close() -> None — 清空报告索引并删除本次会话创建的全部临时文件。
+# ============================================================
+
 from __future__ import annotations
 
 import json

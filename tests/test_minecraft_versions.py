@@ -1,3 +1,22 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 minecraft_versions 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeAccounts
+#   - test_neoforge_loader_name_uses_frontend_canonical_mapping() -> None
+#   - test_version_service_normalizes_scanner_output(tmp_path) -> None
+#   - test_version_service_scans_with_original_search_minecraft(tmp_path) -> None
+#   - test_version_service_skips_missing_versions_directory(tmp_path) -> None
+#   - test_version_service_rejects_invalid_path_payload() -> None
+#   - test_loader_versions_returns_plain_version_strings(tmp_path, monkeypatch) -> None
+#   - test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypatch) -> None
+#   - test_forge_version_parser_accepts_bytes_html(monkeypatch) -> None
+# ============================================================
+
 import json
 from types import SimpleNamespace
 

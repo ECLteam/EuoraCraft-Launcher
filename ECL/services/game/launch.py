@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：启动协调器：启动流程、进程监视、崩溃候选收集与分析。
+#
+# 公开接口：
+#   - class LaunchCoordinator
+#       - launch_instance(body, game_path, source, java_path, memory, width, height, fullscreen, jvm_args, game_args, version_isolation, lock_memory, process_priority) -> dict[str, str] — 检查游戏文件并启动实例。
+#       - cancel_launch() -> bool — 取消正在执行的启动或文件补全任务。
+#       - list_crash_candidates(game_path, version_id) -> list[dict[str, Any]] — 列出指定实例文件夹内可分析的候选日志文件。
+#       - analyze_crash_file(file_path, game_path, version_id) -> dict[str, Any] — 在指定版本上下文中分析用户选择的日志或 ZIP 文件。
+#       - get_crash_output(report_id) -> dict[str, str] — 返回当前会话崩溃报告中的脱敏游戏输出。
+#       - export_crash_report(report_id, output_path=…) -> dict[str, str] — 导出当前会话内的一份崩溃报告。
+#       - get_version_stats(game_path, version_id) -> dict[str, int] — 返回指定版本目录中的运行统计。
+#       - list_instances() -> list[dict[str, Any]] — 返回由启动器管理的运行中 Minecraft 实例。
+#       - stop_instance(instance_id) -> None — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
+# ============================================================
+
 import json
 import os
 import re

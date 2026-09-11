@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 version_stats 模块的自动化测试。
+#
+# 公开接口：
+#   - test_version_stats_store_creates_defaults_and_accumulates_runs(tmp_path) -> None
+#   - test_version_stats_store_recovers_malformed_file_on_next_write(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import json

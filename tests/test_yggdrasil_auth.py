@@ -1,3 +1,33 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 yggdrasil_auth 模块的自动化测试。
+#
+# 公开接口：
+#   - class OfflineClient
+#       - validate(*args, **kwargs) -> Any
+#       - close() -> Any
+#   - class LoginClient
+#       - follow_ali(url) -> Any
+#       - auth(url, username, password, follow_ali, client_token) -> Any
+#       - refresh(url, access_token, client_token, follow_ali, selected_profile) -> Any
+#       - close() -> Any
+#   - test_authlib_manager_uses_game_default_account_path(monkeypatch, tmp_path) -> None
+#   - test_yggdrasil_refresh_can_bind_a_selected_profile() -> None
+#   - test_authlib_login_resolves_and_saves_full_server_url_and_email(tmp_path) -> None
+#   - test_authlib_login_uses_default_profile_from_access_token_when_top_level_field_is_missing(tmp_path) -> None
+#   - test_authlib_login_matches_profile_name_when_server_does_not_select_one(tmp_path) -> None
+#   - test_authlib_login_selects_one_profile_when_email_has_multiple_unselected_profiles(tmp_path) -> None
+#   - test_authlib_relogin_allows_profile_choice_and_marks_logged_in_profiles(tmp_path) -> None
+#   - test_authlib_injector_downloads_verified_artifact_once(tmp_path) -> None
+#   - test_saved_authlib_account_loads_without_network_request(tmp_path) -> None
+#   - test_refresh_saves_selected_profile_and_user_without_available_profiles(tmp_path) -> None
+#   - test_get_texture_urls_parses_slim_model_from_metadata(tmp_path) -> None
+#   - test_get_texture_urls_defaults_classic_when_model_missing(tmp_path) -> None
+# ============================================================
+
 import json
 from base64 import b64encode, urlsafe_b64encode
 from hashlib import sha256

@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 downloader 模块的自动化测试。
+#
+# 公开接口：
+#   - test_downloader_follows_redirect(monkeypatch, tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 from pathlib import Path

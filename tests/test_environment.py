@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 environment 模块的自动化测试。
+#
+# 公开接口：
+#   - test_apply_to_config_maps_non_default_section_to_nested_dict(tmp_path, monkeypatch) -> None
+#   - test_apply_to_config_preserves_underscored_leaf_key(tmp_path, monkeypatch) -> None
+#   - test_env_manager_reads_microsoft_client_id_from_dotenv(tmp_path, monkeypatch) -> None
+#   - test_system_microsoft_client_id_overrides_dotenv(tmp_path, monkeypatch) -> None
+#   - test_env_manager_reads_system_variables_without_dotenv(tmp_path, monkeypatch) -> None
+#   - test_env_manager_reads_curseforge_api_key_from_dotenv(tmp_path, monkeypatch) -> None
+#   - test_system_curseforge_api_key_overrides_dotenv(tmp_path, monkeypatch) -> None
+#   - test_env_manager_reads_curseforge_api_key_from_ecl_prefix(tmp_path, monkeypatch) -> None
+# ============================================================
+
 from ECL.utils import Environment
 from ECL.utils.config import default_config
 

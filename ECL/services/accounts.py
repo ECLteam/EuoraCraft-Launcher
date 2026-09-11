@@ -1,3 +1,44 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：账户领域服务：微软/离线/外置登录、凭据刷新与皮肤同步。
+#
+# 公开接口：
+#   - MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS（int）
+#   - class LauncherMicrosoftAccountManager — 将底层 Microsoft 认证流程适配为启动器账户管理流程。
+#       - add_microsoft_account() -> str — 完成 Microsoft 登录并保存可用于启动游戏的账户。
+#   - class AccountManager — 聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
+#       - microsoft_login_config() -> dict[str, bool] — 返回微软设备代码登录是否具备有效客户端配置。
+#       - default_skins() -> list[dict[str, Any]] — 返回可供离线账户选择的默认皮肤列表。
+#       - list_auth_providers() -> list[dict[str, Any]] — 返回插件注册的全部认证提供方定义，供前端动态渲染登录表单。
+#       - add_plugin_account(provider_id, values) -> dict[str, Any] — 通过插件认证提供方新增账户并切换为当前账户。
+#       - set_favorite(account_id, favorite) -> dict[str, Any] — 设置账户是否收藏。
+#       - set_pinned(account_id, pinned) -> dict[str, Any] — 设置账户是否置顶。
+#       - list_accounts() -> dict[str, Any] — 返回所有账户以及当前账户标识。
+#       - current_account() -> dict[str, Any] | None — 获取当前账户。
+#       - get_launch_credentials() -> dict[str, str] — 返回启动游戏所需的当前账户凭据。
+#       - add_offline(username, custom_uuid=…, skin=…) -> dict[str, Any] — 添加离线账户。
+#       - set_offline_skin(account_id, skin) -> list[dict[str, Any]] — 设置离线账户的默认皮肤并持久化，返回刷新后的账户列表。
+#       - add_authlib(server_url, username, password) -> dict[str, Any] — 添加外置登录账户。
+#       - select_authlib_profile(account_id, profile_id) -> dict[str, Any] — 完成多角色外置登录，只保存用户选中的一个角色。
+#       - resolve_authlib_server(server_url) -> str — 返回外置登录地址对应的 Yggdrasil API 地址。
+#       - switch_account(account_id) -> None — 切换当前账户；账户不存在时抛出 ``AccountError``。
+#       - remove_account(account_id) -> None — 移除账户并自动选择剩余账户。
+#       - refresh_account(account_id) -> dict[str, Any] — 刷新账户信息。
+#       - texture_urls(account_id) -> dict[str, str] — 返回账户完整皮肤与当前披风的远程纹理地址，供前端统一渲染。
+#       - upload_skin(account_id, variant, image) -> dict[str, Any] — 上传皮肤到 Mojang 服务器并刷新账户信息。
+#       - reset_skin(account_id) -> dict[str, Any] — 将正版账户皮肤重置为默认。
+#       - set_cape(account_id, cape_id) -> dict[str, Any] — 为正版账户选择已解锁的披风。
+#       - reset_cape(account_id) -> dict[str, Any] — 取消正版账户当前佩戴的披风。
+#       - start_microsoft_login() -> dict[str, Any] — 开始微软登录。
+#       - poll_microsoft_login() -> dict[str, Any] — 获取微软登录状态。
+#       - complete_microsoft_login() -> dict[str, Any] — 完成已授权的微软登录并返回保存后的账户。
+#       - cancel_microsoft_login() -> bool — 取消登录流程；返回本次调用是否实际取消了任务。
+#       - close() -> None — 取消仍在运行的认证任务并释放认证客户端。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 wardrobe 模块的自动化测试。
+#
+# 公开接口：
+#   - png_header(width, height, suffix=…) -> bytes
+#   - write_texture(path, width, height, suffix=…) -> Path
+#   - test_import_copies_texture_and_deduplicates_by_kind_and_hash(tmp_path) -> None
+#   - test_import_bytes_persists_downloaded_account_skin(tmp_path) -> None
+#   - test_update_and_delete_preserve_uploaded_account_semantics(tmp_path) -> None
+#   - test_favorite_skin_is_persisted_and_sorted_first(tmp_path) -> None
+#   - test_import_rejects_invalid_dimensions(tmp_path, kind, width, height) -> None
+#   - test_import_accepts_legacy_and_hd_skin_for_preview(tmp_path) -> None
+#   - test_import_rejects_invalid_png_and_large_file(tmp_path) -> None
+#   - test_corrupt_metadata_is_backed_up_before_recovery(tmp_path) -> None
+# ============================================================
+
 import json
 import struct
 from pathlib import Path

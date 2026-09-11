@@ -1,3 +1,24 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 instances_manager 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeProcess
+#       - poll() -> int | None
+#       - wait(timeout=…) -> int
+#       - terminate() -> None
+#       - kill() -> None
+#   - test_stop_instance_terminates_then_waits() -> None
+#   - test_stop_instance_forces_process_only_after_timeout() -> None
+#   - test_stop_instance_kills_when_forced() -> None
+#   - test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> None
+#   - test_apply_priority_skips_normal(monkeypatch) -> None
+#   - test_apply_priority_sets_posix_nice_for_high(monkeypatch) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import importlib

@@ -1,3 +1,11 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件扩展点包。
+# ============================================================
+
 from ECL.plugins.auth_providers import AuthField, AuthProvider, AuthProviderRegistry
 from ECL.plugins.connector import (
     ConnectorExtensionRegistry,

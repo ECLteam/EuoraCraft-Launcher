@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_network 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_can_make_controlled_http_get_with_host_permission(tmp_path) -> None
+#   - test_plugin_http_requires_matching_host_permission(tmp_path) -> None
+#   - test_plugin_http_write_method_requires_write_permission(tmp_path) -> None
+#   - test_plugin_http_rejects_non_http_scheme(tmp_path) -> None
+#   - test_plugin_without_network_permission_cannot_call_http(tmp_path) -> None
+#   - test_plugin_http_truncates_oversized_body(tmp_path) -> None
+# ============================================================
+
 import json
 
 import pytest

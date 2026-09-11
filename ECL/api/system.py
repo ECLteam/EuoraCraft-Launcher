@@ -1,3 +1,31 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：系统领域 IPC 处理器：运行信息、更新检测、日志与错误上报。
+#
+# 公开接口：
+#   - class SystemHandlers — 提供启动器信息、严重错误、用户协议、日志导出与调试维护的正式 IPC 边界。
+#       - launcher_errors_pending(body) -> dict[str, Any] — 返回尚未被前端确认呈现的严重错误。
+#       - launcher_errors_ack(body) -> dict[str, Any] — 确认前端已经接收一批严重错误并释放其内存副本。
+#       - system_ping(body) -> dict[str, Any] — 检查连接。
+#       - system_memory(body) -> dict[str, Any] — 获取内存信息。
+#       - launcher_info(body) -> dict[str, Any] — 获取启动器信息。
+#       - launcher_check_update(body) -> dict[str, Any] — 按当前版本通道检查 GitHub Releases 是否有新版本。
+#       - info_card_get(body) -> dict[str, Any] — 获取信息卡片。
+#       - launcher_update_status(body) -> dict[str, Any] — 返回当前运行形态是否允许自动更新。
+#       - launcher_update_download(body) -> dict[str, Any] — 下载当前通道最新版本的安装包并落盘替换计划。
+#       - launcher_update_apply(body) -> dict[str, Any] — 拉起引导脚本完成替换，并请求当前启动器退出以重启。
+#       - user_agreement_get(body) -> dict[str, Any] — 读取当前用户协议接受状态。
+#       - user_agreement_save(body) -> dict[str, Any] — 保存用户已接受协议的本地状态。
+#       - user_agreement_clear(body) -> dict[str, Any] — 清除用户协议接受状态，但保留匿名标识供再次确认。
+#       - export_logs(body) -> dict[str, Any] — 将当前启动器日志打包为 ZIP 文件。
+#       - debug_reset_launcher_data(body) -> dict[str, Any] — 重置启动器数据。
+#       - debug_clear_plugins(body) -> dict[str, Any] — 清理插件数据。
+#       - debug_devtools_open(body) -> dict[str, Any] — 打开 WebView 开发者工具（F12 调试窗口）。
+# ============================================================
+
 from pathlib import Path
 from typing import Any
 from uuid import uuid4

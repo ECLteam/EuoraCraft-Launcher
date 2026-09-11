@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：长任务操作管理：后台 GameOperation 的提交/查询/取消。
+#
+# 公开接口：
+#   - class OperationContext — 向长任务工作函数提供取消状态和统一进度上报。
+#       - check_cancelled() -> None — 在安全边界检查取消状态，并使用稳定错误码中断任务。
+#       - progress(percent, message, **details) -> None — 发送统一的实例工作台长任务进度事件。
+#   - class GameOperationManager — 管理可取消的实例复制、导入、备份、校验和资源更新任务。
+#       - submit(kind, worker) -> dict[str, str] — 登记并异步执行一个长任务，立即返回稳定的任务标识。
+#       - get(operation_id) -> dict[str, Any] — 返回当前进程中的任务状态或上次持久化的最终结果。
+#       - cancel(operation_id) -> bool — 请求取消尚未完成的任务；工作函数在下一个安全检查点退出。
+#       - close() -> None — 阻止新任务、取消未完成任务并释放线程池。
+# ============================================================
+
 from __future__ import annotations
 
 from collections.abc import Callable

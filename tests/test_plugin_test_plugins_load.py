@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_test_plugins_load 模块的自动化测试。
+#
+# 公开接口：
+#   - test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) -> None — 测试插件加载结果符合预期：7 个正常启用，test_permissions 因故意测试越权命令而权限拒绝。
+# ============================================================
+
 """验证 ECL_data/plugins 下的测试插件本身能够正常加载。"""
 
 import shutil

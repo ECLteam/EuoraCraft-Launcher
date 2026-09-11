@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件依赖解析与拓扑排序。
+#
+# 公开接口：
+#   - class DependencyRequirement — 单个插件依赖需求。
+#       - version_constraint() -> str — 返回该依赖的版本约束表达式。
+#   - parse_dependency(name, value) -> DependencyRequirement | None — 解析 plugin.json 中 dependencies 的单个条目。
+#   - class PluginDependencyInfo — 解析后的插件依赖信息。
+#   - class DependencyResolution — 依赖解析结果。
+#   - parse_version(version) -> Version | None — 解析版本字符串，非法版本返回 None。
+#   - resolve_dependencies(plugins) -> DependencyResolution — 解析插件依赖关系，返回加载顺序与错误信息。
+# ============================================================
+
 """插件依赖解析与拓扑排序。"""
 
 from __future__ import annotations

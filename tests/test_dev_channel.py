@@ -1,3 +1,44 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 dev_channel 模块的自动化测试。
+#
+# 公开接口：
+#   - service(tmp_path) -> Any
+#   - test_start_writes_discovery_file(service) -> None
+#   - test_close_removes_discovery_file(tmp_path) -> None
+#   - test_auth_rejects_wrong_token(service) -> None
+#   - test_launcher_info_reports_runtime_state(service, tmp_path) -> None
+#   - test_unknown_method_returns_error(service) -> None
+#   - test_plugin_list_maps_fields(tmp_path) -> None
+#   - test_install_frontend_handlers_purges_and_fills(service) -> None
+#   - test_frontend_invoke_dispatches_to_installed_handler(service) -> None
+#   - test_frontend_invoke_without_payload_uses_empty_body(service) -> None
+#   - test_frontend_invoke_unknown_command_returns_error(service) -> None
+#   - test_plugin_reload_forwards_and_reports_missing(tmp_path) -> None
+#   - test_plugin_reload_requires_name(service) -> None
+#   - test_plugin_install_returns_installed_name(tmp_path) -> None
+#   - test_plugin_call_command_returns_result(tmp_path) -> None
+#   - test_logs_subscribe_returns_history_and_pushes_live(service) -> None
+#   - test_events_subscribe_filters_whitelist_and_forwards(service) -> None
+#   - test_events_subscribe_rejects_invalid_payload(service) -> None
+#   - test_multi_argument_event_forwards_as_list(service) -> None
+#   - test_frontend_subscribe_rewrites_event_name_and_payload(service) -> None
+#   - test_frontend_subscribe_reshapes_positional_event(service) -> None
+#   - test_frontend_subscribe_ignores_unregistered_event(service) -> None
+#   - test_frontend_subscribe_rejects_invalid_payload(service) -> None
+#   - test_frontend_subscribe_idempotent_and_unsubscribe(service) -> None
+#   - test_frontend_serving_serves_index_with_injected_connection(tmp_path) -> None
+#   - test_frontend_serving_serves_static_asset(tmp_path) -> None
+#   - test_frontend_serving_returns_404_for_missing_asset(tmp_path) -> None
+#   - test_frontend_serving_falls_back_to_index_for_route(tmp_path) -> None
+#   - test_frontend_serving_blocks_traversal(tmp_path) -> None
+#   - test_frontend_serving_disabled_without_dist(tmp_path) -> None
+#   - test_launcher_info_reports_frontend_url(tmp_path) -> None
+# ============================================================
+
 """验证开发者通道服务的鉴权、方法分发、日志与事件订阅能力。"""
 
 import asyncio

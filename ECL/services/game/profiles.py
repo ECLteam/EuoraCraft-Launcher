@@ -1,3 +1,22 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例资料协调器：资料读写、图标设置与置顶排序。
+#
+# 公开接口：
+#   - class ProfileCoordinator — 向正式 IPC 边界提供实例资料、图标、置顶顺序和分类操作。
+#       - get_instance_profile(game_path, version_id) -> dict[str, Any] — 读取单个实例已持久化的 ECL 覆盖字段。
+#       - patch_instance_profile(game_path, version_id, patch) -> dict[str, Any] — 合并保存实例资料并立即失效扫描缓存。
+#       - reset_instance_profile(game_path, version_id, fields) -> dict[str, Any] — 删除实例覆盖字段，使其恢复第三方或自动值。
+#       - set_instance_icon(game_path, version_id, icon_type, value=…, source_path=…) -> dict[str, Any] — 保存实例图标选择，本地图片会复制到实例自己的 ``.ecl`` 目录。
+#       - set_instance_pin_order(entries) -> None — 保存跨游戏路径的置顶实例顺序。
+#       - get_instance_categories() -> list[dict[str, Any]] — 返回内置与用户自定义的实例分类。
+#       - upsert_instance_category(category_id, name, color, order) -> dict[str, Any] — 新建或更新用户自定义实例分类。
+#       - delete_instance_category(category_id) -> None — 删除一个用户自定义实例分类。
+# ============================================================
+
 from __future__ import annotations
 
 from pathlib import Path

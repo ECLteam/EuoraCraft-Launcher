@@ -1,3 +1,26 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：联机领域 IPC 处理器：房间创建/加入、节点与 NAT 检测、玩家管理。
+#
+# 公开接口：
+#   - class ConnectorHandlers — 联机功能的 IPC 命令处理器。
+#       - connector_status(body) -> ApiResponse — 查询联机服务的当前状态。
+#       - connector_host_port(body) -> ApiResponse — 在联机服务中对外开放并托管指定端口。
+#       - connector_host_instance(body) -> ApiResponse — 在联机服务中托管一个指定的本地游戏实例。
+#       - connector_join(body) -> ApiResponse — 通过房间码加入他人托管的联机房间。
+#       - connector_leave(body) -> ApiResponse — 从当前联机房间退出。
+#       - connector_kick(body) -> ApiResponse — 从当前房间踢出指定的参与机器。
+#       - connector_match_instances(body) -> ApiResponse — 匹配可用的联机实例，当前返回空占位。
+#       - connector_easytier_status(body) -> ApiResponse — 查询 EasyTier 组网状态。
+#       - connector_easytier_download(body) -> ApiResponse — 请求 EasyTier 组网组件下载，返回其当前状态。
+#       - connector_detect_ports(body) -> ApiResponse — 探测本机 Java 进程开放的候选端口。
+#       - connector_search_mc_port(body) -> ApiResponse — 在候选端口中搜索确认 Minecraft 服务端口。
+#       - connector_nat_type(body) -> ApiResponse — 查询本机网络的 NAT 类型。
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

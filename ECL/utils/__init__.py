@@ -1,3 +1,11 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：通用工具包。
+# ============================================================
+
 from ECL.utils.config import ConfigStore, default_config
 from ECL.utils.environment import Environment
 from ECL.utils.errors import (

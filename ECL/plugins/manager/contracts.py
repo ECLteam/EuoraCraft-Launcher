@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件管理器数据契约：PluginAction 与执行结果。
+#
+# 公开接口：
+#   - class PluginAction — 插件管理操作类型。
+#   - class PluginActionResult — 插件操作的执行结果。
+#       - success() -> bool — 判断操作是否成功。
+# ============================================================
+
 from dataclasses import dataclass
 from enum import StrEnum
 

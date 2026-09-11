@@ -1,3 +1,21 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：截图服务：截图清单、缩略图与封面/背景设置。
+#
+# 公开接口：
+#   - class ScreenshotCoordinator — 管理实例截图索引、缩略图、剪贴板、封面和删除操作。
+#       - list_screenshots(game_path, version_id, version_isolation=…) -> list[dict[str, Any]] — 按修改时间降序返回可读图片，并提供前端日期分组键。
+#       - screenshot_thumbnail(game_path, version_id, screenshot_id, version_isolation=…, size=…) -> dict[str, Any] — 以源路径、大小和修改时间为键生成 WebP 缩略图缓存。
+#       - save_screenshot_as(game_path, version_id, screenshot_id, output_path, version_isolation=…) -> dict[str, str] — 通过原子替换把截图复制到用户选择的导出路径。
+#       - copy_screenshot(game_path, version_id, screenshot_id, version_isolation=…) -> None — 在 Windows 上把截图以 CF_DIB 格式写入系统剪贴板。
+#       - delete_screenshot(game_path, version_id, screenshot_id, version_isolation=…) -> None — 把指定截图直接删除。
+#       - set_instance_cover(game_path, version_id, screenshot_id, version_isolation=…) -> dict[str, Any] — 复制截图为 ECL 私有封面并记录相对配置，不修改原截图。
+#       - set_launcher_background_candidate(game_path, version_id, screenshot_id, version_isolation=…) -> dict[str, str] — 复制截图到启动器数据目录，供 API 层原子写入背景配置。
+# ============================================================
+
 from __future__ import annotations
 
 import ctypes

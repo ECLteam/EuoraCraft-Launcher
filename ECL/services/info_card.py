@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：主页信息卡服务：公告/小贴士内容与远程公告拉取。
+#
+# 公开接口：
+#   - NOTICE_URL（str）
+#   - NOTICE_SCHEMA_VERSION（int）
+#   - NOTICE_REFRESH_SECONDS（float）
+#   - NOTICE_TIMEOUT_SECONDS（float）
+#   - DEFAULT_INFO_CARD（dict）
+#   - class InfoCardManager — 组装首页信息卡数据，并管理远程公告的拉取、校验与本地缓存。
+#       - get_info_card() -> dict[str, Any] — 返回首页轮播模式、提示、公告和欢迎卡片数据。
+# ============================================================
+
 from __future__ import annotations
 
 import json

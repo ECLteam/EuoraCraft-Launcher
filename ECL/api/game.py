@@ -1,3 +1,42 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：游戏领域 IPC 处理器：版本目录、扫描安装、启动、崩溃分析等入口。
+#
+# 公开接口：
+#   - class GameHandlers — 提供游戏目录、安装任务和运行实例的正式 IPC 边界。
+#       - game_versions(body) -> ApiResponse — 查询 Minecraft 版本列表或分类目录。
+#       - game_loader_versions(body) -> ApiResponse — 查询指定 Minecraft 版本可用的模组加载器版本。
+#       - game_fabric_api_versions(body) -> ApiResponse — 查询指定 Minecraft 版本可用的 Fabric API 版本。
+#       - game_scan(body) -> ApiResponse — 扫描一个或多个 Minecraft 根目录中的本地实例。
+#       - game_install(body) -> ApiResponse — 创建受 Game Service 管理的版本安装任务。
+#       - game_uninstall(body) -> ApiResponse — 从指定 Minecraft 根目录卸载一个实例。
+#       - game_config_get(body) -> ApiResponse — 读取 Minecraft 根目录中的 ``ecl.json``。
+#       - game_config_set(body) -> ApiResponse — 原子替换 Minecraft 根目录中的 ``ecl.json``。
+#       - game_config_patch(body) -> ApiResponse — 合并更新 Minecraft 根目录中的 ``ecl.json``。
+#       - game_instances(body) -> ApiResponse — 返回由启动器管理的运行中 Minecraft 实例。
+#       - game_version_stats(body) -> ApiResponse — 返回指定 Minecraft 版本的持久化运行统计。
+#       - game_version_settings_get(body) -> ApiResponse — 读取版本目录中的独立启动设置。
+#       - game_version_settings_set(body) -> ApiResponse — 原子写入版本目录中的独立启动设置。
+#       - game_instance_profile_get(body) -> ApiResponse — 读取单个实例的 ECL 原始覆盖资料。
+#       - game_instance_profile_patch(body) -> ApiResponse — 合并保存实例资料覆盖字段。
+#       - game_instance_profile_reset(body) -> ApiResponse — 删除指定实例覆盖字段，使其恢复自动解析。
+#       - game_instance_icon_set(body) -> ApiResponse — 设置实例自动、内置、加载器或本地图片图标。
+#       - game_instance_pin_order_set(body) -> ApiResponse — 保存全部置顶实例的拖拽顺序。
+#       - game_instance_categories_get(body) -> ApiResponse — 返回内置与用户自定义实例分类。
+#       - game_instance_categories_upsert(body) -> ApiResponse — 新建或更新用户自定义实例分类。
+#       - game_instance_categories_delete(body) -> ApiResponse — 删除用户自定义实例分类。
+#       - game_launch(body) -> ApiResponse — 校验启动参数、补全文件并创建 Minecraft 进程。
+#       - game_launch_cancel(body) -> ApiResponse — 取消当前仍处于准备或文件补全阶段的启动任务。
+#       - game_instance_stop(body) -> ApiResponse — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
+#       - game_crash_list(body) -> ApiResponse — 列出指定实例文件夹内可分析的候选日志文件。
+#       - game_crash_analyze(body) -> ApiResponse — 在指定版本上下文中分析用户选择的 Minecraft 日志或 ZIP。
+#       - game_crash_output(body) -> ApiResponse — 按需读取当前会话报告中的脱敏游戏输出。
+#       - game_crash_export(body) -> ApiResponse — 将当前会话报告导出为经过脱敏的 ZIP。
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Any

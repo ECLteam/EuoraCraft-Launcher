@@ -1,3 +1,18 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：调试维护任务：重置数据/清理插件的计划与执行。
+#
+# 公开接口：
+#   - PENDING_MAINTENANCE_FILE（str）
+#   - class ScheduledMaintenance — 待执行的维护任务。
+#   - class MaintenanceResult — 维护结果。
+#   - schedule_debug_maintenance(data_path, action) -> ScheduledMaintenance — 安排一次仅在下次启动时执行的受限调试维护操作。
+#   - apply_pending_debug_maintenance(data_path, home_dir=…) -> list[MaintenanceResult] — 执行已安排的调试维护操作，并直接删除原数据（不再保留备份）。
+# ============================================================
+
 from __future__ import annotations
 
 import json

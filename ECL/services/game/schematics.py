@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：原理图服务：litematic/schem 解析为体素预览数据。
+#
+# 公开接口：
+#   - class LitematicaRegion
+#   - class SchematicCoordinator — 解析原理图文件为适合 3D 预览的体素模型数据。
+#       - schematic_preview(game_path, version_id, resource_id, version_isolation=…) -> dict[str, Any] — 读取并解析指定原理图，返回体素模型数据供前端渲染。
+# ============================================================
+
 from __future__ import annotations
 
 import gzip

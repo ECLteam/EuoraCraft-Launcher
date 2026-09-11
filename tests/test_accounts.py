@@ -1,3 +1,71 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 accounts 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeMicrosoftManager
+#       - get_microsoft_accounts() -> dict[str, dict[str, Any]]
+#       - add_microsoft_account() -> str
+#       - del_microsoft_account(account_id) -> None
+#       - refresh_profile(account_id) -> dict[str, Any]
+#       - get_minecraft_token(account_id) -> str
+#       - upload_skin(account_id, variant, image) -> dict[str, Any]
+#       - reset_skin(account_id) -> dict[str, Any]
+#       - set_cape(account_id, cape_id) -> dict[str, Any]
+#       - reset_cape(account_id) -> dict[str, Any]
+#       - aclose() -> None
+#   - class FakeAuthlibManager
+#       - list_accounts() -> dict[str, dict[str, Any]]
+#       - resolve_server(url) -> str
+#       - add_account(url, username, password) -> tuple[str, dict[str, Any]]
+#       - delete_account(account_id) -> None
+#       - refresh_account(account_id) -> dict[str, Any]
+#       - select_profile(account_id, profile_id) -> tuple[str, dict[str, Any]]
+#       - get_token(account_id) -> dict[str, str]
+#       - get_texture_urls(account_id) -> dict[str, str]
+#       - close() -> None
+#   - class BlockingMicrosoftManager
+#       - add_microsoft_account() -> str
+#   - class DuplicateMicrosoftManager
+#       - add_microsoft_account() -> str
+#   - test_offline_accounts_persist_and_emit_changes(tmp_path) -> None
+#   - test_offline_account_accepts_custom_uuid(tmp_path) -> None
+#   - test_offline_account_exposes_launch_credentials(tmp_path) -> None
+#   - test_offline_account_rejects_invalid_custom_uuid(tmp_path) -> None
+#   - test_offline_default_skins_load_from_resource_path(tmp_path) -> None
+#   - test_offline_add_with_skin_exposes_skin_url_in_list(tmp_path) -> None
+#   - test_offline_texture_urls_uses_selected_skin(tmp_path) -> None
+#   - test_offline_set_skin_updates_and_persists(tmp_path) -> None
+#   - test_offline_invalid_skin_is_rejected(tmp_path) -> None
+#   - test_offline_without_skin_has_no_skin_url(tmp_path) -> None
+#   - test_authlib_account_can_login_launch_refresh_and_remove(tmp_path) -> None
+#   - test_authlib_multi_profile_login_only_becomes_current_after_one_profile_is_selected(tmp_path) -> None
+#   - test_authlib_server_uses_ali_resolution(tmp_path) -> None
+#   - test_authlib_login_uses_server_error_message(tmp_path, monkeypatch) -> None
+#   - test_account_manager_uses_runtime_microsoft_client_id(tmp_path, monkeypatch) -> None
+#   - test_microsoft_login_requires_configured_client_id(tmp_path, monkeypatch) -> None
+#   - test_microsoft_device_login_flow(tmp_path) -> None
+#   - test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None
+#   - test_repeated_microsoft_login_replaces_existing_account(tmp_path) -> None
+#   - test_existing_microsoft_duplicates_are_merged_on_startup(tmp_path) -> None
+#   - test_remove_and_switch_accounts(tmp_path) -> None
+#   - test_complete_microsoft_login_keeps_pending_state(tmp_path) -> None
+#   - test_cancel_microsoft_login_stops_device_flow(tmp_path) -> None
+#   - test_close_cancels_login_and_releases_manager(tmp_path) -> None
+#   - test_microsoft_account_includes_capes(tmp_path) -> None
+#   - test_upload_skin_refreshes_account(tmp_path) -> None
+#   - test_upload_skin_normalizes_variant(tmp_path) -> None
+#   - test_reset_skin(tmp_path) -> None
+#   - test_set_and_reset_cape(tmp_path) -> None
+#   - test_skin_operations_require_microsoft_account(tmp_path) -> None
+#   - test_set_cape_rejects_empty_cape_id(tmp_path) -> None
+#   - test_texture_urls_returns_microsoft_skin_and_active_cape(tmp_path) -> None
+#   - test_texture_urls_delegates_authlib_metadata_without_downloading_image(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

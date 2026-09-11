@@ -1,3 +1,24 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_dependencies 模块的自动化测试。
+#
+# 公开接口：
+#   - test_parse_dependency_string() -> None
+#   - test_parse_dependency_object() -> None
+#   - test_parse_dependency_wildcard() -> None
+#   - test_parse_dependency_invalid() -> None
+#   - test_parse_version() -> None
+#   - test_resolve_simple_chain() -> None
+#   - test_resolve_version_mismatch() -> None
+#   - test_resolve_missing_dependency() -> None
+#   - test_resolve_optional_missing_dependency() -> None
+#   - test_resolve_circular_dependency() -> None
+#   - test_resolve_stable_order() -> None
+# ============================================================
+
 """插件依赖解析与拓扑排序测试。"""
 
 from packaging.specifiers import SpecifierSet

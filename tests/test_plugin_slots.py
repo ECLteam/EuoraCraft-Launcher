@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_slots 模块的自动化测试。
+#
+# 公开接口：
+#   - test_html_slot_appends_without_key_and_updates_matching_key() -> None
+#   - test_vue_slot_keeps_distinct_components_from_the_same_plugin() -> None
+#   - test_disable_removes_plugin_frontend_content() -> None
+# ============================================================
+
 from pathlib import Path
 
 from ECL.events import EventBus

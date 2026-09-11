@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例 options.txt 的读取与增量保存。
+#
+# 公开接口：
+#   - class InstanceOptionsCoordinator — 结构化读写实例级 options.txt，覆盖常用游戏设置，未知键保持只读。
+#       - read_options(game_path, version_id, version_isolation=…) -> dict[str, Any] — 读取实例 options.txt，仅返回可结构化编辑的常用键及其取值约束。
+#       - patch_options(game_path, version_id, patch, version_isolation=…) -> dict[str, Any] — 按受限 schema 写入指定的 options.txt 键，保留未知行与原有顺序。
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Any

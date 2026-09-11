@@ -1,3 +1,27 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：日志体系：控制台彩色格式化、文件落盘与前端日志缓冲。
+#
+# 公开接口：
+#   - LOGGER_NAME（str）
+#   - class ColoredFormatter — 为交互式终端中的日志级别和消息添加 ANSI 颜色。
+#       - format(record) -> str — 格式化日志副本，避免修改随后写入文件的原始记录。
+#   - resolve_log_level(name) -> int — 将配置中的日志级别名称解析为标准库日志级别。
+#   - class FrontendLogHandler — 把结构化日志同步转发到事件总线，并保留最近日志供前端补全历史。
+#       - emit(record) -> None — 序列化一条日志记录到环形缓冲并发布到事件总线。
+#   - class LoggingRuntime — 管理一次应用运行所使用的控制台与滚动文件处理器。
+#       - get_logger(name=…) -> logging.Logger — 返回启动器根日志器或其命名子日志器。
+#       - set_level(level) -> None — 调整控制台详细程度，同时保留文件中的 Debug 诊断记录。
+#       - install_frontend_handler(events, history_limit=…) -> None — 挂接一个把日志转发到前端并保留最近历史的处理器。
+#       - shutdown() -> None — 刷新并关闭本次运行创建的全部日志处理器。
+#   - configure_logging(data_path, colored=…) -> LoggingRuntime — 为一次启动器运行配置统一日志输出。
+#   - get_logger(name=…) -> logging.Logger — 获取由组合入口配置的启动器日志器。
+#   - get_frontend_log_history() -> list[dict[str, Any]] — 返回最近推送给前端的日志记录快照，供终端打开时补全历史。
+# ============================================================
+
 from __future__ import annotations
 
 import gzip

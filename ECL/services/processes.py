@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：进程服务：子进程生成、标准输入、停止与清单。
+#
+# 公开接口：
+#   - class ProcessService — 面向插件与游戏实例的通用子进程实例注册表，负责生命周期、输出缓冲与标准输入交互。
+#       - spawn(name, type_, args, cwd=…, stdin=…) -> str — 启动一个子进程实例并登记内部元数据。
+#       - send_stdin(instance_id, data) -> bool — 向指定实例的标准输入管道写入一行数据。
+#       - stop(instance_id, force=…, wait_timeout=…) -> bool — 停止指定实例对应的子进程。
+#       - list() -> list[dict[str, Any]] — 返回当前登注册表的实例信息列表。
+#       - close() -> None — 终止全部运行中的插件实例并清理读取线程。
+# ============================================================
+
 from __future__ import annotations
 
 from collections import deque

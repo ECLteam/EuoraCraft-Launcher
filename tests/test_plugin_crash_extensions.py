@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_crash_extensions 模块的自动化测试。
+#
+# 公开接口：
+#   - test_crash_extension_enriches_analysis_result(tmp_path) -> None
+#   - test_crash_extension_exception_is_isolated(tmp_path) -> None
+# ============================================================
+
 import json
 from pathlib import Path
 

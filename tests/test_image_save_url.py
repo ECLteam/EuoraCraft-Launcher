@@ -1,3 +1,33 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 image_save_url 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeAccounts
+#       - add_offline(username, custom_uuid=…) -> Any
+#   - class FakePlugins
+#       - on_frontend_ready() -> None
+#       - list_plugins() -> Any
+#   - class FakeWardrobe
+#       - list_items() -> Any
+#   - class FakeInfoCard
+#       - get_info_card() -> Any
+#   - test_normalize_image_url_accepts_http_and_https() -> None
+#   - test_normalize_image_url_rejects_invalid_urls() -> None
+#   - test_normalize_image_url_strips_trailing_punctuation() -> None
+#   - test_guess_image_extension_from_content_type() -> None
+#   - test_guess_image_extension_from_content_disposition() -> None
+#   - test_guess_image_extension_from_final_url() -> None
+#   - test_guess_image_extension_defaults_to_jpg() -> None
+#   - test_image_save_url_rejects_invalid_url(tmp_path) -> None
+#   - test_image_save_url_follows_redirect_and_returns_data_url(tmp_path, monkeypatch) -> None
+#   - test_image_fetch_data_url_persists_remote_texture_across_api_instances(tmp_path, monkeypatch) -> None
+#   - test_image_fetch_data_url_uses_stale_disk_cache_when_texture_server_fails(tmp_path, monkeypatch) -> None
+# ============================================================
+
 import asyncio
 import os
 import struct

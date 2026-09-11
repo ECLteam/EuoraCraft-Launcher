@@ -1,3 +1,23 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例扫描协调器：版本目录扫描与 ECL 配置读写。
+#
+# 公开接口：
+#   - class ScanCoordinator
+#       - scan_versions(paths, force, compatibility_options) -> list[dict[str, Any]] — 扫描 Minecraft 目录；目录未变化时复用缓存结果。
+#       - read_ecl_config(game_path) -> dict[str, Any] — 读取指定游戏路径下的 ecl.json，文件不存在或损坏时返回空字典。
+#       - write_ecl_config(game_path, data) -> None — 写入 ecl.json 到指定游戏路径。
+#       - patch_ecl_config(game_path, patch) -> dict[str, Any] — 合并更新 ecl.json 中的部分字段，返回更新后的完整配置。
+#       - get_active_version(game_path) -> str | None — 从 ecl.json 读取当前路径下的启动版本；没有则返回 None。
+#       - set_active_version(game_path, version_id) -> None — 把当前路径的启动版本写入 ecl.json。
+#       - read_version_settings(game_path, version_id) -> dict[str, Any] — 读取版本目录中的独立启动设置（``.ecl/settings.json``）。
+#       - write_version_settings(game_path, version_id, data) -> dict[str, Any] — 原子写入版本目录中的独立启动设置。
+#       - scan_java(user_java_paths=…) -> list[dict[str, Any]] — 扫描 Java 运行时。
+# ============================================================
+
 import json
 import re
 from copy import deepcopy

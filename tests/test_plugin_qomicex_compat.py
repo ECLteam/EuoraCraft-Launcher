@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_qomicex_compat 模块的自动化测试。
+#
+# 公开接口：
+#   - test_qomicex_compat_registers_vue_settings_slot_on_frontend_ready(tmp_path) -> None
+#   - test_qomicex_resolve_command_returns_manual_path_when_valid(tmp_path) -> None
+#   - test_qomicex_resolve_command_reports_invalid_manual_path(tmp_path, monkeypatch) -> None
+#   - test_qomicex_resolve_command_returns_none_when_nothing_found(tmp_path, monkeypatch) -> None
+# ============================================================
+
 """验证 qomicex_compat 系统插件的设置卡片注入与索引解析命令。"""
 
 import shutil

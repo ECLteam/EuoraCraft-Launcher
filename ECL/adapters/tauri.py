@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：Tauri 宿主适配器：封装宿主侧回调与窗口环境访问。
+#
+# 公开接口：
+#   - class Adapter — PyTauri 前端适配器，负责注册 IPC 命令并启动 Tauri 应用。
+#       - run() -> None — 启动 Tauri 前端。
+# ============================================================
+
 from pathlib import Path
 from typing import Any
 

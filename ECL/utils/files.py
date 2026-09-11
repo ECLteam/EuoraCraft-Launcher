@@ -1,3 +1,15 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：原子文件写入：临时文件落地与替换重试。
+#
+# 公开接口：
+#   - atomic_write_bytes(path, data) -> None — 通过同目录临时文件实现原子替换文件内容。
+#   - atomic_write_text(path, data, encoding=…) -> None — 以原子替换方式写入文本文件。
+# ============================================================
+
 from pathlib import Path
 from time import sleep
 from uuid import uuid4

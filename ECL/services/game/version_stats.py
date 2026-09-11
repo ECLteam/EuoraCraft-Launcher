@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：版本运行统计：启动次数与运行时长持久化。
+#
+# 公开接口：
+#   - class VersionRunStats
+#   - class VersionStatsStore — 管理每个 Minecraft 版本目录中的运行统计文件。
+#       - ensure(game_path, version_id) -> VersionRunStats — 确保已识别版本拥有默认统计文件，并返回规范化数据。
+#       - read(game_path, version_id) -> VersionRunStats — 读取版本运行统计，文件不存在时同时创建默认文件。
+#       - record_launch(game_path, version_id) -> None — 在游戏进程成功创建后累计一次启动。
+#       - record_duration(game_path, version_id, duration_seconds) -> None — 在一次受管理运行结束或启动器关闭时累计观察到的时长。
+#       - reconcile_external(game_path, version_id, source_stats) -> VersionRunStats — 将第三方累计值按来源快照转换为正增量，重复扫描不会再次累加。
+# ============================================================
+
 from __future__ import annotations
 
 import json

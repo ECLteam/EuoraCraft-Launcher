@@ -1,3 +1,28 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：实例目标解析：game_path/version_id/隔离语义与相对 ID 校验。
+#
+# 公开接口：
+#   - class ResolvedInstanceTarget — 保存经校验的实例目录和与启动参数一致的实际游戏数据目录。
+#   - resolve_instance_target(game_path, version_id, version_isolation=…) -> ResolvedInstanceTarget — 规范化实例目标，并镜像现有 Game Core 的版本隔离目录语义。
+#   - resolve_relative_id(parent, relative_id, must_exist) -> Path — 把前端提供的相对资源 ID 安全解析到指定父目录内。
+#   - delete_path(path) -> None — 递归删除文件或目录。
+#   - safe_extract_zip(archive_path, destination, max_files, max_uncompressed_bytes, max_ratio) -> list[Path] — 校验 ZIP 路径、符号链接和压缩比后解压到目标目录。
+#   - class WorkspaceCoordinator — 提供实例工作台通用目录、复制、导入导出、校验和删除操作。
+#       - resolve_instance(game_path, version_id, version_isolation=…) -> ResolvedInstanceTarget
+#       - quick_launch_arguments(game_path, version_id, quick_target, version_isolation=…) -> list[str] — 校验快速目标并按版本能力生成世界或服务器启动参数。
+#       - open_instance_folder(game_path, version_id, folder, version_isolation=…) -> dict[str, str] — 打开实例工作台允许的固定目录，不接受任意绝对路径。
+#       - delete_instance(game_path, version_id) -> None — 阻止运行中实例后，仅回收版本目录，不触碰共享资源和第三方配置。
+#       - clone_instance(game_path, version_id, new_version_id, version_isolation=…) -> dict[str, str] — 异步复制实例，并重写顶层版本文件名、清理统计和第三方兼容副本。
+#       - inspect_instance_files(game_path, version_id, source=…) -> dict[str, Any] — 只读检查版本 JSON、主 JAR 和已声明库文件，不执行下载或写入。
+#       - repair_instance_files(game_path, version_id, source=…) -> dict[str, str] — 在用户确认只读清单后，异步调用 Core 文件补全能力。
+#       - operation_get(operation_id) -> dict[str, Any]
+#       - operation_cancel(operation_id) -> bool
+# ============================================================
+
 from __future__ import annotations
 
 import json

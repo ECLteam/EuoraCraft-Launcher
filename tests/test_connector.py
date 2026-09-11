@@ -1,3 +1,30 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 connector 模块的自动化测试。
+#
+# 公开接口：
+#   - test_fetch_nodes_reuses_memory_cache() -> None
+#   - test_fetch_nodes_force_refreshes_memory_cache() -> None
+#   - test_fetch_nodes_falls_back_to_multiple_defaults_when_api_fails() -> None
+#   - test_nat_result_maps_easytier_stun_snapshot() -> None
+#   - test_nat_detection_starts_and_stops_temporary_easytier_node(monkeypatch) -> None
+#   - test_minecraft_listener_ports_limits_candidates_to_java_processes(monkeypatch) -> None
+#   - test_decode_varint_rejects_incomplete_input() -> None
+#   - test_minecraft_status_probe_accepts_valid_status_response(monkeypatch) -> None
+#   - test_current_players_skips_closed_client_loop() -> None
+#   - test_stop_async_thread_client_handles_closed_loop() -> None
+#   - test_close_stops_active_room() -> None
+#   - test_florolding_host_uses_room_specific_scaffolding_ipv4(monkeypatch) -> None
+#   - test_florolding_host_ipv4_is_stable_per_room() -> None
+#   - test_florolding_server_reads_coalesced_requests_without_dropping_frames() -> None
+#   - test_florolding_client_serializes_concurrent_requests() -> None
+#   - test_run_in_daemon_returns_result() -> None
+#   - test_run_in_daemon_uses_daemon_thread() -> None
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio

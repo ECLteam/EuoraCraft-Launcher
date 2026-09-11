@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_shutdown 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None
+#   - test_launcher_shutdown_closes_plugins_before_backend_services() -> None
+#   - test_run_shuts_down_when_adapter_fails(monkeypatch) -> None
+# ============================================================
+
 from unittest.mock import Mock
 
 import ECL.launcher as launcher_module

@@ -1,3 +1,56 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件基类：宿主回调钩子（事件/命令/路由/槽位/样式）默认实现。
+#
+# 公开接口：
+#   - class Plugin — 插件基类，所有插件必须继承此类。
+#       - on_event(event) -> Callable — 装饰器，将方法注册为事件处理器，实例化时自动订阅。
+#       - on_command(name, description=…) -> Callable — 装饰器，将方法注册为命令处理器，实例化时自动注册。
+#       - on_setting(key, default, type_=…, description=…) -> Callable — 装饰器，声明设置项，实例化时自动注册（被装饰的函数体可为空）。
+#       - on_route(path, title, icon=…) -> Callable — 装饰器，声明侧边栏路由，on_enable 时自动注册。
+#       - on_css(file_path) -> Callable — 装饰器，声明 CSS 文件，on_frontend_ready 时自动注入到前端。
+#       - on_html(slot_id, file_path) -> Callable — 装饰器，声明 HTML 文件，on_frontend_ready 时自动注入到指定插槽。
+#       - on_script(file_path) -> Callable — 装饰器，声明 JS 文件，on_frontend_ready 时自动注入到前端。
+#       - on_vue_slot(slot_id, component_name, file_path) -> Callable — 装饰器，声明 Vue SFC 组件，on_frontend_ready 时自动注册到指定插槽。
+#       - on_vue_route(path, title, component_name, file_path, icon=…) -> Callable — 装饰器，声明 Vue SFC 路由页面，on_enable 时自动注册。
+#       - on_load() -> None — 生命周期钩子：加载资源，此时不应注册路由或命令。
+#       - on_enable() -> None — 生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
+#       - on_frontend_ready() -> None — 生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
+#       - on_disable() -> None — 生命周期钩子：清理运行时状态。
+#       - on_unload() -> None — 生命周期钩子：释放资源。
+#       - register_route(path, title, icon=…) -> None — 注册前端侧边栏路由。
+#       - register_command(name, handler, description=…) -> None — 注册插件命令，前端通过 plugin_call_command 调用。
+#       - register_setting(key, default, description=…, type_=…) -> None — 注册设置项，前端设置页根据此定义渲染控件。
+#       - get_setting(key) -> Any — 读取插件设置当前值；尚未保存时返回声明的默认值。
+#       - register_instance_compatibility(source, title, reader, watch_paths=…) -> None — 注册一个只读实例元数据兼容来源。
+#       - register_connector_extension(name, protocols, on_guest_joined, enrich_status, before_leave, on_reset) -> None — 注册 Scaffolding 扩展协议及其联机会话钩子。
+#       - register_launch_hook(name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册启动钩子，参与 Minecraft 启动参数准备与进程生命周期。
+#       - http_request(method, url, params, headers, json, data, timeout) -> PluginHttpResponse — 发起受控的 HTTP 请求。
+#       - http_get(url, **kwargs) -> PluginHttpResponse — 受控的 GET 请求，参数与 ``http_request`` 一致。
+#       - http_post(url, **kwargs) -> PluginHttpResponse — 受控的 POST 请求，参数与 ``http_request`` 一致。
+#       - register_auth_provider(provider_id, title, fields, authenticate, resolve_credentials, description=…) -> None — 注册自定义账户认证提供方。
+#       - register_crash_analyzer(name, enrich) -> None — 注册崩溃分析富化回调。
+#       - inject_css(css, key=…) -> None — 向宿主前端注入仅作用于当前插件内容的 CSS 样式。
+#       - inject_html(slot_id, html, key=…, context_key=…) -> None — 向宿主前端注入 HTML 片段。
+#       - inject_script(script) -> None — 向宿主前端注入 JavaScript 脚本。
+#       - inject_typescript(script) -> None — 向宿主前端注入 TypeScript 脚本（由前端经 sucrase 转译）。
+#       - register_html_file(slot_id, file_path) -> None — 读取插件目录下的 HTML 文件注入到指定插槽。
+#       - register_css_file(file_path) -> None — 读取插件目录下的 CSS 文件注入到宿主前端。
+#       - register_script_file(file_path) -> None — 读取插件目录下的 JS 文件注入到宿主前端。
+#       - register_vue_slot_file(slot_id, component_name, file_path) -> None — 读取插件目录下的 Vue SFC 文件，解析后注册到插槽。
+#       - register_vue_route_file(path, title, component_name, file_path, icon=…) -> None — 读取插件目录下的 Vue SFC 文件，解析后注册为独立路由页面。
+#       - register_vue_slot(slot_id, component_name, template, script=…, style=…, context_key=…) -> None — 注册 Vue 组件到指定插槽，前端收到后动态创建并挂载。
+#       - register_vue_route(path, title, component_name, template, script=…, style=…, icon=…) -> None — 注册 Vue 组件作为独立路由页面。
+#       - emit(event, payload=…) -> None — 向全局事件总线发射事件，其他插件或宿主可订阅。
+#       - subscribe(event, handler) -> None — 订阅全局事件；由插件管理器统一注册，自动以插件名作为所有者。
+#       - load_file(relative_path, encoding=…) -> str | None — 读取插件目录下的文本文件。
+#       - resource_path(relative_path) -> Path — 获取插件 resources/ 目录下的文件路径。
+#       - load_resource(relative_path, encoding=…) -> str | None — 读取插件 resources/ 目录下的文本文件。
+# ============================================================
+
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path

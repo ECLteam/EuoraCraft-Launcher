@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：网络工具：带重试的 GET 与下载代理解析。
+#
+# 公开接口：
+#   - DOWNLOAD_PROXY_ENV_KEY（str）
+#   - download_proxy_url() -> str | None — 读取游戏下载通道的代理地址。
+#   - get_with_retries(request, url, retries, retry_delay, **kwargs) -> httpx.Response — 对幂等 GET 请求执行有限次数的指数退避重试。
+# ============================================================
+
 from __future__ import annotations
 
 import os

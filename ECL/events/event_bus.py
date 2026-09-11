@@ -1,3 +1,19 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：进程内事件总线：订阅/发布/按属主注销。
+#
+# 公开接口：
+#   - class EventBus — 进程内同步事件总线，只负责事件订阅与分发。
+#       - subscribe(event, handler, owner=…) -> Unsubscribe — 订阅事件并返回幂等的取消订阅函数。
+#       - emit(event, *args, **kwargs) -> None — 同步分发事件，并隔离单个处理器抛出的异常。
+#       - unsubscribe(event, handler) -> None — 移除事件上的指定处理器；处理器不存在时不执行操作。
+#       - remove_handlers_by_owner(owner) -> None — 移除指定组件注册的全部事件处理器。
+#       - clear() -> None — 清空当前事件总线的全部订阅。
+# ============================================================
+
 from __future__ import annotations
 
 import logging

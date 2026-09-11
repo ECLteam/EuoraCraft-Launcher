@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 logging_frontend 模块的自动化测试。
+#
+# 公开接口：
+#   - class RecordingEvents — 记录 emit 调用的事件总线替身。
+#       - emit(event, payload) -> None
+#   - test_frontend_log_handler_forwards_and_keeps_history(tmp_path) -> None
+# ============================================================
+
 import ECL.utils.logging as logging_mod
 from ECL.utils import LoggingRuntime
 from ECL.utils.logging import FrontendLogHandler, get_frontend_log_history

@@ -1,3 +1,114 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：IPC 请求/响应数据模型：Pydantic 模型与枚举定义。
+#
+# 公开接口：
+#   - class RequestModel
+#   - class DownloadSource
+#   - class LoaderType
+#   - class WardrobeKind
+#   - class SkinModel
+#   - class ImagePurpose
+#   - class InstanceIconType
+#   - class FileSelectionPurpose
+#   - class FileSavePurpose
+#   - class WindowOpenRequest
+#   - class WindowLabelRequest
+#   - class WindowBoundsRequest
+#   - class SettingsQuery
+#       - validate_section(value) -> str | None
+#       - validate_sections(value) -> list[str] | None
+#   - class SettingsUpdate
+#   - class FrontendLogLevel
+#   - class FrontendLogRequest
+#   - class ProcessInputRequest
+#   - class ProcessStopRequest
+#   - class DebugProcessSpawnRequest
+#   - class GameCatalogRequest
+#   - class LoaderCatalogRequest
+#   - class GameScanRequest
+#   - class JavaScanRequest
+#   - class GamePathRequest
+#   - class GameConfigUpdate
+#   - class GameConfigPatch
+#   - class GameUninstallRequest
+#   - class GameVersionRequest
+#   - class GameVersionSettingsUpdate
+#   - class InstanceProfilePatchData
+#       - validate_tags(value) -> list[str] | None
+#   - class InstanceProfilePatchRequest
+#   - class InstanceProfileResetRequest
+#   - class InstanceIconRequest
+#       - validate_icon_input() -> Any
+#   - class InstancePinEntry
+#   - class InstancePinOrderRequest
+#   - class InstanceCategoryUpsertRequest
+#   - class InstanceCategoryDeleteRequest
+#   - class GameInstanceRequest
+#   - class CrashAnalyzeRequest
+#       - validate_file_path(value) -> Any
+#   - class CrashReportRequest
+#   - class CrashExportRequest
+#       - validate_output_path(value) -> Any
+#   - class InstallRequest
+#   - class WorldQuickTarget
+#   - class ServerQuickTarget
+#   - class LaunchRequest
+#   - class InstanceTarget
+#       - validate_version_id(value) -> str
+#   - class InstanceFolderRequest
+#   - class InstanceCloneRequest
+#   - class InstancePackImportRequest
+#   - class InstancePackExportRequest
+#   - class OperationRequest
+#   - class WorldRequest
+#   - class WorldPatchData
+#   - class WorldPatchRequest
+#   - class WorldCopyRequest
+#   - class WorldTransferRequest
+#   - class WorldIconRequest
+#   - class WorldImportRequest
+#   - class WorldBackupRequest
+#   - class OptionsPatchRequest
+#   - class ScreenshotRequest
+#   - class ScreenshotThumbnailRequest
+#   - class ScreenshotSaveRequest
+#   - class ServerUpsertRequest
+#   - class ServerIdRequest
+#   - class ServerOrderRequest
+#   - class ServerStatusRequest
+#   - class ResourceQuery
+#   - class ResourceInstallRequest
+#   - class ResourceToggleRequest
+#   - class ResourceDeleteRequest
+#   - class ResourceManifestExportRequest
+#   - class ResourceSearchRequest
+#   - class ResourceHashRequest
+#   - class ResourceUpdateCheckRequest
+#   - class ResourceUpdateRequest
+#   - class WardrobeImportRequest
+#       - validate_path(value) -> Any
+#       - validate_model() -> Any
+#   - class WardrobeItemRequest
+#   - class WardrobeUpdateRequest
+#   - class WardrobeApplySkinRequest
+#   - class AccountTextureRequest
+#   - class MicrosoftCapeRequest
+#   - class ImageSelectionRequest
+#   - class FileSelectionRequest
+#   - class FileSaveRequest
+#       - validate_default_directory(value) -> str | None
+#       - validate_default_name(value) -> str | None
+#   - class PortRequest — 指定端口号的请求体。
+#   - class PortsRequest — 候选端口列表请求体。
+#   - class RoomCodeRequest — 房间码请求体。
+#   - class KickRequest — 踢出玩家请求体。
+#   - request_schemas() -> dict[str, dict] — 返回前端集成所需的请求模型 JSON Schema 文档。
+# ============================================================
+
 from __future__ import annotations
 
 from enum import StrEnum

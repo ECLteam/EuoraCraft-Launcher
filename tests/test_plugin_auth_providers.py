@@ -1,3 +1,18 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_auth_providers 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_auth_provider_lists_and_adds_account(tmp_path) -> None
+#   - test_plugin_account_resolves_launch_credentials(tmp_path) -> None
+#   - test_plugin_account_persists_across_restart(tmp_path) -> None
+#   - test_plugin_account_fails_when_provider_disabled(tmp_path) -> None
+#   - test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -> None
+# ============================================================
+
 import asyncio
 import json
 

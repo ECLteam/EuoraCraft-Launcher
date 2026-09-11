@@ -1,3 +1,40 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：极简 NBT 读写实现，替代 nbtlib 以去除 numpy 依赖。
+#
+# 公开接口：
+#   - class Byte
+#       - unpack(json=…) -> int
+#   - class Short
+#       - unpack(json=…) -> int
+#   - class Int
+#       - unpack(json=…) -> int
+#   - class Long
+#       - unpack(json=…) -> int
+#   - class Float
+#       - unpack(json=…) -> float
+#   - class Double
+#       - unpack(json=…) -> float
+#   - class String
+#       - unpack(json=…) -> str
+#   - class ByteArray
+#       - unpack(json=…) -> list[int] | bytes
+#   - class IntArray
+#       - unpack(json=…) -> list[int]
+#   - class LongArray
+#       - unpack(json=…) -> list[int]
+#   - class List
+#       - unpack(json=…) -> list[Any]
+#   - class Compound
+#       - unpack(json=…) -> dict[str, Any]
+#   - class File — 根 NBT 文档，提供 save 与 load 入口。
+#       - save(path, gzipped=…) -> None
+#   - load(path) -> File — 从文件读取 NBT 文档，自动识别 gzip 压缩。
+# ============================================================
+
 """极简 NBT 读写实现，替代 nbtlib 以去除 numpy 依赖。
 
 仅覆盖启动器实际用到的标签类型与读写语义，格式遵循 Minecraft NBT 规范。

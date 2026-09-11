@@ -1,3 +1,25 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：插件注册表：路由/槽位/事件订阅/前端组件的集中查询。
+#
+# 公开接口：
+#   - class PluginRegistry — 负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。
+#       - get_plugin(name) -> Plugin | None — 获取插件。
+#       - subscribe_event(plugin, event, handler) -> None — 统一注册插件的事件订阅，自动以插件名作为所有者标识。
+#       - list_plugins() -> list[dict[str, Any]] — 获取插件列表。
+#       - get_routes() -> list[dict[str, Any]] — 获取插件路由列表。
+#       - get_slots() -> dict[str, list[dict[str, str]]] — 返回按插槽分组的插件 HTML 注入内容。
+#       - get_vue_slots() -> dict[str, list[dict[str, Any]]] — 返回按插槽分组的插件 Vue 组件定义。
+#       - get_vue_components() -> dict[str, dict[str, Any]] — 返回所有已注册 Vue 组件定义的浅拷贝。
+#       - get_vue_routes() -> list[dict[str, Any]] — 获取已注册的 Vue 路由列表。
+#       - get_settings(name) -> dict[str, Any] — 返回插件设置结构及当前持久化值。
+#       - update_setting(name, key, value) -> PluginActionResult — 更新一个已声明的插件设置，并返回保存结果。
+#       - call_command(command, params=…, timeout=…) -> Any — 在线程池中调用 ``插件名:命令名``，失败或超时时抛出 ``PluginCommandError``。
+# ============================================================
+
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 

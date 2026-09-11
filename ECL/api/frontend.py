@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：前端能力 API：向前端发出事件、弹窗等宿主侧调用。
+#
+# 公开接口：
+#   - class FrontendApi — 聚合正式 IPC 域处理器，并共享唯一的前端事件桥接状态。
+# ============================================================
+
 from ECL.api.accounts import AccountHandlers
 from ECL.api.bridge import (
     _Emitter,

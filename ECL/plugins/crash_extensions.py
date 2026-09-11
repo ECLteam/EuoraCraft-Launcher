@@ -1,3 +1,18 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：崩溃分析富化扩展点：插件在宿主分析结果上追加或覆盖字段。
+#
+# 公开接口：
+#   - class CrashAnalysisContext — 传给富化回调的崩溃上下文快照。
+#   - class CrashAnalysisExtensionRegistry — 维护插件崩溃富化回调。
+#       - register(owner, name, enrich) -> None — 注册或原位更新一个富化回调。
+#       - unregister_owner(owner) -> None — 撤销指定插件的全部富化回调。
+#       - enrich(context, result) -> dict[str, Any] — 应用全部富化回调，返回合并后的结果字典。
+# ============================================================
+
 """崩溃分析富化扩展点：插件在宿主分析结果上追加或覆盖字段。"""
 
 from __future__ import annotations

@@ -1,3 +1,20 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：服务器列表服务：servers.dat 读写与在线状态刷新。
+#
+# 公开接口：
+#   - class ServerCoordinator — 读写 Minecraft 服务器列表并管理 ECL 收藏和短时状态缓存。
+#       - list_servers(game_path, version_id, version_isolation=…) -> list[dict[str, Any]] — 返回 Minecraft 原始顺序和 ECL 收藏状态，未知 NBT 字段保持在原文档中。
+#       - upsert_server(game_path, version_id, server_id, name, address, favorite=…, version_isolation=…) -> dict[str, Any] — 新增或修改服务器，仅更新已知字段并保留同一 Compound 的未知字段。
+#       - delete_server(game_path, version_id, server_id, version_isolation=…) -> None
+#       - reorder_servers(game_path, version_id, server_ids, version_isolation=…) -> list[dict[str, Any]]
+#       - set_server_favorite(game_path, version_id, address, favorite) -> None
+#       - refresh_server_statuses(addresses, timeout=…) -> list[dict[str, Any]] — 以受限并发查询 Java 服务器状态并使用三十秒短缓存。
+# ============================================================
+
 from __future__ import annotations
 
 import base64

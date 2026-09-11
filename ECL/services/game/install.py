@@ -1,3 +1,16 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：安装协调器：版本安装/卸载流程编排。
+#
+# 公开接口：
+#   - class InstallCoordinator
+#       - install_version(body, game_path, source, java_path) -> dict[str, str] — 开始安装版本，返回任务 ID 和最终保存的版本名称。
+#       - uninstall_version(version_id, game_path) -> None — 从指定 Minecraft 目录卸载版本。
+# ============================================================
+
 import asyncio
 import json
 import shutil

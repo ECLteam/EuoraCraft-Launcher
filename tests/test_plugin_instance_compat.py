@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 plugin_instance_compat 模块的自动化测试。
+#
+# 公开接口：
+#   - test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None — 普通插件可注册实例元数据读取器与监听路径，禁用时宿主会自动清理扩展点。
+# ============================================================
+
 import json
 
 from ECL.plugins import InstanceCompatibilityRegistry, PluginManager

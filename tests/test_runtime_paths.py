@@ -1,3 +1,17 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 runtime_paths 模块的自动化测试。
+#
+# 公开接口：
+#   - test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkeypatch) -> None
+#   - test_data_path_env_override_redirects_sandbox_directory(tmp_path, monkeypatch) -> None
+#   - test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None
+#   - test_plugin_install_targets_data_path(tmp_path) -> None
+# ============================================================
+
 import json
 import sys
 from unittest.mock import Mock, call

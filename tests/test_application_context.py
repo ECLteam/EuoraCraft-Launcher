@@ -1,3 +1,26 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 application_context 模块的自动化测试。
+#
+# 公开接口：
+#   - class Closable
+#       - close() -> None
+#   - test_application_context_closes_resources_in_reverse_dependency_order() -> None
+#   - test_event_subscription_returns_unsubscribe_callback() -> None
+#   - test_event_handler_failure_does_not_block_other_handlers() -> None
+#   - test_composition_failure_closes_resources_already_created(monkeypatch, tmp_path) -> None
+#   - test_composition_reports_loaded_state_before_services_are_created(monkeypatch, tmp_path) -> None
+#   - test_proxy_mode_migrates_legacy_ignore_proxy() -> None
+#   - test_resolve_proxy_url_system_mode_reads_system_proxy(monkeypatch) -> None
+#   - test_resolve_proxy_url_skips_socks_and_missing_proxy(monkeypatch) -> None
+#   - test_resolve_proxy_url_custom_and_none_modes() -> None
+#   - test_none_proxy_mode_sets_no_proxy_env(monkeypatch, tmp_path) -> None
+#   - test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path) -> None
+# ============================================================
+
 import os
 from pathlib import Path
 from types import SimpleNamespace

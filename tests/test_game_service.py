@@ -1,3 +1,72 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：针对 game_service 模块的自动化测试。
+#
+# 公开接口：
+#   - class FakeAccounts
+#       - current_account() -> Any
+#       - get_launch_credentials() -> Any
+#   - class EmptySearchMinecraft
+#       - search_minecraft() -> Any
+#   - class FakeProcess
+#       - poll() -> Any
+#   - class FakeInstances
+#       - create_instance(**options) -> Any
+#       - exit_instance(instance_id, exit_code=…) -> Any
+#       - get_instances_info() -> Any
+#       - stop_instance(instance_id, **_options) -> Any
+#       - request_instance_exit(instance_id, **options) -> Any
+#       - shutdown_all(**options) -> Any
+#   - class FakeDownloader
+#       - run() -> Any
+#       - stop() -> Any
+#   - test_scan_versions_is_owned_by_game_service(tmp_path) -> None
+#   - test_version_directory_change_invalidates_cache_and_emits_event(tmp_path) -> None
+#   - test_java_scanner_result_is_exposed_and_used_for_required_version(tmp_path) -> None
+#   - test_automatic_java_selection_uses_nearest_compatible_higher_version(tmp_path) -> None
+#   - test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatch) -> None
+#   - test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> None
+#   - test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path, monkeypatch) -> None
+#   - test_install_version_rejects_incomplete_loader_options(tmp_path) -> None
+#   - test_install_version_fabric_allows_empty_loader_version(tmp_path, monkeypatch) -> None
+#   - test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path, monkeypatch) -> None
+#   - test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_path, monkeypatch) -> None
+#   - test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monkeypatch) -> None
+#   - test_launch_fullscreen_uses_versions_directory_when_isolated(tmp_path, monkeypatch) -> None
+#   - test_close_keeps_running_game_instances_alive_and_settles_observed_duration(tmp_path, monkeypatch) -> None
+#   - test_stop_instance_removes_runtime_record_and_settles_duration(tmp_path, monkeypatch) -> None
+#   - test_clean_exit_after_startup_marker_does_not_trigger_crash(tmp_path, monkeypatch) -> None
+#   - test_launch_handles_process_that_exits_before_instance_registration_finishes(tmp_path, monkeypatch) -> None
+#   - test_launch_environment_rejects_java_below_minimum(tmp_path) -> None
+#   - test_launch_environment_accepts_java_newer_than_minimum(tmp_path) -> None
+#   - test_command_builder_rejects_missing_inherited_version_metadata(tmp_path) -> None
+#   - test_command_builder_places_neoforge_game_arguments_after_main_class(tmp_path) -> None
+#   - test_command_builder_lock_memory_pins_initial_heap_to_max(tmp_path) -> None
+#   - test_launch_downloads_missing_inherited_version_metadata_before_file_check(tmp_path, monkeypatch) -> None
+#   - test_launch_environment_rejects_large_memory_with_32_bit_java(tmp_path) -> None
+#   - test_fallback_required_java_tracks_minecraft_runtime_generations(game_version, expected) -> None
+#   - test_concurrent_runs_accumulate_independently(tmp_path, monkeypatch) -> None
+#   - test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -> None
+#   - test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) -> None
+#   - test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
+#   - test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None
+#   - test_uninstall_version_only_removes_selected_version(tmp_path) -> None
+#   - test_ecl_config_read_write_and_patch(tmp_path) -> None
+#   - test_ecl_config_skips_unchanged_writes(tmp_path, monkeypatch) -> None
+#   - test_ecl_config_serializes_concurrent_identical_patches(tmp_path, monkeypatch) -> None
+#   - test_ecl_active_version_get_and_set(tmp_path) -> None
+#   - test_ecl_config_rejects_invalid_data(tmp_path) -> None
+#   - test_ecl_config_handles_corrupted_file(tmp_path) -> None
+#   - test_version_settings_stored_in_versions_own_directory(tmp_path) -> None
+#   - test_version_settings_skips_unchanged_writes_and_rejects_invalid(tmp_path, monkeypatch) -> None
+#   - test_local_mod_lifecycle_stays_inside_mods_directory(tmp_path) -> None
+#   - test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> None
+#   - test_download_resource_to_path_rejects_unsupported_source_and_missing_dir(tmp_path) -> None
+# ============================================================
+
 from __future__ import annotations
 
 import asyncio
