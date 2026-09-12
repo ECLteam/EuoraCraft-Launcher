@@ -278,6 +278,9 @@ def test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(application_module.httpx, "Client", CaptureHttp)
     monkeypatch.setenv("NO_PROXY", "")
     monkeypatch.setenv("no_proxy", "")
+    # create_application 在 system 模式会写入游戏下载代理；通过 monkeypatch
+    # 注册清理，避免该进程级状态泄漏给后续下载器测试。
+    monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
 
     with pytest.raises(RuntimeError, match="stop after http client"):
         create_application(

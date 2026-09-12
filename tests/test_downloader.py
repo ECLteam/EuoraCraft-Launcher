@@ -28,9 +28,13 @@ def _redirect_handler(request: httpx.Request) -> httpx.Response:
 
 
 async def test_downloader_follows_redirect(monkeypatch, tmp_path: Path) -> None:
+    # 此用例验证 HTTP 重定向，必须隔离用户或前序测试设置的真实下载代理。
+    monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
     original = httpx.AsyncClient
+    client_options: list[dict[str, object]] = []
 
     def _client_factory(**kwargs):
+        client_options.append(kwargs)
         return original(transport=httpx.MockTransport(_redirect_handler), **kwargs)
 
     monkeypatch.setattr("ECL.game.Core.Downloader.httpx.AsyncClient", _client_factory)
@@ -41,3 +45,4 @@ async def test_downloader_follows_redirect(monkeypatch, tmp_path: Path) -> None:
 
     assert downloader.failed_entries == set()
     assert target.read_bytes() == b"REAL-CONTENT"
+    assert client_options and all(options.get("trust_env") is False for options in client_options)
