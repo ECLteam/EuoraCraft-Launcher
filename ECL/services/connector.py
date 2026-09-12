@@ -133,9 +133,13 @@ class ConnectorService:
         self._node_cache_ttl = max(0.0, node_cache_ttl)
         self._node_cache_refreshed_at: float | None = None
         self._node_cache_lock = RLock()
+        self._node_refreshing = False
         self._error: str | None = None
         self._started: bool = False
         self._game_info: dict[str, Any] | None = None
+        # 建房/加入的状态迁移守卫：防止并发 host/join 互相覆盖房间状态
+        self._transition_lock = RLock()
+        self._transitioning = False
 
         # 易用性
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -170,6 +174,18 @@ class ConnectorService:
         self._node_cache_refreshed_at = monotonic()
         return list(self._nodes)
 
+    def _begin_transition(self) -> None:
+        # 进入建房/加入流程前占用状态迁移；非 idle 或已有迁移进行中时拒绝并发。
+        with self._transition_lock:
+            if self._transitioning or self._mode != "idle":
+                raise ConnectorError("当前已有活跃的房间或正在建立连接，请先退出或稍候")
+            self._transitioning = True
+
+    def _end_transition(self) -> None:
+        # 结束建房/加入流程的状态迁移占用（成功与失败路径都必须调用）。
+        with self._transition_lock:
+            self._transitioning = False
+
     def fetch_nodes(self, *, force: bool = False) -> list[str]:
         """
         获取可用的 EasyTier 中继节点 URI 列表。
@@ -190,47 +206,60 @@ class ConnectorService:
                 return list(self._nodes)
 
             cached_nodes = list(self._nodes) if self._node_cache_refreshed_at is not None else []
-            if self._http is None:
-                return self._remember_nodes(cached_nodes or list(_DEFAULT_NODES))
-            try:
-                response = self._http.get(
-                    _NODE_LIST_URL,
-                    headers={"User-Agent": _NODE_UA},
-                    timeout=_NODE_FETCH_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                items = response.json()
-                if not isinstance(items, list):
-                    raise ValueError("节点服务返回了非数组结构")
+            if self._node_refreshing:
+                # 另一个线程正在刷新：直接返回现有缓存，避免持锁等待网络。
+                return cached_nodes or list(_DEFAULT_NODES)
+            self._node_refreshing = True
 
-                nodes: list[str] = []
-                aggregate_urls: list[str] = []
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    url = str(item.get("url") or "").strip()
-                    if not url:
-                        continue
-                    if self._is_easytier_peer(url):
-                        nodes.append(url)
-                    elif url.startswith("https://"):
-                        aggregate_urls.append(url)
+        try:
+            return self._refresh_nodes(cached_nodes)
+        finally:
+            with self._node_cache_lock:
+                self._node_refreshing = False
 
-                if aggregate_urls:
-                    with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
-                        for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
-                            nodes.extend(resolved)
-                resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
-                logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
-                return self._remember_nodes(resolved)
-            except Exception as exc:
-                fallback = cached_nodes or list(_DEFAULT_NODES)
-                logger.warning(
-                    "拉取联机节点列表失败，使用%s: %s",
-                    "内存中的旧缓存" if cached_nodes else "默认节点",
-                    exc,
-                )
-                return self._remember_nodes(fallback)
+    def _refresh_nodes(self, cached_nodes: list[str]) -> list[str]:
+        """向节点服务刷新缓存；失败时保留旧缓存或使用内置默认节点。"""
+        if self._http is None:
+            return self._remember_nodes(cached_nodes or list(_DEFAULT_NODES))
+        try:
+            response = self._http.get(
+                _NODE_LIST_URL,
+                headers={"User-Agent": _NODE_UA},
+                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            items = response.json()
+            if not isinstance(items, list):
+                raise ValueError("节点服务返回了非数组结构")
+
+            nodes: list[str] = []
+            aggregate_urls: list[str] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").strip()
+                if not url:
+                    continue
+                if self._is_easytier_peer(url):
+                    nodes.append(url)
+                elif url.startswith("https://"):
+                    aggregate_urls.append(url)
+
+            if aggregate_urls:
+                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
+                    for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
+                        nodes.extend(resolved)
+            resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
+            logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
+            return self._remember_nodes(resolved)
+        except Exception as exc:
+            fallback = cached_nodes or list(_DEFAULT_NODES)
+            logger.warning(
+                "拉取联机节点列表失败，使用%s: %s",
+                "内存中的旧缓存" if cached_nodes else "默认节点",
+                exc,
+            )
+            return self._remember_nodes(fallback)
 
     def _resolve_aggregate_node(self, url: str) -> list[str]:
         # 解析一个聚合节点地址，得到可用的 EasyTier URI。
@@ -547,6 +576,10 @@ class ConnectorService:
         if self._mode != "idle":
             raise ConnectorError("当前已有活跃的房间，请先退出")
 
+        # 占用状态迁移：防止建房期间再次建房/加入覆盖房间状态导致句柄泄漏
+        self._begin_transition()
+        self._mode = "starting"
+
         logger.debug("开始创建联机房间: minecraft_port=%s, easytier=%s", port, self.easytier_available)
         try:
             florolding = Florolding(
@@ -590,8 +623,12 @@ class ConnectorService:
         except Exception as exc:
             self._mode = "idle"
             self._error = str(exc)
+            self._end_transition()
             logger.exception("创建联机房间失败: %s", exc)
             raise ConnectorError(f"创建房间失败: {exc}") from exc
+        finally:
+            if self._mode == "host":
+                self._end_transition()
 
     def host_instance(self, game_path: str, version_id: str) -> dict[str, Any]:
         """
@@ -635,6 +672,8 @@ class ConnectorService:
         if not validate_code(code):
             raise ConnectorError("无效的房间码格式")
 
+        # 占用状态迁移：加入期间再次建房/加入会被拒绝
+        self._begin_transition()
         self._mode = "starting"
         self._room_code = code
         self._error = None
@@ -661,8 +700,12 @@ class ConnectorService:
             self._mode = "idle"
             self._error = str(exc)
             self._stop_async_thread_client()
+            self._end_transition()
             logger.exception("加入联机房间失败: %s", exc)
             raise ConnectorError(f"加入房间失败: {exc}") from exc
+        finally:
+            if self._mode == "guest":
+                self._end_transition()
 
     def _join_room(
         self,
@@ -727,6 +770,8 @@ class ConnectorService:
         self._client = None
         self._game_info = None
         self._error = None
+        # 若退出发生在建房/加入迁移进行中，同步释放迁移占用
+        self._end_transition()
         self.extensions.reset(
             ConnectorSessionContext(
                 mode="idle",

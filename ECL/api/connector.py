@@ -77,8 +77,11 @@ class ConnectorHandlers(_FrontendState):
     async def connector_status(self, body: dict[str, Any]) -> ApiResponse:
         """
         查询联机服务的当前状态。
+
+        ``get_status`` 可能同步等待玩家列表（最长 5s），放到线程池执行，
+        避免前端 2s 一次的轮询阻塞 IPC 事件循环。
         """
-        return success(self.connector.get_status())
+        return success(await _run_in_daemon(self.connector.get_status))
 
     @_ipc_handler("CONNECTOR_HOST_PORT_FAILED")
     @_connector_guard("CONNECTOR_HOST_PORT_FAILED")
