@@ -19,15 +19,15 @@
 ## 1. 功能变更必须提交 Git
 
 - 凡是功能性更改、新增功能或缺陷修复，完成后必须立即向 git 仓库提交一次 commit，不得把已完成的改动长期留在工作区。
-- 提交信息遵循 Conventional Commits 规范（feat / fix / perf / docs / style / refactor / test / chore），本项目使用 semantic-release 管理版本与 CHANGELOG。
+- 提交信息遵循 Conventional Commits 规范（feat / fix / perf / docs / style / refactor / test / chore），本项目使用 semantic-release 管理版本与 CHANGELOG；冒号后的描述必须使用中文，例如 `fix: 修复更新弹窗重复提示`。
 - 一次 commit 只包含同一功能的相关改动，不得夹带无关文件；注意检查 `git status`，避免把子模块指针、构建产物等带进提交。
 
 ## 2. 功能测试必须执行
 
 - 功能更改、新增或修复在提交前必须通过功能测试，测试通过才算"完成"。
-- 后端改动：`ruff check ECL` 无新增告警，相关 `pytest` 用例通过；为新增或修复的行为补充 / 更新 `tests/` 下的测试用例。
-- 前端 / UI 相关改动：先构建前端（`cd frontend && pnpm build`），再实际启动启动器验证功能可用，不得仅做静态检查。
-- 测试未通过不得提交；CI（build.yml）会在各平台复检构建与测试。
+- 测试命令以对应 CI 工作流为最低标准，测试未通过不得提交。后端改动：执行 CI 对应的 `ruff check ECL` 与相关 `pytest` 用例；为新增或修复的行为补充 / 更新 `tests/` 下的测试用例。
+- 前端改动：必须先执行与 `frontend/.github/workflows/lint.yml` 一致的 `cd frontend && pnpm check`；该命令包含 Prettier 格式检查、ESLint、类型检查与测试，任一步失败均不得提交。
+- 涉及前端 UI 或启动器运行流程时，在 `pnpm check` 通过后继续执行 `pnpm build`，再实际启动启动器验证功能可用，不得仅做静态检查。
 
 ## 附则
 
