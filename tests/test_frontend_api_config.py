@@ -318,6 +318,14 @@ class FakeGame:
             "gamePath": str(options["game_path"]),
         }
 
+    def resolve_version_isolation(self, game_path, version_id, requested=None):
+        self.isolation_call = (game_path, version_id, requested)
+        return True if requested is None else requested
+
+    def open_instance_folder(self, game_path, version_id, folder, version_isolation):
+        self.folder_call = (game_path, version_id, folder, version_isolation)
+        return {"path": str(game_path / "versions" / version_id / folder)}
+
     def analyze_crash_file(self, file_path, game_path, version_id):
         self.crash_call = (file_path, game_path, version_id)
         return {
@@ -518,6 +526,43 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
     assert api.game.launch_call[1]["memory"] == 6144
     assert api.game.launch_call[1]["fullscreen"] is True
     assert api.game.launch_call[1]["version_isolation"] is True
+
+
+def test_launch_instance_resolves_saved_isolation_when_omitted(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+
+    result = asyncio.run(
+        api.game_launch(
+            {
+                "version_id": "1.21.8",
+                "game_path": str(tmp_path / ".minecraft"),
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert api.game.isolation_call[2] is None
+    assert api.game.launch_call[1]["version_isolation"] is True
+
+
+def test_instance_folder_resolves_saved_isolation_when_omitted(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+
+    result = asyncio.run(
+        api.game_instance_folder_open(
+            {
+                "game_path": str(tmp_path / ".minecraft"),
+                "version_id": "1.21.8",
+                "folder": "mods",
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert api.game.isolation_call[2] is None
+    assert api.game.folder_call[2:] == ("mods", True)
 
 
 def test_crash_report_commands_validate_and_delegate(tmp_path) -> None:

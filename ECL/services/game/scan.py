@@ -461,6 +461,17 @@ class ScanCoordinator(_GameState):
             self.logger.warning("读取版本独立设置失败 %s: %s", settings_path, exc)
             return {}
 
+    def resolve_version_isolation(self, game_path: Any, version_id: Any, requested: Any = None) -> bool:
+        """
+        返回实例当前应使用的版本隔离状态。
+
+        正式前端入口不传 ``version_isolation`` 时，以实例目录中的设置为唯一来源；
+        保留显式布尔值，供受控调用和测试临时覆盖。
+        """
+        if isinstance(requested, bool):
+            return requested
+        return self.read_version_settings(game_path, version_id).get("isolated") is True
+
     def write_version_settings(self, game_path: Any, version_id: Any, data: dict[str, Any]) -> dict[str, Any]:
         """
         原子写入版本目录中的独立启动设置。

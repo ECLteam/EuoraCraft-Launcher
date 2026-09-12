@@ -452,6 +452,12 @@ class GameHandlers(_FrontendState):
         source = values.pop("source")
         java_path = values.pop("java_path")
         quick_target = values.pop("quick_target", None)
+        values["version_isolation"] = await to_thread.run_sync(
+            self.game.resolve_version_isolation,
+            game_path,
+            version_id,
+            values.get("version_isolation"),
+        )
         if quick_target:
             values["game_args"] = [
                 *values.get("game_args", []),

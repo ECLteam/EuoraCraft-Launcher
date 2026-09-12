@@ -1434,6 +1434,25 @@ def test_local_mod_lifecycle_stays_inside_mods_directory(tmp_path) -> None:
         service.remove_mod(game_path, "../outside.jar")
 
 
+def test_instance_mods_follow_saved_isolation_setting(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    source = tmp_path / "example.jar"
+    source.write_bytes(b"safe-mod")
+    service = _build_service()
+
+    service.write_version_settings(game_path, "isolated", {"isolated": True})
+    service.add_instance_mod(game_path, "isolated", source)
+
+    assert (game_path / "versions" / "isolated" / "mods" / "example.jar").is_file()
+    assert not (game_path / "versions" / "mods" / "example.jar").exists()
+    assert service.list_instance_mods(game_path, "isolated")[0]["filename"] == "example.jar"
+
+    service.add_instance_mod(game_path, "shared", source)
+    assert (game_path / "versions" / "mods" / "example.jar").is_file()
+    assert service.resolve_version_isolation(game_path, "isolated") is True
+    assert service.resolve_version_isolation(game_path, "isolated", False) is False
+
+
 def test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> None:
     service = _build_service()
     destination = tmp_path / "sodium.jar"

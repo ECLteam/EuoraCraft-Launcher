@@ -235,7 +235,7 @@ class LaunchCoordinator(_GameState):
         fullscreen: Any = False,
         jvm_args: Any = None,
         game_args: Any = None,
-        version_isolation: Any = False,
+        version_isolation: Any = None,
         lock_memory: Any = False,
         process_priority: Any = "normal",
     ) -> dict[str, str]:
@@ -289,7 +289,7 @@ class LaunchCoordinator(_GameState):
         lock_memory_enabled = bool(lock_memory)
         normalized_priority = self._normalize_process_priority(process_priority)
         context = self._context(path, self._normalize_source(source))
-        isolated = bool(version_isolation)
+        isolated = self.resolve_version_isolation(path, version_name, version_isolation)
         # 插件启动钩子需要访问最终游戏目录，提前计算以避免在命令构建后再移动。
         game_directory = path / "versions"
         # 版本隔离=开 时该实例使用独立的 versions/<版本名>/ 数据目录，与设置项文案一致

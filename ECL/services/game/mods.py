@@ -56,7 +56,11 @@ class ModCoordinator(_GameState):
         :param game_path: Minecraft 游戏根目录
         :return: 前端本地模组列表所需的完整信息
         """
-        mods_dir = self._normalize_game_path(game_path) / "mods"
+        return self._list_mods_at(self._normalize_game_path(game_path))
+
+    def _list_mods_at(self, data_path: Path) -> list[dict[str, Any]]:
+        """从已解析的实际游戏数据目录列出模组，避免再次归一化隔离目录。"""
+        mods_dir = data_path / "mods"
         if not mods_dir.is_dir():
             return []
         result = []
@@ -98,12 +102,12 @@ class ModCoordinator(_GameState):
         :param filename: ``mods`` 目录内的文件名
         :return: 切换后的启用状态
         """
-        source = self._mod_path(game_path, filename)
+        source = self._mod_path_at(self._normalize_game_path(game_path), filename)
         if not source.is_file():
             raise GameServiceError("模组文件不存在", "MOD_NOT_FOUND")
         enabled = not source.name.endswith(".disabled")
         target_name = source.name.removesuffix(".disabled") if not enabled else f"{source.name}.disabled"
-        target = self._mod_path(game_path, target_name)
+        target = self._mod_path_at(self._normalize_game_path(game_path), target_name)
         if target.exists():
             raise GameServiceError("目标模组文件已存在", "MOD_TARGET_EXISTS")
         source.replace(target)
@@ -122,7 +126,7 @@ class ModCoordinator(_GameState):
         source = Path(source_path).expanduser().resolve(strict=False)
         if not source.is_file() or source.suffix.casefold() != ".jar":
             raise GameServiceError("模组源文件必须是 Jar 文件", "INVALID_MOD_SOURCE")
-        target = self._mod_path(game_path, source.name)
+        target = self._mod_path_at(self._normalize_game_path(game_path), source.name)
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
         try:
@@ -140,7 +144,7 @@ class ModCoordinator(_GameState):
         :param game_path: Minecraft 游戏根目录
         :param filename: ``mods`` 目录内的文件名
         """
-        target = self._mod_path(game_path, filename)
+        target = self._mod_path_at(self._normalize_game_path(game_path), filename)
         if not target.is_file():
             raise GameServiceError("模组文件不存在", "MOD_NOT_FOUND")
         target.unlink()
@@ -186,14 +190,75 @@ class ModCoordinator(_GameState):
         :param game_path: Minecraft 游戏根目录
         :return: 绝对 ``mods`` 目录路径
         """
-        path = (self._normalize_game_path(game_path) / "mods").resolve(strict=False)
+        return self._mods_path_at(self._normalize_game_path(game_path))
+
+    @staticmethod
+    def _mods_path_at(data_path: Path) -> Path:
+        path = (data_path / "mods").resolve(strict=False)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _instance_mod_root(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> Path:
+        """解析实例实际数据目录，确保模组操作与游戏启动使用同一隔离语义。"""
+        isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
+        return self.resolve_instance(game_path, version_id, isolated).data_path
+
+    def list_instance_mods(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> list[dict[str, Any]]:
+        return self._list_mods_at(self._instance_mod_root(game_path, version_id, version_isolation))
+
+    def toggle_instance_mod(
+        self, game_path: Any, version_id: Any, filename: Any, version_isolation: Any = None
+    ) -> bool:
+        data_path = self._instance_mod_root(game_path, version_id, version_isolation)
+        source = self._mod_path_at(data_path, filename)
+        if not source.is_file():
+            raise GameServiceError("模组文件不存在", "MOD_NOT_FOUND")
+        enabled = not source.name.endswith(".disabled")
+        target_name = source.name.removesuffix(".disabled") if not enabled else f"{source.name}.disabled"
+        target = self._mod_path_at(data_path, target_name)
+        if target.exists():
+            raise GameServiceError("目标模组文件已存在", "MOD_TARGET_EXISTS")
+        source.replace(target)
+        return not enabled
+
+    def add_instance_mod(
+        self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = None
+    ) -> str:
+        if not isinstance(source_path, (str, Path)) or not str(source_path).strip():
+            raise GameServiceError("未选择模组文件", "INVALID_MOD_SOURCE")
+        source = Path(source_path).expanduser().resolve(strict=False)
+        if not source.is_file() or source.suffix.casefold() != ".jar":
+            raise GameServiceError("模组源文件必须是 Jar 文件", "INVALID_MOD_SOURCE")
+        target = self._mod_path_at(self._instance_mod_root(game_path, version_id, version_isolation), source.name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            shutil.copy2(source, temporary)
+            temporary.replace(target)
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            raise GameServiceError(f"复制模组失败: {exc}", "MOD_COPY_FAILED") from exc
+        return target.name
+
+    def remove_instance_mod(
+        self, game_path: Any, version_id: Any, filename: Any, version_isolation: Any = None
+    ) -> None:
+        target = self._mod_path_at(self._instance_mod_root(game_path, version_id, version_isolation), filename)
+        if not target.is_file():
+            raise GameServiceError("模组文件不存在", "MOD_NOT_FOUND")
+        target.unlink()
+
+    def instance_mods_path(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> Path:
+        return self._mods_path_at(self._instance_mod_root(game_path, version_id, version_isolation))
+
     def _mod_path(self, game_path: Any, filename: Any) -> Path:
+        return self._mod_path_at(self._normalize_game_path(game_path), filename)
+
+    @staticmethod
+    def _mod_path_at(data_path: Path, filename: Any) -> Path:
         if not isinstance(filename, str) or not filename.strip() or "\0" in filename:
             raise GameServiceError("模组文件名无效", "INVALID_MOD_FILENAME")
-        mods_dir = (self._normalize_game_path(game_path) / "mods").resolve(strict=False)
+        mods_dir = (data_path / "mods").resolve(strict=False)
         target = (mods_dir / filename).resolve(strict=False)
         if target.parent != mods_dir or target.name != filename:
             raise GameServiceError("模组路径超出允许范围", "INVALID_MOD_PATH")

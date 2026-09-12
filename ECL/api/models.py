@@ -441,14 +441,16 @@ class LaunchRequest(RequestModel):
     fullscreen: bool = False
     jvm_args: list[str] = Field(default_factory=list)
     game_args: list[str] = Field(default_factory=list)
-    version_isolation: bool = False
+    # None 表示由后端读取实例 .ecl/settings.json；显式布尔值仅用于调用方覆盖。
+    version_isolation: bool | None = None
     quick_target: Annotated[WorldQuickTarget | ServerQuickTarget, Field(discriminator="type")] | None = None
 
 
 class InstanceTarget(RequestModel):
     game_path: Path
     version_id: str = Field(min_length=1, max_length=255)
-    version_isolation: bool = False
+    # 不传时使用该实例保存的隔离设置，避免前端缺省值覆盖实例配置。
+    version_isolation: bool | None = None
 
     @field_validator("version_id")
     @classmethod
@@ -460,6 +462,14 @@ class InstanceTarget(RequestModel):
 
 class InstanceFolderRequest(InstanceTarget):
     folder: Literal["instance", "mods", "saves", "screenshots", "logs", "crash-reports"]
+
+
+class InstanceModFileRequest(InstanceTarget):
+    filename: str = Field(min_length=1, max_length=255)
+
+
+class InstanceModAddRequest(InstanceTarget):
+    source_path: Path
 
 
 class InstanceCloneRequest(InstanceTarget):

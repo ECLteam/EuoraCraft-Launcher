@@ -8,6 +8,11 @@
 # 公开接口：
 #   - class WorkspaceHandlers — 暴露实例工作台、内容管理和长任务的 Pydantic IPC 边界。
 #       - game_instance_folder_open(body) -> ApiResponse
+#       - game_instance_mods_list(body) -> ApiResponse
+#       - game_instance_mod_toggle(body) -> ApiResponse
+#       - game_instance_mod_add(body) -> ApiResponse
+#       - game_instance_mod_remove(body) -> ApiResponse
+#       - game_instance_mods_folder_open(body) -> ApiResponse
 #       - game_instance_clone(body) -> ApiResponse
 #       - game_instance_import(body) -> ApiResponse
 #       - game_instance_export(body) -> ApiResponse
@@ -67,6 +72,8 @@ from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import (
     InstanceCloneRequest,
     InstanceFolderRequest,
+    InstanceModAddRequest,
+    InstanceModFileRequest,
     InstancePackExportRequest,
     InstancePackImportRequest,
     InstanceTarget,
@@ -114,6 +121,8 @@ class WorkspaceHandlers(_FrontendState):
         request, invalid = _validate_body(model, body)
         if invalid is not None:
             return invalid
+        if isinstance(request, InstanceTarget) and request.version_isolation is None:
+            request.version_isolation = self.game.resolve_version_isolation(request.game_path, request.version_id)
         return success(await to_thread.run_sync(lambda: callback(request)))
 
     @_ipc_handler("INSTANCE_FOLDER_OPEN_FAILED")
@@ -123,6 +132,58 @@ class WorkspaceHandlers(_FrontendState):
             body,
             lambda request: self.game.open_instance_folder(
                 request.game_path, request.version_id, request.folder, request.version_isolation
+            ),
+        )
+
+    @_ipc_handler("INSTANCE_MODS_LIST_FAILED")
+    async def game_instance_mods_list(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceTarget,
+            body,
+            lambda request: self.game.list_instance_mods(request.game_path, request.version_id, request.version_isolation),
+        )
+
+    @_ipc_handler("INSTANCE_MODS_TOGGLE_FAILED")
+    async def game_instance_mod_toggle(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceModFileRequest,
+            body,
+            lambda request: {
+                "enabled": self.game.toggle_instance_mod(
+                    request.game_path, request.version_id, request.filename, request.version_isolation
+                )
+            },
+        )
+
+    @_ipc_handler("INSTANCE_MODS_ADD_FAILED")
+    async def game_instance_mod_add(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceModAddRequest,
+            body,
+            lambda request: {
+                "filename": self.game.add_instance_mod(
+                    request.game_path, request.version_id, request.source_path, request.version_isolation
+                )
+            },
+        )
+
+    @_ipc_handler("INSTANCE_MODS_REMOVE_FAILED")
+    async def game_instance_mod_remove(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceModFileRequest,
+            body,
+            lambda request: self.game.remove_instance_mod(
+                request.game_path, request.version_id, request.filename, request.version_isolation
+            ),
+        )
+
+    @_ipc_handler("INSTANCE_MODS_FOLDER_FAILED")
+    async def game_instance_mods_folder_open(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            InstanceTarget,
+            body,
+            lambda request: self.game.open_instance_folder(
+                request.game_path, request.version_id, "mods", request.version_isolation
             ),
         )
 
