@@ -95,3 +95,4 @@ docs/junsi-dev-docs
 .pytest-tmp/
 
 /.zcode/
+.pytest_tmp/
