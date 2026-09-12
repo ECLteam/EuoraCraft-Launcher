@@ -13,6 +13,7 @@
 #       - system_memory(body) -> dict[str, Any] — 获取内存信息。
 #       - launcher_info(body) -> dict[str, Any] — 获取启动器信息。
 #       - launcher_check_update(body) -> dict[str, Any] — 按当前版本通道检查 GitHub Releases 是否有新版本。
+#       - launcher_preload_connector(body) -> dict[str, Any] — 预热联机节点缓存，避免首次创建或加入房间等待网络。
 #       - info_card_get(body) -> dict[str, Any] — 获取信息卡片。
 #       - launcher_update_status(body) -> dict[str, Any] — 返回当前运行形态是否允许自动更新。
 #       - launcher_update_download(body) -> dict[str, Any] — 下载当前通道最新版本的安装包并落盘替换计划。
@@ -147,6 +148,19 @@ class SystemHandlers(_FrontendState):
                 "message": result.message,
             }
         )
+
+    @_ipc_handler("CONNECTOR_PRELOAD_FAILED")
+    async def launcher_preload_connector(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        在首屏就绪后预热联机节点列表缓存。
+
+        前端不会等待此请求；节点请求在工作线程中运行，失败时由调用方静默忽略，
+        不影响启动器正常使用。
+        """
+        if body:
+            return {"success": False, "message": "launcher_preload_connector 不接受参数", "errorCode": "INVALID_REQUEST"}
+        await to_thread.run_sync(self.connector.fetch_nodes)
+        return success()
 
     async def info_card_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """

@@ -210,6 +210,7 @@ COMMAND_NAMES = (
     "plugin_update_setting",
     "plugin_notify_sidebar_state",
     "connector_status",
+    "launcher_preload_connector",
     "connector_host_port",
     "connector_host_instance",
     "connector_join",

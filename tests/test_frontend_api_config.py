@@ -884,6 +884,19 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
     ]
 
 
+def test_startup_preload_warms_connector_nodes_without_arguments(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    calls: list[str] = []
+    api.connector.fetch_nodes = lambda: calls.append("warmed")
+
+    result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
+
+    assert result["success"] is True
+    assert calls == ["warmed"]
+    invalid = asyncio.run(command_handlers(api)["launcher_preload_connector"]({"unexpected": True}))
+    assert invalid["errorCode"] == "INVALID_REQUEST"
+
+
 def test_guarded_call_timeout_cancels_slow_operation(tmp_path) -> None:
     api = _build_api(tmp_path)
 
