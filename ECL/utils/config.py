@@ -74,6 +74,7 @@ default_config: dict[str, Any] = {
             "transparent_bg": False,
             "background_opacity": 1.0,
             "appearance": {
+                "radius_window": 12,
                 "radius_card": 8,
                 "radius_control": 6,
                 "radius_dialog": 10,
