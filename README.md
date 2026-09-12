@@ -51,6 +51,12 @@
 
 ---
 
+## 合作 / 相关社区项目
+
+- [Qomicex.Tauri（QML）](https://github.com/Qomicex-Public/Qomicex.Tauri/) — QML 维护的 Tauri 第三方 Minecraft 启动器，与 EuoraCraft Launcher 共用联机节点，并兼容 SCF 拓展协议实现互相联机。
+
+---
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
