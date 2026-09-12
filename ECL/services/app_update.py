@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -49,9 +50,17 @@ _DOWNLOAD_CHUNK_BYTES = 64 * 1024
 _COMPANION_FILE_NAMES = frozenset({"version.json"})
 
 # 平台对应的安装包特征词；命中即视为该平台使用的文件。
+# 注意：darwin 特征词刻意不含 "app"——"*.app" 后缀过宽，会误伤其他平台的包名。
 _WINDOWS_KEYWORDS = ("windows", "win", "win32", "amd64", "x64", "x86_64")
 _LINUX_KEYWORDS = ("linux", "linux-x86_64", "appimage")
-_DARWIN_KEYWORDS = ("macos", "mac", "darwin", "dmg", "app")
+_DARWIN_KEYWORDS = ("macos", "mac", "darwin", "dmg")
+
+# 架构特征词；用于多候选时的精确匹配加分。
+_ARCH_KEYWORDS = {
+    "win32": ("x64", "amd64", "x86_64"),
+    "darwin": ("arm64", "universal"),
+    "linux": ("x86_64", "amd64", "aarch64"),
+}
 
 # 各种打包旁路文件，不参与安装包挑选。
 _SIDECAR_PATTERNS = (
@@ -155,14 +164,32 @@ def _is_platform_asset(name: str, platform: str) -> bool:
     return not any(token in (_WINDOWS_KEYWORDS + _LINUX_KEYWORDS + _DARWIN_KEYWORDS) for token in tokens)
 
 
+def _asset_score(name: str, platform: str) -> int:
+    # 为候选安装包打分：平台词命中优先，其次架构词精确匹配，供多候选确定性排序。
+    tokens = _name_tokens(name)
+    score = 0
+    keywords = (
+        _WINDOWS_KEYWORDS
+        if platform == "win32"
+        else (_DARWIN_KEYWORDS if platform == "darwin" else (_LINUX_KEYWORDS if platform.startswith("linux") else ()))
+    )
+    if any(token in keywords for token in tokens):
+        score += 4
+    for token in tokens:
+        if token in _ARCH_KEYWORDS.get(platform, ()):
+            score += 2
+            break
+    return score
+
+
 def _binary_suffix(name: str) -> bool:
     # 判断资产是否为可直接执行的单文件包。
     lowered = name.lower()
     return any(lowered.endswith(ext) for ext in _EXECUTABLE_SUFFIXES) or lowered.endswith(".zip")
 
 
-def _peer_digest_asset(release: dict[str, Any], name: str) -> str | None:
-    # 查找与新包同名的 .sha256 校验清单；GitHub 资产页会生成 digest 资产。
+def _peer_digest_asset(release: dict[str, Any], name: str) -> tuple[str, str] | None:
+    # 查找与新包同名的 .sha256/.sha512 校验清单，返回 (算法, 下载地址)。
     base = Path(name).name
     digest_candidates = [f"{base}.sha256", f"{base}.sha512"]
     for item in release.get("assets") or []:
@@ -170,7 +197,10 @@ def _peer_digest_asset(release: dict[str, Any], name: str) -> str | None:
             continue
         asset_name = str(item.get("name") or "")
         if asset_name in digest_candidates:
-            return str(item.get("browser_download_url") or "") or None
+            algorithm = "sha512" if asset_name.endswith(".sha512") else "sha256"
+            url = str(item.get("browser_download_url") or "")
+            if url:
+                return algorithm, url
     return None
 
 
@@ -257,7 +287,18 @@ class UpdateApplier:
         if not candidates:
             return None
         executable = [candidate for candidate in candidates if candidate.name.lower().endswith(_EXECUTABLE_SUFFIXES)]
-        return (executable or candidates)[0]
+        # 多候选时按平台/架构得分降序、文件名升序排序，避免依赖 GitHub 返回顺序。
+        ordered = sorted(
+            executable or candidates,
+            key=lambda candidate: (-_asset_score(candidate.name, self._platform), candidate.name),
+        )
+        if len(ordered) > 1:
+            self.logger.warning(
+                "匹配到多个候选安装包，选择 %s（其余: %s）",
+                ordered[0].name,
+                ", ".join(candidate.name for candidate in ordered[1:3]),
+            )
+        return ordered[0]
 
     def stage(
         self,
@@ -294,6 +335,7 @@ class UpdateApplier:
             raise AppUpdateError("请升级包下载失败，请重试", error_code="UPDATE_ASSET_MISSING", phase="verify")
         if asset.size > 0 and downloaded.stat().st_size != asset.size:
             raise AppUpdateError("请升级包下载不完整，请重试", error_code="UPDATE_VERIFY_FAILED", phase="verify")
+        self._verify_digest(release, asset, downloaded)
         new_binary = self._prepare_binary(downloaded, stage_root)
 
         resolve_target = Path(target).resolve() if target else self._default_target()
@@ -338,6 +380,49 @@ class UpdateApplier:
             temporary.unlink(missing_ok=True)
             raise AppUpdateError("请升级包下载不完整，请重试", error_code="UPDATE_VERIFY_FAILED", phase="verify")
         temporary.replace(stage_root / asset.name)
+
+    def _verify_digest(self, release: dict[str, Any], asset: UpdateAsset, package: Path) -> None:
+        # 对照同 release 的 .sha256/.sha512 清单校验安装包完整性；缺失清单时告警放行。
+        digest = _peer_digest_asset(release, asset.name)
+        if digest is None:
+            self.logger.warning("请升级包缺少 sha256/sha512 校验清单，仅按体积做完整性检查: %s", asset.name)
+            return
+        algorithm, url = digest
+        expected = self._download_digest(url)
+        if not expected:
+            raise AppUpdateError(
+                "校验清单下载失败，已取消更新以保护安装安全",
+                error_code="UPDATE_VERIFY_FAILED",
+                phase="verify",
+            )
+        hasher = hashlib.new(algorithm)
+        with package.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_DOWNLOAD_CHUNK_BYTES), b""):
+                hasher.update(chunk)
+        actual = hasher.hexdigest()
+        if not actual.lower().startswith(expected.lower().strip()):
+            self.logger.error("安装包哈希不匹配：期望 %s=%s，实际 %s", algorithm, expected, actual)
+            package.unlink(missing_ok=True)
+            raise AppUpdateError(
+                "请升级包校验失败，已删除下载内容",
+                error_code="UPDATE_VERIFY_FAILED",
+                phase="verify",
+            )
+        self.logger.info("安装包 %s 校验通过（%s）", asset.name, algorithm)
+
+    def _download_digest(self, url: str) -> str | None:
+        # 下载并解析校验清单，兼容 "<hex>" 与 "<hex>  <文件名>" 两种格式。
+        if self.http is None:
+            return None
+        try:
+            response = self.http.get(url, follow_redirects=True)
+            response.raise_for_status()
+            text = response.text.strip()
+        except Exception as exc:
+            self.logger.warning("校验清单下载失败: %s", exc)
+            return None
+        digest = text.split()[0] if text.split() else ""
+        return digest if digest else None
 
     def _emit_progress(self, asset: UpdateAsset, received: int, *, phase: str = "download") -> None:
         # 上报下载进度事件；事件总线缺失时静默跳过。
@@ -485,7 +570,8 @@ def clear_stale_pending_update(data_path: Path | str) -> bool:
 
 
 def _win_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pending: str) -> str:
-    # 生成 Windows 单文件 aborted 引导脚本：等待进程退出后备份、替换并重启。
+    # 生成 Windows 单文件引导脚本：等待进程退出后备份、替换并重启。
+    # 任何一步失败都必须保证旧启动器可回滚，绝不允许出现"旧版已删、新版未就位"的状态。
     return "\r\n".join(
         [
             "@echo off",
@@ -497,28 +583,49 @@ def _win_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pendi
             "  timeout /t 1 /nobreak >nul",
             "  goto wait",
             ")",
+            "rem 先把旧程序移入备份；若移动失败（旧程序仍在原位）则放弃本次更新",
             f'move /y "{target}" "{backup}" >nul 2>&1',
+            f'if exist "{target}" goto abort',
+            "rem 放入新程序；失败则立刻从备份回滚旧程序",
             f'move /y "{new_binary}" "{target}" >nul 2>&1',
+            f'if not exist "{target}" goto restore',
             f'start "" "{target}"',
             f'del /f /q "{backup}" >nul 2>&1',
             f'del /f /q "{pending}" >nul 2>&1',
             "exit /b 0",
+            ":restore",
+            f'move /y "{backup}" "{target}" >nul 2>&1',
+            f'del /f /q "{pending}" >nul 2>&1',
+            "exit /b 1",
+            ":abort",
+            f'del /f /q "{pending}" >nul 2>&1',
+            "exit /b 1",
         ]
     ) + "\r\n"
 
 
 def _posix_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pending: str) -> str:
     # 生成 POSIX shell 引导脚本：等待进程退出后备份、替换并重启。
+    # 失败路径与 Windows 一致：任何一步失败都回滚旧程序并保留可用状态。
     import shlex
 
+    t, b, n, p = (shlex.quote(value) for value in (target, backup, new_binary, pending))
     return "\n".join(
         [
             "#!/bin/sh",
-            f'while kill -0 {pid} 2>/dev/null; do sleep 1; done',
-            f'mv {shlex.quote(target)} {shlex.quote(backup)}',
-            f'mv {shlex.quote(new_binary)} {shlex.quote(target)}',
-            f'rm -f {shlex.quote(backup)} {shlex.quote(pending)}',
-            f'{shlex.quote(target)} "$@" &',
+            "cleanup_abort() {",
+            f"  rm -f {p}",
+            "  exit 1",
+            "}",
+            f"while kill -0 {pid} 2>/dev/null; do sleep 1; done",
+            f"mv {t} {b} || cleanup_abort",
+            f"if ! mv {n} {t}; then",
+            f"  mv {b} {t}",
+            f"  rm -f {p}",
+            "  exit 1",
+            "fi",
+            f'"{t}" "$@" &',
+            f"rm -f {b} {p}",
         ]
     ) + "\n"
 

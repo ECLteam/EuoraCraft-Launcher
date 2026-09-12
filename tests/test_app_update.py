@@ -180,3 +180,78 @@ def test_clear_stale_pending_update_removes_marker_and_backup(tmp_path) -> None:
 
 def test_clear_stale_pending_update_returns_false_without_marker(tmp_path) -> None:
     assert clear_stale_pending_update(tmp_path / "data") is False
+
+def test_verify_digest_rejects_tampered_package(tmp_path) -> None:
+    import hashlib
+
+    applier = _applier(tmp_path)
+    payload = b"tamaged-launcher"
+    digest = hashlib.sha256(payload).hexdigest()
+    binary = tmp_path / "download" / "EuoraCraft-Launcher.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(payload + b"-tampered")
+
+    class FakeHttp:
+        def get(self, url, **kwargs):
+            class Resp:
+                text = f"{digest}  EuoraCraft-Launcher.exe"
+
+                def raise_for_status(self):
+                    return None
+
+            return Resp()
+
+    applier.http = FakeHttp()
+    release = _release("EuoraCraft-Launcher.exe", "EuoraCraft-Launcher.exe.sha256")
+
+    with pytest.raises(Exception) as exc_info:
+        applier.stage(release, downloaded=binary, stage_dir=tmp_path / "data" / "updates" / "1.4.2")
+    assert "校验失败" in str(exc_info.value)
+    assert not binary.exists()
+
+
+def test_verify_digest_accepts_matching_package(tmp_path) -> None:
+    import hashlib
+
+    applier = _applier(tmp_path)
+    payload = b"new-launcher"
+    digest = hashlib.sha256(payload).hexdigest()
+    binary = tmp_path / "download" / "EuoraCraft-Launcher.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(payload)
+    target = tmp_path / "app" / "EuoraCraft-Launcher.exe"
+    target.parent.mkdir(parents=True)
+
+    class FakeHttp:
+        def get(self, url, **kwargs):
+            class Resp:
+                text = digest
+
+                def raise_for_status(self):
+                    return None
+
+            return Resp()
+
+    applier.http = FakeHttp()
+    release = _release("EuoraCraft-Launcher.exe", "EuoraCraft-Launcher.exe.sha256")
+
+    staged, _ = applier.stage(release, downloaded=binary, target=target, stage_dir=tmp_path / "data" / "updates" / "1.4.2")
+    assert staged.version == "1.4.2"
+
+
+def test_bootstrap_script_rolls_back_on_failed_replace(tmp_path) -> None:
+    applier = _applier(tmp_path)
+    staged = StagedUpdate(
+        version="1.4.2",
+        new_binary=tmp_path / "new.exe",
+        target=tmp_path / "launcher.exe",
+        backup=tmp_path / "launcher.old.exe",
+    )
+
+    _, content = applier.bootstrap_script(staged, pid=1234)
+
+    # 替换失败时必须出现从备份回滚的分支，且不允许无条件删除备份
+    assert "goto restore" in content
+    assert content.index("goto restore") < content.index("del /f /q")
+    restore_line = [line for line in content.splitlines() if line.startswith(':restore') or ':restore' in line]
+    assert restore_line
