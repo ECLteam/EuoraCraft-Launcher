@@ -80,7 +80,7 @@ default_config: dict[str, Any] = {
         "theme": {
             "theme_id": "classic",
             "mode": "system",
-            "primary_color": "#6f8cff",
+            "primary_color": "#5B6FF5",
             "blur_amount": 18,
             "sidebar_collapsed": True,
             "navigation_mode": "sidebar",
