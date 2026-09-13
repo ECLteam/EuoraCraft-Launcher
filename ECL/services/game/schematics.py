@@ -308,7 +308,7 @@ class SchematicCoordinator:
     max_axis = 1024
     max_asset_blocks = 512
     max_asset_bytes = 24 * 1024 * 1024
-    asset_cache_version = 2
+    asset_cache_version = 3
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
@@ -528,8 +528,9 @@ class SchematicCoordinator:
                     references.add(item if ":" in item else f"{namespace}:{item}")
                 elif key == "texture" and item_key == "textures" and isinstance(item, dict):
                     for texture in item.values():
-                        if isinstance(texture, str) and not texture.startswith("#"):
-                            references.add(texture if ":" in texture else f"{namespace}:{texture}")
+                        texture_ref = texture.get("sprite") if isinstance(texture, Mapping) else texture
+                        if isinstance(texture_ref, str) and not texture_ref.startswith("#"):
+                            references.add(texture_ref if ":" in texture_ref else f"{namespace}:{texture_ref}")
                 else:
                     references.update(SchematicCoordinator._json_references(item, key, namespace))
         elif isinstance(value, list):

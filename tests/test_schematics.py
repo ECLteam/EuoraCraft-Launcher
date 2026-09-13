@@ -175,7 +175,12 @@ def test_schematic_assets_extracts_model_closure_and_texture(tmp_path: Path) -> 
         )
         archive.writestr(
             "assets/minecraft/models/block/stone.json",
-            json.dumps({"parent": "block/cube_all", "textures": {"all": "minecraft:block/stone"}}),
+            json.dumps(
+                {
+                    "parent": "block/cube_all",
+                    "textures": {"all": {"force_translucent": True, "sprite": "minecraft:block/stone"}},
+                }
+            ),
         )
         archive.writestr("assets/minecraft/models/block/cube_all.json", json.dumps({"parent": "block/block"}))
         archive.writestr("assets/minecraft/models/block/block.json", "{}")
