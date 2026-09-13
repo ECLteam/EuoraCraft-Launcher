@@ -88,6 +88,7 @@ from ECL.api.models import (
     ResourceToggleRequest,
     ResourceUpdateCheckRequest,
     ResourceUpdateRequest,
+    SchematicAssetsRequest,
     SchematicPreviewRequest,
     ScreenshotRequest,
     ScreenshotSaveRequest,
@@ -697,6 +698,16 @@ class WorkspaceHandlers(_FrontendState):
                 request.version_id,
                 request.resource_id,
                 request.version_isolation,
+            ),
+        )
+
+    @_ipc_handler("SCHEMATIC_ASSETS_FAILED")
+    async def game_schematic_assets(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            SchematicAssetsRequest,
+            body,
+            lambda request: self.game.schematic_assets(
+                request.game_path, request.version_id, request.blocks, request.version_isolation
             ),
         )
 

@@ -11,13 +11,16 @@
 #   - test_schematic_preview_invalid_content_fails_gracefully(tmp_path) -> None
 #   - test_litematic_preview_returns_palette_and_regions(tmp_path) -> None
 #   - test_litematic_preview_normalizes_negative_compound_size(tmp_path) -> None
+#   - test_schematic_assets_extracts_model_closure_and_texture(tmp_path) -> None
 #   - test_schem_preview_parses_sponge_layout(tmp_path) -> None
 #   - test_downsample_caps_voxel_count(tmp_path) -> None
 # ============================================================
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -136,7 +139,11 @@ def test_litematic_preview_returns_palette_and_regions(tmp_path: Path) -> None:
     assert region["name"] == "main"
     assert region["size"] == [4, 3, 3]
     assert region["position"] == [1, 2, 3]
-    assert region["palette"] == [(0, 0, 0), (124, 94, 70), (124, 124, 124)]
+    assert region["palette"] == [
+        {"name": "minecraft:air", "properties": {}, "color": [0, 0, 0]},
+        {"name": "minecraft:dirt", "properties": {}, "color": [124, 94, 70]},
+        {"name": "minecraft:stone", "properties": {}, "color": [124, 124, 124]},
+    ]
     assert len(region["indices"]) == 36
     assert region["indices"][0] == 1
     assert region["indices"][1] == 2
@@ -155,6 +162,30 @@ def test_litematic_preview_normalizes_negative_compound_size(tmp_path: Path) -> 
     assert region["size"] == [4, 3, 3]
     assert region["position"] == [0, 0, 0]
     assert len(region["indices"]) == 36
+
+
+def test_schematic_assets_extracts_model_closure_and_texture(tmp_path: Path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "demo"
+    version_path.mkdir(parents=True)
+    with ZipFile(version_path / "demo.jar", "w") as archive:
+        archive.writestr("assets/minecraft/blockstates/stone.json", json.dumps({"variants": {"": {"model": "block/stone"}}}))
+        archive.writestr(
+            "assets/minecraft/models/block/stone.json",
+            json.dumps({"parent": "block/cube_all", "textures": {"all": "minecraft:block/stone"}}),
+        )
+        archive.writestr("assets/minecraft/models/block/cube_all.json", json.dumps({"parent": "block/block"}))
+        archive.writestr("assets/minecraft/models/block/block.json", "{}")
+        archive.writestr("assets/minecraft/textures/block/stone.png", b"png")
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    bundle = harness.schematic_assets(game_path, "demo", ["minecraft:stone"], True)
+
+    assert "minecraft:stone" in bundle["blockstates"]
+    assert "minecraft:block/stone" in bundle["models"]
+    assert "minecraft:block/cube_all" in bundle["models"]
+    assert bundle["textures"]["minecraft:block/stone"] == "cG5n"
+    assert bundle["missingBlocks"] == []
 
 
 def test_schem_preview_parses_sponge_layout(tmp_path: Path) -> None:

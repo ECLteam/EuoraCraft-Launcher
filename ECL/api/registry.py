@@ -136,6 +136,7 @@ class IpcCommandRegistry:
         "game_resource_update_check",
         "game_resource_update",
         "game_schematic_preview",
+        "game_schematic_assets",
         "game_launch",
         "game_launch_cancel",
         "game_instance_stop",

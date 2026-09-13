@@ -13,11 +13,16 @@
 
 from __future__ import annotations
 
+import base64
 import gzip
+import hashlib
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
+from ECL.utils import atomic_write_text
 from ECL.utils.nbt import Compound, IntArray, List, load
 
 from .base import GameServiceError
@@ -195,8 +200,26 @@ def _read_litematica_vector(value: Any, field_name: str) -> list[int]:
     return [int(item) for item in coordinates]
 
 
+def _block_palette_entry(value: Any) -> dict[str, Any]:
+    """
+    将 NBT 方块状态转换为前端纹理渲染所需的稳定色板条目。
+
+    :param value: ``BlockStatePalette`` 中的单个复合标签
+    :return: 包含方块标识、状态属性和颜色回退值的字典
+    """
+    entry = value if isinstance(value, Mapping) else {}
+    name = str(entry.get("Name") or "minecraft:air")
+    properties_tag = entry.get("Properties")
+    properties = (
+        {str(key): str(item) for key, item in properties_tag.items()}
+        if isinstance(properties_tag, Mapping)
+        else {}
+    )
+    return {"name": name, "properties": properties, "color": list(_block_color(name))}
+
+
 class LitematicaRegion:
-    __slots__ = ("block_colors", "indices", "mask_bits", "name", "position", "size")
+    __slots__ = ("block_palette", "indices", "mask_bits", "name", "position", "size")
 
     def __init__(self, name: str, region: Compound) -> None:
         self.name = name
@@ -210,11 +233,9 @@ class LitematicaRegion:
             position if size > 0 else position + size + 1 for position, size in zip(raw_position, raw_size, strict=True)
         ]
         palette_tag = region.get("BlockStatePalette") or List()
-        self.block_colors = [
-            _block_color(str(item.get("Name") or "air")) for item in palette_tag if isinstance(item, dict)
-        ]
+        self.block_palette = [_block_palette_entry(item) for item in palette_tag]
         # Minecraft 调色板位宽最小为 4，超过位宽后再按调色板大小进位，保证与 BlockStates 编码一致。
-        self.mask_bits = max(4, (max(1, len(self.block_colors)) - 1).bit_length())
+        self.mask_bits = max(4, (max(1, len(self.block_palette)) - 1).bit_length())
         self.indices = self._decode_indices(region.get("BlockStates") or IntArray())
 
     def _decode_indices(self, storage: IntArray) -> list[int]:
@@ -249,7 +270,7 @@ def _decode_litematic(root: Compound) -> list[dict[str, Any]]:
                 "position": region_obj.position,
                 "indices": region_obj.indices,
                 "maskBits": region_obj.mask_bits,
-                "palette": region_obj.block_colors,
+                "palette": region_obj.block_palette,
             }
         )
     return result
@@ -262,9 +283,9 @@ def _decode_schematic(root: Compound, size_tag, blocks_tag) -> dict[str, Any]:
     if not size or len(size) != 3 or not blocks:
         raise GameServiceError("原理图缺少尺寸或方块数据", "SCHEMATIC_INVALID")
     palette = root.get("Palette") or Compound()
-    color_map = [_block_color("air")] * (len(palette) + 1)
+    color_map: list[dict[str, Any]] = [_block_palette_entry({"Name": "minecraft:air"})] * (len(palette) + 1)
     for key, value in palette.items():
-        color_map[int(value)] = _block_color(str(key))
+        color_map[int(value)] = _block_palette_entry({"Name": str(key)})
     indices = [0] * len(blocks)
     for index, value in enumerate(blocks):
         indices[index] = int(value)
@@ -281,6 +302,8 @@ class SchematicCoordinator:
 
     max_voxels = 262144
     max_axis = 1024
+    max_asset_blocks = 512
+    max_asset_bytes = 24 * 1024 * 1024
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
@@ -331,6 +354,174 @@ class SchematicCoordinator:
                 ],
             }
         raise GameServiceError("无法识别的原理图格式", "SCHEMATIC_INVALID")
+
+    def schematic_assets(
+        self, game_path: Any, version_id: Any, blocks: list[str], version_isolation: Any = False
+    ) -> dict[str, Any]:
+        """
+        从用户本机游戏 Jar 按需读取原理图涉及的原版方块资源。
+
+        提取结果仅包含请求色板使用的 blockstate、模型闭包和 PNG 纹理，并缓存到
+        启动器数据目录；不会随程序分发或写入游戏目录。无法解析的模组方块会列入
+        ``missingBlocks``，由前端使用回退渲染。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 当前实例版本标识
+        :param blocks: 原理图调色板中的方块命名空间标识
+        :param version_isolation: 实例隔离状态
+        :return: 可直接传给 WebGL 渲染器的资源包
+        :raises GameServiceError: 版本资源不存在、请求非法或 Jar 损坏时抛出
+        """
+        requested = self._normalize_asset_blocks(blocks)
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        jar_path = self._resolve_asset_jar(target.game_path, target.version_id)
+        cache_path = self._asset_cache_path(jar_path, requested)
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cached = None
+        if isinstance(cached, dict):
+            return cached
+        bundle = self._extract_assets(jar_path, requested)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(cache_path, json.dumps(bundle, ensure_ascii=False, separators=(",", ":")))
+        except OSError:
+            self.logger.warning("原理图资源缓存写入失败，将在下次预览重新提取")
+        return bundle
+
+    def _normalize_asset_blocks(self, blocks: list[str]) -> list[str]:
+        """
+        校验方块资源标识，阻止调用方构造 Jar 内路径穿越。
+
+        :param blocks: 前端提供的方块标识列表
+        :return: 去重、排序后的合法标识列表
+        :raises GameServiceError: 标识数量或格式不符合约束时抛出
+        """
+        if len(blocks) > self.max_asset_blocks:
+            raise GameServiceError("原理图方块类型过多", "SCHEMATIC_ASSETS_TOO_LARGE")
+        normalized: set[str] = set()
+        for block in blocks:
+            if not isinstance(block, str) or ":" not in block:
+                raise GameServiceError("原理图方块标识无效", "SCHEMATIC_ASSETS_INVALID")
+            namespace, name = block.split(":", 1)
+            if not namespace.replace("_", "").replace("-", "").isalnum() or not name or any(
+                part in {"", ".", ".."} for part in name.split("/")
+            ):
+                raise GameServiceError("原理图方块标识无效", "SCHEMATIC_ASSETS_INVALID")
+            normalized.add(f"{namespace}:{name}")
+        if not normalized:
+            raise GameServiceError("原理图没有可渲染方块", "SCHEMATIC_ASSETS_INVALID")
+        return sorted(normalized)
+
+    def _resolve_asset_jar(self, game_path: Path, version_id: str) -> Path:
+        """
+        沿版本继承链定位携带原版资源的客户端 Jar。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 起始版本标识
+        :return: 可读取 ``assets/minecraft`` 的 Jar 路径
+        :raises GameServiceError: 找不到 Jar 或继承链损坏时抛出
+        """
+        current = version_id
+        visited: set[str] = set()
+        for _ in range(16):
+            if current in visited:
+                break
+            visited.add(current)
+            version_dir = game_path / "versions" / current
+            jar_path = version_dir / f"{current}.jar"
+            if jar_path.is_file():
+                return jar_path
+            try:
+                version_json = json.loads((version_dir / f"{current}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                break
+            parent = version_json.get("inheritsFrom") if isinstance(version_json, dict) else None
+            if not isinstance(parent, str) or not parent:
+                break
+            current = parent
+        raise GameServiceError("未找到当前版本的游戏资源 Jar，请先完成游戏安装", "SCHEMATIC_ASSETS_NOT_FOUND")
+
+    def _asset_cache_path(self, jar_path: Path, blocks: list[str]) -> Path:
+        stat = jar_path.stat()
+        digest = hashlib.sha256(f"{jar_path}:{stat.st_mtime_ns}:{stat.st_size}:{','.join(blocks)}".encode()).hexdigest()
+        return self._data_path / "schematic-assets" / f"{digest}.json"
+
+    def _extract_assets(self, jar_path: Path, blocks: list[str]) -> dict[str, Any]:
+        """读取 Jar 中的 JSON 与 PNG 资源，并限制总输出体积。"""
+        blockstates: dict[str, Any] = {}
+        models: dict[str, Any] = {}
+        textures: dict[str, str] = {}
+        missing: set[str] = set()
+        pending_models: set[str] = set()
+        pending_textures: set[str] = set()
+        total_bytes = 0
+        try:
+            with ZipFile(jar_path) as archive:
+                for block in blocks:
+                    namespace, name = block.split(":", 1)
+                    payload = self._read_json_asset(archive, namespace, f"blockstates/{name}.json")
+                    if payload is None:
+                        missing.add(block)
+                        continue
+                    blockstates[block] = payload
+                    pending_models.update(self._json_references(payload, "model", namespace))
+                while pending_models:
+                    model = pending_models.pop()
+                    if model in models:
+                        continue
+                    namespace, name = model.split(":", 1)
+                    payload = self._read_json_asset(archive, namespace, f"models/{name}.json")
+                    if payload is None:
+                        continue
+                    models[model] = payload
+                    pending_models.update(self._json_references(payload, "parent", namespace))
+                    pending_textures.update(self._json_references(payload, "texture", namespace))
+                for texture in pending_textures:
+                    namespace, name = texture.split(":", 1)
+                    try:
+                        data = archive.read(f"assets/{namespace}/textures/{name}.png")
+                    except KeyError:
+                        continue
+                    total_bytes += len(data)
+                    if total_bytes > self.max_asset_bytes:
+                        raise GameServiceError("原理图纹理资源过大", "SCHEMATIC_ASSETS_TOO_LARGE")
+                    textures[texture] = base64.b64encode(data).decode("ascii")
+        except (BadZipFile, OSError) as exc:
+            raise GameServiceError("游戏资源 Jar 无法读取", "SCHEMATIC_ASSETS_INVALID") from exc
+        return {
+            "blockstates": blockstates,
+            "models": models,
+            "textures": textures,
+            "missingBlocks": sorted(missing),
+        }
+
+    @staticmethod
+    def _read_json_asset(archive: ZipFile, namespace: str, path: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(archive.read(f"assets/{namespace}/{path}").decode("utf-8"))
+        except (KeyError, UnicodeDecodeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _json_references(value: Any, key: str, namespace: str) -> set[str]:
+        references: set[str] = set()
+        if isinstance(value, dict):
+            for item_key, item in value.items():
+                if item_key == key and isinstance(item, str) and not item.startswith("#"):
+                    references.add(item if ":" in item else f"{namespace}:{item}")
+                elif key == "texture" and item_key == "textures" and isinstance(item, dict):
+                    for texture in item.values():
+                        if isinstance(texture, str) and not texture.startswith("#"):
+                            references.add(texture if ":" in texture else f"{namespace}:{texture}")
+                else:
+                    references.update(SchematicCoordinator._json_references(item, key, namespace))
+        elif isinstance(value, list):
+            for item in value:
+                references.update(SchematicCoordinator._json_references(item, key, namespace))
+        return references
 
     @staticmethod
     def _bounding_size(regions: list[dict[str, Any]]) -> list[int]:
