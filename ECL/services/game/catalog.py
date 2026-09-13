@@ -19,11 +19,11 @@ import httpx
 
 from .base import GameServiceError, _GameState
 
-_FABRIC_API_PROJECT = "fabric-api"
-_FABRIC_API_TIMEOUT_SECONDS = 10
-
 
 class CatalogCoordinator(_GameState):
+    fabric_api_project = "fabric-api"
+    fabric_api_timeout_seconds = 10
+
     @staticmethod
     def _catalog_item(item: dict[str, Any], version_type: str) -> dict[str, Any]:
         return {
@@ -120,10 +120,10 @@ class CatalogCoordinator(_GameState):
             "loaders": '["fabric"]',
         }
         response = httpx.get(
-            f"https://api.modrinth.com/v2/project/{_FABRIC_API_PROJECT}/version",
+            f"https://api.modrinth.com/v2/project/{self.fabric_api_project}/version",
             params=params,
             headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
-            timeout=_FABRIC_API_TIMEOUT_SECONDS,
+            timeout=self.fabric_api_timeout_seconds,
         )
         response.raise_for_status()
         versions = response.json()

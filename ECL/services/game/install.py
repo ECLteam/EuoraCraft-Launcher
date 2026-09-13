@@ -24,11 +24,11 @@ from anyio import to_thread
 
 from .base import GameServiceError, _GameState
 
-_FABRIC_API_PROJECT = "fabric-api"
-_FABRIC_API_TIMEOUT_SECONDS = 10
-
 
 class InstallCoordinator(_GameState):
+    fabric_api_project = "fabric-api"
+    fabric_api_timeout_seconds = 10
+
     def _emit_install_progress(
         self,
         task_id: str,
@@ -287,18 +287,18 @@ class InstallCoordinator(_GameState):
                 self._active_downloads.pop(task_id, None)
                 self._install_tasks.pop(task_id, None)
 
-    @staticmethod
-    def _resolve_fabric_api(game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
+    @classmethod
+    def _resolve_fabric_api(cls, game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
         # 解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
         params = {
             "game_versions": json.dumps([game_version]),
             "loaders": json.dumps(["fabric"]),
         }
         response = httpx.get(
-            f"https://api.modrinth.com/v2/project/{_FABRIC_API_PROJECT}/version",
+            f"https://api.modrinth.com/v2/project/{cls.fabric_api_project}/version",
             params=params,
             headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
-            timeout=_FABRIC_API_TIMEOUT_SECONDS,
+            timeout=cls.fabric_api_timeout_seconds,
         )
         response.raise_for_status()
         versions = response.json()
