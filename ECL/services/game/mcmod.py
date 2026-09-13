@@ -24,10 +24,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-_MCMOD_BASE_URL = "https://www.mcmod.cn/class/{}.html"
-# 中文搜索转英文关键词时过滤的常见停用词
-_STOPWORDS = {"the", "of", "for", "and", "with", "mod", "mods", "forge", "fabric", "quilt", "neoforge"}
-
 
 class McmodTranslator:
     """
@@ -37,6 +33,9 @@ class McmodTranslator:
     三源生成），构建 Modrinth/CurseForge slug 索引，提供英文名转中文名、中文关键词
     转英文搜索词与百科页 URL 生成能力。数据文件缺失时所有查询返回空结果。
     """
+
+    mcmod_base_url = "https://www.mcmod.cn/class/{}.html"
+    stopwords = {"the", "of", "for", "and", "with", "mod", "mods", "forge", "fabric", "quilt", "neoforge"}
 
     def __init__(self, data_path: Path | None = None) -> None:
         """
@@ -146,7 +145,11 @@ class McmodTranslator:
     def _entry_english(mod: dict[str, Any]) -> str:
         # 提取单条译名条目的英文搜索词，优先英文名，其次 Modrinth/CurseForge slug。
         for source in (str(mod.get("english") or ""), str(mod.get("mr") or ""), str(mod.get("cf") or "")):
-            words = [w for w in re.split(r"[\s\-_]+", source) if w and w.casefold() not in _STOPWORDS and not w.isdigit()]
+            words = [
+                word
+                for word in re.split(r"[\s\-_]+", source)
+                if word and word.casefold() not in McmodTranslator.stopwords and not word.isdigit()
+            ]
             if words:
                 return " ".join(words)
         return ""
@@ -171,7 +174,7 @@ class McmodTranslator:
             for source in (str(mod.get("english") or ""), str(mod.get("mr") or ""), str(mod.get("cf") or "")):
                 for word in re.split(r"[\s\-_]+", source):
                     word = word.strip().casefold()
-                    if word and word not in _STOPWORDS and not word.isdigit():
+                    if word and word not in self.stopwords and not word.isdigit():
                         words.append(word)
         top = [word for word, _ in Counter(words).most_common(3)]
         return " ".join(top)
@@ -184,7 +187,7 @@ class McmodTranslator:
         :param mcmod_id: MC百科 class id
         :return: 百科详情页地址
         """
-        return _MCMOD_BASE_URL.format(int(mcmod_id))
+        return McmodTranslator.mcmod_base_url.format(int(mcmod_id))
 
     def to_wiki_info(self, mod: dict[str, Any]) -> dict[str, str]:
         """

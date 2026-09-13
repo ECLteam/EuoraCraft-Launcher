@@ -27,9 +27,6 @@ from uuid import uuid4
 from .base import GameServiceError, _GameState
 from .resources import ResourceCoordinator
 
-# 单个模组图标允许读取的最大字节数，超出则放弃以避免占用过多内存
-_MAX_ICON_BYTES = 1024 * 1024
-
 
 def _icon_mime(filename: str) -> str:
     # 依据扩展名推断图标的 MIME 类型，未知时回退为 PNG。
@@ -48,6 +45,8 @@ class ModCoordinator(_GameState):
 
     所有写操作都限制在目标 ``mods`` 目录内，并使用临时文件完成复制。
     """
+
+    max_icon_bytes = 1024 * 1024
 
     def list_mods(self, game_path: Any) -> list[dict[str, Any]]:
         """
@@ -177,7 +176,7 @@ class ModCoordinator(_GameState):
                 for name in dict.fromkeys(candidates):
                     entry_name = name.lstrip("/")
                     entry = archive.getinfo(entry_name) if entry_name in names else None
-                    if entry is None or entry.file_size <= 0 or entry.file_size > _MAX_ICON_BYTES:
+                    if entry is None or entry.file_size <= 0 or entry.file_size > self.max_icon_bytes:
                         continue
                     data = archive.read(entry_name)
                     return f"data:{_icon_mime(entry_name)};base64,{base64.b64encode(data).decode('ascii')}"
