@@ -53,25 +53,6 @@ from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
-_NODE_LIST_URL = "https://api.qomicex.top/api/nodes"
-_NODE_UA = "ECL"
-_DEFAULT_NODES = [
-    "tcp://public.easytier.cn:11010",
-    "tcp://8.162.7.222:11010",
-    "tcp://103.239.245.69:38867",
-    "tcp://mc.lenmei233.top:31010",
-]
-_EASYTIER_SCHEMES = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
-_NODE_FETCH_TIMEOUT_SECONDS = 10.0
-_NODE_CACHE_TTL_SECONDS = 30 * 60.0
-_MAX_AGGREGATE_WORKERS = 8
-_PLAYER_LIST_FETCH_TIMEOUT_SECONDS = 5
-_EXTENSION_REQUEST_TIMEOUT_SECONDS = 5
-_MAX_STATUS_PACKET_BYTES = 1_048_576
-_MAX_TCP_PORT = 65535
-_STATUS_PROBE_TIMEOUT_SECONDS = 0.5
-_NAT_PROBE_TIMEOUT_SECONDS = 25.0
-_NAT_PROBE_INTERVAL_SECONDS = 0.25
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
@@ -95,13 +76,33 @@ class ConnectorService:
     管理房间生命周期、玩家列表和网络连接状态。
     """
 
+    node_list_url = "https://api.qomicex.top/api/nodes"
+    node_user_agent = "ECL"
+    default_nodes = [
+        "tcp://public.easytier.cn:11010",
+        "tcp://8.162.7.222:11010",
+        "tcp://103.239.245.69:38867",
+        "tcp://mc.lenmei233.top:31010",
+    ]
+    easytier_schemes = ("tcp://", "udp://", "quic://", "faketcp://", "ws://", "wss://")
+    node_fetch_timeout_seconds = 10.0
+    node_cache_ttl_seconds = 30 * 60.0
+    max_aggregate_workers = 8
+    player_list_fetch_timeout_seconds = 5
+    extension_request_timeout_seconds = 5
+    max_status_packet_bytes = 1_048_576
+    max_tcp_port = 65535
+    status_probe_timeout_seconds = 0.5
+    nat_probe_timeout_seconds = 25.0
+    nat_probe_interval_seconds = 0.25
+
     def __init__(
         self,
         launcher_info: str = "EuoraCraft-Launcher",
         log_callback: Callable[[str, str], None] | None = None,
         player_name: str | None = None,
         http_client: httpx.Client | None = None,
-        node_cache_ttl: float = _NODE_CACHE_TTL_SECONDS,
+        node_cache_ttl: float | None = None,
         extensions: ConnectorExtensionRegistry | None = None,
         local_player_icon_provider: Callable[[], str | None] | None = None,
     ) -> None:
@@ -129,8 +130,8 @@ class ConnectorService:
         self._easy_tier_node: Any = None  # easytier_pyo3.Node
         self._client: Any = None  # AsyncFloroldingClient
         self._players: list[dict[str, Any]] = []
-        self._nodes: list[str] = list(_DEFAULT_NODES)
-        self._node_cache_ttl = max(0.0, node_cache_ttl)
+        self._nodes: list[str] = list(self.default_nodes)
+        self._node_cache_ttl = max(0.0, self.node_cache_ttl_seconds if node_cache_ttl is None else node_cache_ttl)
         self._node_cache_refreshed_at: float | None = None
         self._node_cache_lock = RLock()
         self._node_refreshing = False
@@ -208,7 +209,7 @@ class ConnectorService:
             cached_nodes = list(self._nodes) if self._node_cache_refreshed_at is not None else []
             if self._node_refreshing:
                 # 另一个线程正在刷新：直接返回现有缓存，避免持锁等待网络。
-                return cached_nodes or list(_DEFAULT_NODES)
+                return cached_nodes or list(self.default_nodes)
             self._node_refreshing = True
 
         try:
@@ -222,12 +223,12 @@ class ConnectorService:
         向节点服务刷新缓存；失败时保留旧缓存或使用内置默认节点。
         """
         if self._http is None:
-            return self._remember_nodes(cached_nodes or list(_DEFAULT_NODES))
+            return self._remember_nodes(cached_nodes or list(self.default_nodes))
         try:
             response = self._http.get(
-                _NODE_LIST_URL,
-                headers={"User-Agent": _NODE_UA},
-                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
+                self.node_list_url,
+                headers={"User-Agent": self.node_user_agent},
+                timeout=self.node_fetch_timeout_seconds,
             )
             response.raise_for_status()
             items = response.json()
@@ -248,14 +249,14 @@ class ConnectorService:
                     aggregate_urls.append(url)
 
             if aggregate_urls:
-                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), _MAX_AGGREGATE_WORKERS)) as pool:
+                with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), self.max_aggregate_workers)) as pool:
                     for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
                         nodes.extend(resolved)
-            resolved = list(dict.fromkeys(nodes)) or list(_DEFAULT_NODES)
+            resolved = list(dict.fromkeys(nodes)) or list(self.default_nodes)
             logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
             return self._remember_nodes(resolved)
         except Exception as exc:
-            fallback = cached_nodes or list(_DEFAULT_NODES)
+            fallback = cached_nodes or list(self.default_nodes)
             logger.warning(
                 "拉取联机节点列表失败，使用%s: %s",
                 "内存中的旧缓存" if cached_nodes else "默认节点",
@@ -268,8 +269,8 @@ class ConnectorService:
         try:
             response = self._http.get(
                 url,
-                headers={"User-Agent": _NODE_UA},
-                timeout=_NODE_FETCH_TIMEOUT_SECONDS,
+                headers={"User-Agent": self.node_user_agent},
+                timeout=self.node_fetch_timeout_seconds,
             )
             response.raise_for_status()
             text = response.text.strip()
@@ -295,7 +296,7 @@ class ConnectorService:
     @staticmethod
     def _is_easytier_peer(value: str) -> bool:
         # 判断一个字符串是否为 easytier 原生支持的节点 URI。
-        return value.startswith(_EASYTIER_SCHEMES)
+        return value.startswith(ConnectorService.easytier_schemes)
 
     @staticmethod
     def _to_frontend_player(player: dict[str, Any]) -> dict[str, Any]:
@@ -323,7 +324,7 @@ class ConnectorService:
                     status, body = asyncio.run_coroutine_threadsafe(
                         self._client.send_request("c:player_profiles_list", b""),
                         loop,
-                    ).result(timeout=_PLAYER_LIST_FETCH_TIMEOUT_SECONDS)
+                    ).result(timeout=self.player_list_fetch_timeout_seconds)
                     if status == 0:
                         raw = json.loads(body.decode("utf-8"))
                         return [self._to_frontend_player(p) for p in raw if isinstance(p, dict)]
@@ -382,7 +383,7 @@ class ConnectorService:
         if loop is None or loop.is_closed() or not loop.is_running():
             raise RuntimeError("联机协议客户端尚未就绪")
         return asyncio.run_coroutine_threadsafe(client.send_request(protocol, body), loop).result(
-            timeout=_EXTENSION_REQUEST_TIMEOUT_SECONDS
+            timeout=self.extension_request_timeout_seconds
         )
 
     def _extension_protocol_handlers(self) -> dict[str, Callable[..., Any]]:
@@ -460,13 +461,13 @@ class ConnectorService:
         try:
             if owns_node:
                 node.start()
-            while monotonic() - started_at < _NAT_PROBE_TIMEOUT_SECONDS:
+            while monotonic() - started_at < self.nat_probe_timeout_seconds:
                 node_info = node.node_info()
                 result = self._nat_result_from_stun_info(node_info.get("stun_info"))
                 if result is not None:
                     latest_result = result
                     if result["detailType"] == "unknown":
-                        sleep(_NAT_PROBE_INTERVAL_SECONDS)
+                        sleep(self.nat_probe_interval_seconds)
                         continue
                     logger.info(
                         "NAT 检测完成: detail=%s, public=%s:%s-%s, ipv6=%s",
@@ -477,7 +478,7 @@ class ConnectorService:
                         result["supportsIpv6"],
                     )
                     return result
-                sleep(_NAT_PROBE_INTERVAL_SECONDS)
+                sleep(self.nat_probe_interval_seconds)
             logger.warning("NAT 检测超时，未取得完整的 EasyTier STUN 类型")
         except Exception:
             logger.warning("NAT 检测失败", exc_info=True)
@@ -548,7 +549,7 @@ class ConnectorService:
                 port = int(value)
             except (TypeError, ValueError):
                 return None
-            return port if 0 < port <= _MAX_TCP_PORT else None
+            return port if 0 < port <= ConnectorService.max_tcp_port else None
 
         public_port = valid_port(stun_info.get("min_port"))
         public_port_end = valid_port(stun_info.get("max_port"))
@@ -897,23 +898,24 @@ class ConnectorService:
             and connection.status == psutil.CONN_LISTEN
             and connection.laddr
             and isinstance(connection.laddr.port, int)
-            and 0 < connection.laddr.port <= _MAX_TCP_PORT
+            and 0 < connection.laddr.port <= ConnectorService.max_tcp_port
         }
         return sorted(ports)
 
     @staticmethod
-    def _is_minecraft_server(port: int, timeout: float = _STATUS_PROBE_TIMEOUT_SECONDS) -> bool:
+    def _is_minecraft_server(port: int, timeout: float | None = None) -> bool:
         # 通过 Minecraft Status 协议确认本地端口的服务类型。
+        effective_timeout = ConnectorService.status_probe_timeout_seconds if timeout is None else timeout
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=timeout) as connection:
-                connection.settimeout(timeout)
+            with socket.create_connection(("127.0.0.1", port), timeout=effective_timeout) as connection:
+                connection.settimeout(effective_timeout)
                 handshake = b"\x00" + ConnectorService._encode_varint(758) + ConnectorService._encode_varint(9)
                 handshake += b"localhost" + struct.pack(">H", port) + b"\x01"
                 connection.sendall(ConnectorService._encode_varint(len(handshake)) + handshake)
                 connection.sendall(b"\x01\x00")
 
                 packet_length = ConnectorService._read_varint(connection)
-                if packet_length is None or not 1 <= packet_length <= _MAX_STATUS_PACKET_BYTES:
+                if packet_length is None or not 1 <= packet_length <= ConnectorService.max_status_packet_bytes:
                     return False
                 packet = ConnectorService._read_exact(connection, packet_length)
                 if packet is None:

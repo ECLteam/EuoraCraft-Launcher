@@ -37,7 +37,7 @@ import pytest
 
 pytest.importorskip("easytier_pyo3")
 
-from ECL.services.connector import _DEFAULT_NODES, ConnectorService
+from ECL.services.connector import ConnectorService
 
 
 class _FailingHttpClient:
@@ -91,9 +91,9 @@ def test_fetch_nodes_falls_back_to_multiple_defaults_when_api_fails() -> None:
 
     nodes = service.fetch_nodes(force=True)
 
-    assert nodes == list(_DEFAULT_NODES)
-    assert len(_DEFAULT_NODES) > 1, "默认节点必须保留多节点兜底，避免单点 DNS 失效导致无法联机"
-    assert any(url.startswith("tcp://") for url in _DEFAULT_NODES)
+    assert nodes == list(ConnectorService.default_nodes)
+    assert len(ConnectorService.default_nodes) > 1, "默认节点必须保留多节点兜底，避免单点 DNS 失效导致无法联机"
+    assert any(url.startswith("tcp://") for url in ConnectorService.default_nodes)
 
 
 def test_nat_result_maps_easytier_stun_snapshot() -> None:
