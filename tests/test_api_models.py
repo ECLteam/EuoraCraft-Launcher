@@ -11,6 +11,7 @@
 #   - test_launch_request_accepts_memory_lock_and_priority_options() -> None
 #   - test_launch_request_rejects_invalid_process_priority() -> None
 #   - test_normalize_process_priority_falls_back_to_normal() -> None
+#   - test_schematic_preview_accepts_frontend_payload_without_enabled() -> None
 #   - test_request_schema_contains_every_consolidated_typed_command() -> None
 #   - test_invalid_ipc_payload_uses_stable_error_code() -> None
 #   - test_version_stats_ipc_validates_and_forwards_target() -> None
@@ -29,10 +30,12 @@ from ECL.api.models import (
     InstallRequest,
     LaunchRequest,
     LoaderCatalogRequest,
+    SchematicPreviewRequest,
     SettingsQuery,
     WardrobeImportRequest,
     request_schemas,
 )
+from ECL.api.workspace import WorkspaceHandlers
 
 
 def test_request_models_accept_valid_payloads() -> None:
@@ -95,6 +98,35 @@ def test_normalize_process_priority_falls_back_to_normal() -> None:
     assert _GameState._normalize_process_priority("unknown") == "normal"
     assert _GameState._normalize_process_priority(None) == "normal"
     assert _GameState._normalize_process_priority("") == "normal"
+
+
+@pytest.mark.asyncio
+async def test_schematic_preview_accepts_frontend_payload_without_enabled() -> None:
+    handler = object.__new__(WorkspaceHandlers)
+    calls = []
+    handler.game = SimpleNamespace(
+        resolve_version_isolation=lambda _game_path, _version_id: True,
+        schematic_preview=lambda game_path, version_id, resource_id, version_isolation: calls.append(
+            (game_path, version_id, resource_id, version_isolation)
+        )
+        or {"type": "schem", "size": [1, 1, 1], "regions": []},
+    )
+
+    response = await handler.game_schematic_preview(
+        {
+            "game_path": ".minecraft",
+            "version_id": "1.21.1",
+            "resource_type": "schematic",
+            "resource_id": "build.schem",
+        }
+    )
+
+    assert response["success"] is True
+    assert calls[0][1:] == ("1.21.1", "build.schem", True)
+    with pytest.raises(ValidationError):
+        SchematicPreviewRequest.model_validate(
+            {"game_path": ".minecraft", "version_id": "1.21.1", "resource_type": "schematic"}
+        )
 
 
 def test_request_schema_contains_every_consolidated_typed_command() -> None:

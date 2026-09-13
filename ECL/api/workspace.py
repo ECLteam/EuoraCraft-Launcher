@@ -88,6 +88,7 @@ from ECL.api.models import (
     ResourceToggleRequest,
     ResourceUpdateCheckRequest,
     ResourceUpdateRequest,
+    SchematicPreviewRequest,
     ScreenshotRequest,
     ScreenshotSaveRequest,
     ScreenshotThumbnailRequest,
@@ -689,7 +690,7 @@ class WorkspaceHandlers(_FrontendState):
     @_ipc_handler("SCHEMATIC_PREVIEW_FAILED")
     async def game_schematic_preview(self, body: dict[str, Any]) -> ApiResponse:
         return await self._validated_call(
-            ResourceToggleRequest,
+            SchematicPreviewRequest,
             body,
             lambda request: self.game.schematic_preview(
                 request.game_path,

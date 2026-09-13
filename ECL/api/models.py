@@ -83,6 +83,7 @@
 #   - class ResourceQuery
 #   - class ResourceInstallRequest
 #   - class ResourceToggleRequest
+#   - class SchematicPreviewRequest
 #   - class ResourceDeleteRequest
 #   - class ResourceManifestExportRequest
 #   - class ResourceSearchRequest
@@ -580,6 +581,11 @@ class ResourceInstallRequest(ResourceQuery):
 class ResourceToggleRequest(ResourceQuery):
     resource_id: str = Field(min_length=1, max_length=255)
     enabled: bool
+
+
+class SchematicPreviewRequest(ResourceQuery):
+    resource_type: Literal["schematic"]
+    resource_id: str = Field(min_length=1, max_length=255)
 
 
 class ResourceDeleteRequest(ResourceQuery):
