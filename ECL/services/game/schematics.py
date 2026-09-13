@@ -23,141 +23,141 @@ from .base import GameServiceError
 from .resources import RESOURCE_DIRECTORIES
 from .workspace import resolve_relative_id
 
-# 面向 3D 预览返回的体素上限，超出部分按轴向均匀降采样以保证载荷与渲染可控。
-_MAX_VOXELS = 262144
-# 每个方向允许的独立轴长上限；超出视为文件异常。
-_MAX_AXIS = 1024
-# 内置调色板之外的块使用统一的占位色，避免每个未知块配色不一致。
-_UNKNOWN_COLOR = (140, 140, 140)
 
-# 常用方块的近似显示色（R, G, B）。用于原理图体素着色的静态近似表，
-# 不追求与原版材质逐像素一致，仅保证预览可辨认主要结构。
-_BLOCK_COLORS: dict[str, tuple[int, int, int]] = {
-    "air": (0, 0, 0),
-    "cave_air": (0, 0, 0),
-    "void_air": (0, 0, 0),
-    "stone": (124, 124, 124),
-    "cobblestone": (128, 128, 136),
-    "gravel": (136, 124, 118),
-    "dirt": (124, 94, 70),
-    "grass_block": (86, 148, 74),
-    "sand": (219, 211, 164),
-    "sandstone": (212, 199, 146),
-    "red_sand": (192, 130, 74),
-    "clay": (156, 168, 182),
-    "granite": (148, 118, 108),
-    "diorite": (178, 178, 178),
-    "andesite": (140, 140, 140),
-    "deepslate": (75, 73, 78),
-    "bedrock": (62, 60, 60),
-    "water": (54, 101, 210),
-    "lava": (214, 108, 36),
-    "obsidian": (24, 16, 32),
-    "snow_block": (238, 240, 242),
-    "ice": (150, 194, 230),
-    "packed_ice": (139, 168, 190),
-    "coal_ore": (110, 110, 110),
-    "iron_ore": (142, 120, 104),
-    "gold_ore": (150, 140, 70),
-    "diamond_ore": (128, 200, 196),
-    "emerald_ore": (90, 190, 128),
-    "redstone_ore": (150, 70, 70),
-    "lapis_ore": (70, 100, 190),
-    "iron_block": (212, 212, 216),
-    "gold_block": (246, 198, 62),
-    "diamond_block": (104, 224, 214),
-    "emerald_block": (64, 202, 118),
-    "redstone_block": (168, 42, 34),
-    "lapis_block": (50, 84, 200),
-    "coal_block": (46, 46, 48),
-    "oak_log": (94, 74, 44),
-    "spruce_log": (62, 46, 32),
-    "birch_log": (208, 196, 164),
-    "jungle_log": (94, 76, 40),
-    "acacia_log": (106, 66, 44),
-    "dark_oak_log": (54, 42, 30),
-    "oak_planks": (178, 148, 96),
-    "spruce_planks": (140, 112, 76),
-    "birch_planks": (206, 192, 156),
-    "jungle_planks": (150, 114, 74),
-    "acacia_planks": (176, 132, 76),
-    "dark_oak_planks": (104, 82, 54),
-    "oak_leaves": (74, 128, 62),
-    "spruce_leaves": (54, 104, 54),
-    "birch_leaves": (118, 158, 80),
-    "jungle_leaves": (78, 122, 66),
-    "acacia_leaves": (120, 148, 86),
-    "dark_oak_leaves": (58, 94, 52),
-    "glass": (190, 216, 218),
-    "stained_glass_white": (190, 216, 218),
-    "glass_pane": (190, 216, 218),
-    "smooth_stone": (150, 150, 152),
-    "bricks": (152, 92, 82),
-    "stone_bricks": (130, 130, 134),
-    "mossy_stone_bricks": (116, 130, 106),
-    "cracked_stone_bricks": (116, 114, 118),
-    "netherrack": (96, 46, 44),
-    "nether_bricks": (54, 32, 36),
-    "netherite_block": (70, 66, 74),
-    "soul_sand": (78, 62, 54),
-    "end_stone": (214, 216, 160),
-    "purpur_block": (168, 128, 168),
-    "magma_block": (140, 84, 40),
-    "sea_lantern": (206, 220, 214),
-    "wool_white": (216, 216, 216),
-    "wool_orange": (226, 126, 38),
-    "wool_magenta": (178, 76, 216),
-    "wool_light_blue": (102, 153, 216),
-    "wool_yellow": (226, 214, 40),
-    "wool_lime": (94, 180, 42),
-    "wool_pink": (216, 130, 152),
-    "wool_gray": (76, 76, 76),
-    "wool_light_gray": (158, 156, 158),
-    "wool_cyan": (40, 128, 152),
-    "wool_purple": (126, 60, 180),
-    "wool_blue": (52, 66, 172),
-    "wool_brown": (90, 62, 40),
-    "wool_green": (66, 124, 52),
-    "wool_red": (162, 44, 42),
-    "wool_black": (26, 22, 22),
-    "terracotta": (150, 90, 56),
-    "white_terracotta": (208, 174, 133),
-    "orange_terracotta": (156, 88, 44),
-    "red_terracotta": (146, 60, 42),
-    "cyan_terracotta": (82, 104, 106),
-    "light_blue_terracotta": (106, 128, 146),
-    "lime_terracotta": (104, 118, 66),
-    "pink_terracotta": (144, 96, 106),
-    "gray_terracotta": (76, 68, 64),
-    "light_gray_terracotta": (132, 122, 110),
-    "magenta_terracotta": (142, 70, 108),
-    "yellow_terracotta": (164, 126, 62),
-    "blue_terracotta": (72, 82, 132),
-    "brown_terracotta": (86, 60, 42),
-    "green_terracotta": (78, 96, 62),
-    "purple_terracotta": (112, 66, 108),
-    "black_terracotta": (58, 36, 34),
-    "mud": (134, 112, 84),
-    "mud_bricks": (136, 112, 78),
-    "cut_copper": (178, 100, 106),
-    "exposed_cut_copper": (150, 122, 112),
-    "weathered_cut_copper": (108, 136, 118),
-    "oxidized_cut_copper": (80, 132, 118),
-    "waxed_cut_copper": (178, 100, 106),
-}
+class SchematicPalette:
+    """
+    原理图预览的内置方块调色板。
+
+    颜色为可辨认主要结构的近似值，不追求与原版材质逐像素一致。
+    """
+
+    unknown_color = (140, 140, 140)
+    block_colors: dict[str, tuple[int, int, int]] = {
+        "air": (0, 0, 0),
+        "cave_air": (0, 0, 0),
+        "void_air": (0, 0, 0),
+        "stone": (124, 124, 124),
+        "cobblestone": (128, 128, 136),
+        "gravel": (136, 124, 118),
+        "dirt": (124, 94, 70),
+        "grass_block": (86, 148, 74),
+        "sand": (219, 211, 164),
+        "sandstone": (212, 199, 146),
+        "red_sand": (192, 130, 74),
+        "clay": (156, 168, 182),
+        "granite": (148, 118, 108),
+        "diorite": (178, 178, 178),
+        "andesite": (140, 140, 140),
+        "deepslate": (75, 73, 78),
+        "bedrock": (62, 60, 60),
+        "water": (54, 101, 210),
+        "lava": (214, 108, 36),
+        "obsidian": (24, 16, 32),
+        "snow_block": (238, 240, 242),
+        "ice": (150, 194, 230),
+        "packed_ice": (139, 168, 190),
+        "coal_ore": (110, 110, 110),
+        "iron_ore": (142, 120, 104),
+        "gold_ore": (150, 140, 70),
+        "diamond_ore": (128, 200, 196),
+        "emerald_ore": (90, 190, 128),
+        "redstone_ore": (150, 70, 70),
+        "lapis_ore": (70, 100, 190),
+        "iron_block": (212, 212, 216),
+        "gold_block": (246, 198, 62),
+        "diamond_block": (104, 224, 214),
+        "emerald_block": (64, 202, 118),
+        "redstone_block": (168, 42, 34),
+        "lapis_block": (50, 84, 200),
+        "coal_block": (46, 46, 48),
+        "oak_log": (94, 74, 44),
+        "spruce_log": (62, 46, 32),
+        "birch_log": (208, 196, 164),
+        "jungle_log": (94, 76, 40),
+        "acacia_log": (106, 66, 44),
+        "dark_oak_log": (54, 42, 30),
+        "oak_planks": (178, 148, 96),
+        "spruce_planks": (140, 112, 76),
+        "birch_planks": (206, 192, 156),
+        "jungle_planks": (150, 114, 74),
+        "acacia_planks": (176, 132, 76),
+        "dark_oak_planks": (104, 82, 54),
+        "oak_leaves": (74, 128, 62),
+        "spruce_leaves": (54, 104, 54),
+        "birch_leaves": (118, 158, 80),
+        "jungle_leaves": (78, 122, 66),
+        "acacia_leaves": (120, 148, 86),
+        "dark_oak_leaves": (58, 94, 52),
+        "glass": (190, 216, 218),
+        "stained_glass_white": (190, 216, 218),
+        "glass_pane": (190, 216, 218),
+        "smooth_stone": (150, 150, 152),
+        "bricks": (152, 92, 82),
+        "stone_bricks": (130, 130, 134),
+        "mossy_stone_bricks": (116, 130, 106),
+        "cracked_stone_bricks": (116, 114, 118),
+        "netherrack": (96, 46, 44),
+        "nether_bricks": (54, 32, 36),
+        "netherite_block": (70, 66, 74),
+        "soul_sand": (78, 62, 54),
+        "end_stone": (214, 216, 160),
+        "purpur_block": (168, 128, 168),
+        "magma_block": (140, 84, 40),
+        "sea_lantern": (206, 220, 214),
+        "wool_white": (216, 216, 216),
+        "wool_orange": (226, 126, 38),
+        "wool_magenta": (178, 76, 216),
+        "wool_light_blue": (102, 153, 216),
+        "wool_yellow": (226, 214, 40),
+        "wool_lime": (94, 180, 42),
+        "wool_pink": (216, 130, 152),
+        "wool_gray": (76, 76, 76),
+        "wool_light_gray": (158, 156, 158),
+        "wool_cyan": (40, 128, 152),
+        "wool_purple": (126, 60, 180),
+        "wool_blue": (52, 66, 172),
+        "wool_brown": (90, 62, 40),
+        "wool_green": (66, 124, 52),
+        "wool_red": (162, 44, 42),
+        "wool_black": (26, 22, 22),
+        "terracotta": (150, 90, 56),
+        "white_terracotta": (208, 174, 133),
+        "orange_terracotta": (156, 88, 44),
+        "red_terracotta": (146, 60, 42),
+        "cyan_terracotta": (82, 104, 106),
+        "light_blue_terracotta": (106, 128, 146),
+        "lime_terracotta": (104, 118, 66),
+        "pink_terracotta": (144, 96, 106),
+        "gray_terracotta": (76, 68, 64),
+        "light_gray_terracotta": (132, 122, 110),
+        "magenta_terracotta": (142, 70, 108),
+        "yellow_terracotta": (164, 126, 62),
+        "blue_terracotta": (72, 82, 132),
+        "brown_terracotta": (86, 60, 42),
+        "green_terracotta": (78, 96, 62),
+        "purple_terracotta": (112, 66, 108),
+        "black_terracotta": (58, 36, 34),
+        "mud": (134, 112, 84),
+        "mud_bricks": (136, 112, 78),
+        "cut_copper": (178, 100, 106),
+        "exposed_cut_copper": (150, 122, 112),
+        "weathered_cut_copper": (108, 136, 118),
+        "oxidized_cut_copper": (80, 132, 118),
+        "waxed_cut_copper": (178, 100, 106),
+    }
 
 
 def _block_color(name: str) -> tuple[int, int, int]:
     # 去掉命名空间、属性和方块状态后缀，逐级回退匹配基础方块名。
     base = name.split(":", 1)[-1]
     for candidate in (base, base.split("[", 1)[0]):
-        color = _BLOCK_COLORS.get(candidate)
+        color = SchematicPalette.block_colors.get(candidate)
         if color is not None:
             return color
-        for key, value in _BLOCK_COLORS.items():
+        for key, value in SchematicPalette.block_colors.items():
             if candidate.startswith(key):
                 return value
-    return _UNKNOWN_COLOR
+    return SchematicPalette.unknown_color
 
 
 def _normalize(index: int, size: int, axis: int) -> int:
@@ -244,6 +244,9 @@ class SchematicCoordinator:
     输出尺寸、调色板颜色与沿坐标轴排列的方块索引数组。
     """
 
+    max_voxels = 262144
+    max_axis = 1024
+
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         root = target.data_path / RESOURCE_DIRECTORIES["schematic"]
@@ -307,15 +310,15 @@ class SchematicCoordinator:
         return [max(1, max_x), max(1, max_y), max(1, max_z)]
 
     def _downsample_region(self, region: dict[str, Any]) -> dict[str, Any]:
-        # 体素总量超过上限时沿各轴均匀降采样，仍需保证每轴不长于 _MAX_AXIS。
+        # 体素总量超过上限时沿各轴均匀降采样，仍需保证每轴不长于 max_axis。
         size = region["size"]
         sx, sy, sz = size[0], size[1], size[2]
         if sx <= 0 or sy <= 0 or sz <= 0:
             raise GameServiceError("原理图区域尺寸非法", "SCHEMATIC_INVALID")
-        scale_x = max(1, (sx + _MAX_AXIS - 1) // _MAX_AXIS)
-        scale_y = max(1, (sy + _MAX_AXIS - 1) // _MAX_AXIS)
-        scale_z = max(1, (sz + _MAX_AXIS - 1) // _MAX_AXIS)
-        while sx * sy * sz // (scale_x * scale_y * scale_z) > _MAX_VOXELS:
+        scale_x = max(1, (sx + self.max_axis - 1) // self.max_axis)
+        scale_y = max(1, (sy + self.max_axis - 1) // self.max_axis)
+        scale_z = max(1, (sz + self.max_axis - 1) // self.max_axis)
+        while sx * sy * sz // (scale_x * scale_y * scale_z) > self.max_voxels:
             if scale_x >= scale_y and scale_x >= scale_z:
                 scale_x += 1
             elif scale_y >= scale_z:
