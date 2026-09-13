@@ -15,6 +15,7 @@
 #   - test_stop_instance_forces_process_only_after_timeout() -> None
 #   - test_stop_instance_kills_when_forced() -> None
 #   - test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> None
+#   - test_windows_priority_constants_are_not_read_on_posix(monkeypatch) -> None
 #   - test_apply_priority_skips_normal(monkeypatch) -> None
 #   - test_apply_priority_sets_posix_nice_for_high(monkeypatch) -> None
 # ============================================================
@@ -141,6 +142,23 @@ def test_apply_priority_skips_normal(monkeypatch) -> None:
     monkeypatch.setattr(module.psutil, "Process", rejected)
 
     InstancesManager._apply_priority(FakeProc(), "normal")
+
+
+def test_windows_priority_constants_are_not_read_on_posix(monkeypatch) -> None:
+    module = importlib.import_module("ECL.game.Core.InstancesManager")
+    priority_constants = (
+        "IDLE_PRIORITY_CLASS",
+        "BELOW_NORMAL_PRIORITY_CLASS",
+        "NORMAL_PRIORITY_CLASS",
+        "ABOVE_NORMAL_PRIORITY_CLASS",
+        "HIGH_PRIORITY_CLASS",
+    )
+
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    for name in priority_constants:
+        monkeypatch.delattr(module.psutil, name, raising=False)
+
+    assert module._windows_priority_classes() == {}
 
 
 def test_apply_priority_sets_posix_nice_for_high(monkeypatch) -> None:
