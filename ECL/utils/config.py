@@ -57,6 +57,8 @@ default_config: dict[str, Any] = {
         "game_height": 480,
         "jvm_args": [],
         "fullscreen": False,
+        # 实例未单独指定时的游戏目录隔离策略。
+        "instance_isolation_policy": "modded_only",
         "last_install_path": "",
         "last_manage_path": "",
     },

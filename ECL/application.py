@@ -377,6 +377,7 @@ def create_application(
             resource_path=state.resource_path,
             curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY") or BuildEnvironment.curseforge_api_key or None,
             event_bus=events,
+            isolation_policy_provider=lambda: (config.get_config("game") or {}).get("instance_isolation_policy"),
 
             instances_manager=shared_instances,
         )

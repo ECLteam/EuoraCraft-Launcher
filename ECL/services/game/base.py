@@ -38,11 +38,7 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
-from ECL.utils import (
-    GameServiceError,
-    VersionScanError,  # noqa: F401  # re-export
-    get_logger,
-)
+from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 
 from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
@@ -58,6 +54,7 @@ DownloaderFactory = Callable[..., Downloader]
 CommandBuilder = Callable[[LaunchConfig], str]
 SearchFactory = Callable[[Path], Any]
 JavaScannerFactory = Callable[..., JavaScanner]
+IsolationPolicyProvider = Callable[[], str | None]
 
 
 @dataclass
@@ -111,6 +108,7 @@ class _GameState:
         version_watch_interval: float = 0.75,
         version_watch_debounce: float = 0.75,
         event_bus: EventBus | None = None,
+        isolation_policy_provider: IsolationPolicyProvider | None = None,
     ):
         """
         创建游戏服务共享状态，并注入可替换的 Core 边界实现。
@@ -130,9 +128,11 @@ class _GameState:
         :param version_watch_interval: 目录监听轮询间隔，单位为秒
         :param version_watch_debounce: 版本变化事件的防抖时间，单位为秒
         :param event_bus: 当前应用上下文拥有的事件总线
+        :param isolation_policy_provider: 读取全局实例隔离策略的延迟提供器
         """
         self.logger = get_logger("GameService")
         self.events = event_bus or EventBus()
+        self._isolation_policy_provider = isolation_policy_provider
         self.accounts = accounts
         self._search_factory = search_factory
         self.instances = instances_manager or InstancesManager()

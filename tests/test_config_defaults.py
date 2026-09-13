@@ -8,6 +8,7 @@
 # 公开接口：
 #   - test_ui_defaults_start_collapsed_with_full_background_brightness() -> None
 #   - test_launcher_network_defaults_are_bounded() -> None
+#   - test_game_defaults_use_modded_instance_isolation() -> None
 # ============================================================
 
 from ECL.utils.config import default_config
@@ -26,3 +27,9 @@ def test_launcher_network_defaults_are_bounded() -> None:
 
     assert launcher_config["request_timeout"] == 15
     assert launcher_config["request_retries"] == 2
+
+
+def test_game_defaults_use_modded_instance_isolation() -> None:
+    game_config = default_config["game"]
+
+    assert game_config["instance_isolation_policy"] == "modded_only"

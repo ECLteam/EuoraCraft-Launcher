@@ -26,12 +26,18 @@ from threading import Thread
 from time import monotonic
 from typing import Any
 
-from ECL.utils import atomic_write_text
+from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
 
 
 class ScanCoordinator(_GameState):
+    isolation_policies = frozenset(
+        {"disabled", "modded_only", "non_release_only", "modded_or_non_release", "all"}
+    )
+    default_isolation_policy = "modded_only"
+    non_release_version_types = frozenset({"snapshot", "april_fools", "old_alpha", "old_beta"})
+
     @staticmethod
     def _normalize_scan_paths(value: Any) -> list[Path]:
         if isinstance(value, (str, Path)):
@@ -465,12 +471,73 @@ class ScanCoordinator(_GameState):
         """
         返回实例当前应使用的版本隔离状态。
 
-        正式前端入口不传 ``version_isolation`` 时，以实例目录中的设置为唯一来源；
-        保留显式布尔值，供受控调用和测试临时覆盖。
+        显式布尔值优先，其次是实例三态覆盖和旧版 ``isolated`` 字段；未指定时
+        按全局策略及实例扫描元数据决定。保留显式布尔值，供受控调用和测试临时覆盖。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: Minecraft 版本或实例标识
+        :param requested: 调用方临时指定的隔离状态
+        :return: 当前实例最终应使用的隔离状态
         """
         if isinstance(requested, bool):
             return requested
-        return self.read_version_settings(game_path, version_id).get("isolated") is True
+        settings = self.read_version_settings(game_path, version_id)
+        isolation_mode = settings.get("isolationMode")
+        if isolation_mode == "enabled":
+            return True
+        if isolation_mode == "disabled":
+            return False
+        if isinstance(settings.get("isolated"), bool):
+            return settings["isolated"]
+        return self._matches_isolation_policy(game_path, version_id, self._isolation_policy())
+
+    def _isolation_policy(self) -> str:
+        """读取并校验全局隔离策略，配置异常时回退到稳定默认值。"""
+        provider = self._isolation_policy_provider
+        if provider is None:
+            return self.default_isolation_policy
+        try:
+            value = provider()
+        except (ConfigError, OSError, TypeError, ValueError):
+            self.logger.exception("读取默认实例隔离策略失败")
+            return self.default_isolation_policy
+        if isinstance(value, str) and value in self.isolation_policies:
+            return value
+        return self.default_isolation_policy
+
+    def _matches_isolation_policy(self, game_path: Any, version_id: Any, policy: str) -> bool:
+        """按扫描元数据计算全局策略是否要求当前实例隔离。"""
+        if policy == "disabled":
+            return False
+        if policy == "all":
+            return True
+        metadata = self._version_isolation_metadata(game_path, version_id)
+        is_modded = str(metadata.get("primaryLoader") or "vanilla").casefold() != "vanilla"
+        is_non_release = str(metadata.get("versionType") or "release").casefold() in self.non_release_version_types
+        if policy == "modded_only":
+            return is_modded
+        if policy == "non_release_only":
+            return is_non_release
+        return is_modded or is_non_release
+
+    def _version_isolation_metadata(self, game_path: Any, version_id: Any) -> dict[str, Any]:
+        """从扫描缓存或本地扫描结果中读取隔离策略所需的最小版本元数据。"""
+        path = self._normalize_game_path(game_path)
+        name = self._normalize_version_name(version_id, "实例名称")
+        key = self._version_path_key(path)
+        with self._lock:
+            cached = deepcopy(self._version_scan_cache.get(key, []))
+        versions = cached
+        if not versions:
+            try:
+                versions = self._scan_game_path(path)
+            except (OSError, TypeError, ValueError, VersionScanError) as exc:
+                self.logger.warning("读取实例隔离元数据失败 %s/%s: %s", path, name, exc)
+                return {}
+        for version in versions:
+            if str(version.get("versionId") or version.get("id") or "") == name:
+                return version
+        return {}
 
     def write_version_settings(self, game_path: Any, version_id: Any, data: dict[str, Any]) -> dict[str, Any]:
         """

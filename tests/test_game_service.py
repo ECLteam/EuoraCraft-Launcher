@@ -1453,6 +1453,39 @@ def test_instance_mods_follow_saved_isolation_setting(tmp_path) -> None:
     assert service.resolve_version_isolation(game_path, "isolated", False) is False
 
 
+@pytest.mark.parametrize(
+    ("policy", "metadata", "expected"),
+    [
+        ("disabled", {"primaryLoader": "Fabric", "versionType": "snapshot"}, False),
+        ("modded_only", {"primaryLoader": "Fabric", "versionType": "release"}, True),
+        ("modded_only", {"primaryLoader": "Vanilla", "versionType": "snapshot"}, False),
+        ("non_release_only", {"primaryLoader": "Vanilla", "versionType": "snapshot"}, True),
+        ("modded_or_non_release", {"primaryLoader": "Fabric", "versionType": "release"}, True),
+        ("all", {"primaryLoader": "Vanilla", "versionType": "release"}, True),
+    ],
+)
+def test_instance_isolation_uses_global_policy(tmp_path, monkeypatch, policy, metadata, expected) -> None:
+    service = _build_service(isolation_policy_provider=lambda: policy)
+    monkeypatch.setattr(service, "_version_isolation_metadata", lambda *_args: metadata)
+
+    assert service.resolve_version_isolation(tmp_path / ".minecraft", "example") is expected
+
+
+def test_instance_isolation_override_and_legacy_setting_take_priority(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_service(isolation_policy_provider=lambda: "all")
+    monkeypatch.setattr(service, "_version_isolation_metadata", lambda *_args: {"primaryLoader": "Vanilla"})
+
+    service.write_version_settings(game_path, "enabled", {"isolationMode": "enabled"})
+    service.write_version_settings(game_path, "disabled", {"isolationMode": "disabled"})
+    service.write_version_settings(game_path, "legacy", {"isolated": False})
+
+    assert service.resolve_version_isolation(game_path, "enabled") is True
+    assert service.resolve_version_isolation(game_path, "disabled") is False
+    assert service.resolve_version_isolation(game_path, "legacy") is False
+    assert service.resolve_version_isolation(game_path, "enabled", False) is False
+
+
 def test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> None:
     service = _build_service()
     destination = tmp_path / "sodium.jar"
