@@ -59,7 +59,9 @@ class ModCoordinator(_GameState):
         return self._list_mods_at(self._normalize_game_path(game_path))
 
     def _list_mods_at(self, data_path: Path) -> list[dict[str, Any]]:
-        """从已解析的实际游戏数据目录列出模组，避免再次归一化隔离目录。"""
+        """
+        从已解析的实际游戏数据目录列出模组，避免再次归一化隔离目录。
+        """
         mods_dir = data_path / "mods"
         if not mods_dir.is_dir():
             return []
@@ -199,7 +201,9 @@ class ModCoordinator(_GameState):
         return path
 
     def _instance_mod_root(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> Path:
-        """解析实例实际数据目录，确保模组操作与游戏启动使用同一隔离语义。"""
+        """
+        解析实例实际数据目录，确保模组操作与游戏启动使用同一隔离语义。
+        """
         isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
         return self.resolve_instance(game_path, version_id, isolated).data_path
 

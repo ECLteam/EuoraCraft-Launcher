@@ -218,7 +218,9 @@ class ConnectorService:
                 self._node_refreshing = False
 
     def _refresh_nodes(self, cached_nodes: list[str]) -> list[str]:
-        """向节点服务刷新缓存；失败时保留旧缓存或使用内置默认节点。"""
+        """
+        向节点服务刷新缓存；失败时保留旧缓存或使用内置默认节点。
+        """
         if self._http is None:
             return self._remember_nodes(cached_nodes or list(_DEFAULT_NODES))
         try:
