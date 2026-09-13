@@ -53,7 +53,7 @@ from uuid import UUID
 
 import httpx
 
-from ECL.common import MICROSOFT_CLIENT_ID
+from ECL.common import BuildEnvironment
 from ECL.events import EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
@@ -254,7 +254,7 @@ class AccountManager:
         self.logger.debug("账户聚合状态读取完成")
 
         manager_was_provided = microsoft_manager is not None
-        effective_client_id = (microsoft_client_id or MICROSOFT_CLIENT_ID).strip()
+        effective_client_id = (microsoft_client_id or BuildEnvironment.microsoft_client_id).strip()
         self._microsoft_login_available = manager_was_provided or bool(effective_client_id)
         if microsoft_manager is None:
             self.logger.debug("正在创建 Microsoft 认证管理器")

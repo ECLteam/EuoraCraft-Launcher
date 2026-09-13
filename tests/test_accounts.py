@@ -532,7 +532,7 @@ async def test_microsoft_login_requires_configured_client_id(tmp_path, monkeypat
         def __init__(self, **options):
             super().__init__()
 
-    monkeypatch.setattr(accounts_service, "MICROSOFT_CLIENT_ID", "")
+    monkeypatch.setattr(accounts_service.BuildEnvironment, "microsoft_client_id", "")
     monkeypatch.setattr(accounts_service, "LauncherMicrosoftAccountManager", CapturingMicrosoftManager)
     manager = AccountManager(tmp_path)
 

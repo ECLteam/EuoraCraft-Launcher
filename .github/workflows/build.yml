@@ -101,8 +101,8 @@ jobs:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
           cfk = os.environ.get("CF_API_KEY", "")
-          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
-          text = re.sub(r'CURSEFORGE_API_KEY\s*=\s*"[^"]*"', f'CURSEFORGE_API_KEY = "{cfk}"', text)
+          text = re.sub(r'microsoft_client_id\s*=\s*"[^"]*"', f'microsoft_client_id = "{cid}"', text)
+          text = re.sub(r'curseforge_api_key\s*=\s*"[^"]*"', f'curseforge_api_key = "{cfk}"', text)
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
           PY
@@ -391,8 +391,8 @@ jobs:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
           cfk = os.environ.get("CF_API_KEY", "")
-          text = re.sub(r'MICROSOFT_CLIENT_ID\s*=\s*"[^"]*"', f'MICROSOFT_CLIENT_ID = "{cid}"', text)
-          text = re.sub(r'CURSEFORGE_API_KEY\s*=\s*"[^"]*"', f'CURSEFORGE_API_KEY = "{cfk}"', text)
+          text = re.sub(r'microsoft_client_id\s*=\s*"[^"]*"', f'microsoft_client_id = "{cid}"', text)
+          text = re.sub(r'curseforge_api_key\s*=\s*"[^"]*"', f'curseforge_api_key = "{cfk}"', text)
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
           PY
