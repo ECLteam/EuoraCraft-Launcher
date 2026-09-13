@@ -65,15 +65,15 @@ from ECL.utils import atomic_write_bytes
 
 from .bridge import _FrontendState, _ipc_handler, _normalize_image_url, _validate_body
 
-_SKIN_DOWNLOAD_CHUNK_BYTES = 64 * 1024
-_SAFE_FILENAME_MAX_CHARS = 80
-_SKIN_DIMENSIONS = (64, 64)
-
 
 class AccountHandlers(_FrontendState):
     """
     提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。
     """
+
+    skin_download_chunk_bytes = 64 * 1024
+    safe_filename_max_chars = 80
+    skin_dimensions = (64, 64)
 
     async def accounts_list(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -369,7 +369,7 @@ class AccountHandlers(_FrontendState):
         data = bytearray()
         with self.http.stream("GET", url) as response:
             response.raise_for_status()
-            for chunk in response.iter_bytes(_SKIN_DOWNLOAD_CHUNK_BYTES):
+            for chunk in response.iter_bytes(self.skin_download_chunk_bytes):
                 data.extend(chunk)
                 if len(data) > WardrobeStore.max_texture_bytes:
                     raise WardrobeError("账户皮肤超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
@@ -457,7 +457,7 @@ class AccountHandlers(_FrontendState):
         if self._webview is None:
             raise WardrobeError("窗口尚未就绪", "WEBVIEW_NOT_READY")
         item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
-        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:_SAFE_FILENAME_MAX_CHARS] or "skin"
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:self.safe_filename_max_chars] or "skin"
         picked = await to_thread.run_sync(
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),
@@ -484,7 +484,7 @@ class AccountHandlers(_FrontendState):
         if invalid is not None:
             return invalid
         item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
-        if item["kind"] != "skin" or (item["width"], item["height"]) != _SKIN_DIMENSIONS:
+        if item["kind"] != "skin" or (item["width"], item["height"]) != self.skin_dimensions:
             return {
                 "success": False,
                 "message": "只有标准 64×64 皮肤可以上传到 Microsoft",
