@@ -10,6 +10,7 @@
 #   - test_schematic_preview_rejects_missing_file(tmp_path) -> None
 #   - test_schematic_preview_invalid_content_fails_gracefully(tmp_path) -> None
 #   - test_litematic_preview_returns_palette_and_regions(tmp_path) -> None
+#   - test_litematic_preview_normalizes_negative_compound_size(tmp_path) -> None
 #   - test_schem_preview_parses_sponge_layout(tmp_path) -> None
 #   - test_downsample_caps_voxel_count(tmp_path) -> None
 # ============================================================
@@ -40,7 +41,9 @@ def _schematic_root(tmp_path: Path) -> Path:
     return root
 
 
-def _write_litematic(path: Path, width: int = 4, height: int = 3, length: int = 3) -> None:
+def _write_litematic(
+    path: Path, width: int = 4, height: int = 3, length: int = 3, position: tuple[int, int, int] = (1, 2, 3)
+) -> None:
     # BlockStatePalette 有 3 个方块（air/dirt/stone），MC 调色板位宽最小为 4。
     entries = [
         Compound({"Name": String("minecraft:air")}),
@@ -48,7 +51,7 @@ def _write_litematic(path: Path, width: int = 4, height: int = 3, length: int = 
         Compound({"Name": String("minecraft:stone")}),
     ]
     per_word = 64 // 4
-    total = width * height * length
+    total = abs(width) * abs(height) * abs(length)
     words = [0] * ((total + per_word - 1) // per_word)
 
     def set_index(index: int, palette_id: int) -> None:
@@ -61,8 +64,8 @@ def _write_litematic(path: Path, width: int = 4, height: int = 3, length: int = 
     set_index(1, 2)
     region = Compound(
         {
-            "Size": IntArray([width, height, length]),
-            "Position": IntArray([1, 2, 3]),
+            "Size": Compound({"x": Int(width), "y": Int(height), "z": Int(length)}),
+            "Position": Compound({"x": Int(position[0]), "y": Int(position[1]), "z": Int(position[2])}),
             "BlockStatePalette": List(entries),
             "BlockStates": LongArray(words),
         }
@@ -137,6 +140,21 @@ def test_litematic_preview_returns_palette_and_regions(tmp_path: Path) -> None:
     assert len(region["indices"]) == 36
     assert region["indices"][0] == 1
     assert region["indices"][1] == 2
+
+
+def test_litematic_preview_normalizes_negative_compound_size(tmp_path: Path) -> None:
+    _write_litematic(
+        _schematic_root(tmp_path) / "negative.litematic", width=-4, height=-3, length=-3, position=(3, 2, 2)
+    )
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    result = harness.schematic_preview(tmp_path, "iso", "negative.litematic", True)
+
+    assert result["size"] == [4, 3, 3]
+    region = result["regions"][0]
+    assert region["size"] == [4, 3, 3]
+    assert region["position"] == [0, 0, 0]
+    assert len(region["indices"]) == 36
 
 
 def test_schem_preview_parses_sponge_layout(tmp_path: Path) -> None:

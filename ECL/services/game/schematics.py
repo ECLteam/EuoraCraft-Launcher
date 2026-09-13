@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import gzip
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -167,13 +168,47 @@ def _normalize(index: int, size: int, axis: int) -> int:
     return min(index * axis // size, axis - 1)
 
 
+def _read_litematica_vector(value: Any, field_name: str) -> list[int]:
+    """
+    读取 Litematica 的三维 NBT 坐标，并兼容旧的三元素数组表示。
+
+    标准 Litematica 把 ``Size`` 与 ``Position`` 编码为含 ``x/y/z`` 的复合标签；
+    历史测试数据和少数第三方导出则可能使用整数数组。解析失败统一转换为领域错误，
+    避免底层 ``ValueError`` 直接暴露到 IPC 边界。
+
+    :param value: NBT 标签中的坐标值
+    :param field_name: 用于错误信息的字段名
+    :return: 按 x、y、z 顺序排列的三个整数
+    :raises GameServiceError: 坐标字段缺失、维度不完整或包含非整数值时抛出
+    """
+    if isinstance(value, Mapping):
+        try:
+            coordinates = [value[axis] for axis in ("x", "y", "z")]
+        except KeyError as exc:
+            raise GameServiceError(f"原理图 {field_name} 坐标不完整", "SCHEMATIC_INVALID") from exc
+    elif isinstance(value, (list, tuple)):
+        coordinates = list(value)
+    else:
+        raise GameServiceError(f"原理图 {field_name} 坐标格式无效", "SCHEMATIC_INVALID")
+    if len(coordinates) != 3 or any(isinstance(item, bool) or not isinstance(item, int) for item in coordinates):
+        raise GameServiceError(f"原理图 {field_name} 坐标格式无效", "SCHEMATIC_INVALID")
+    return [int(item) for item in coordinates]
+
+
 class LitematicaRegion:
     __slots__ = ("block_colors", "indices", "mask_bits", "name", "position", "size")
 
     def __init__(self, name: str, region: Compound) -> None:
         self.name = name
-        self.size = [int(v) for v in (region.get("Size") or [1, 1, 1])]
-        self.position = [int(v) for v in (region.get("Position") or [0, 0, 0])]
+        raw_size = _read_litematica_vector(region.get("Size"), "Size")
+        raw_position = _read_litematica_vector(region.get("Position"), "Position")
+        if any(axis == 0 for axis in raw_size):
+            raise GameServiceError("原理图区域尺寸不能为零", "SCHEMATIC_INVALID")
+        self.size = [abs(axis) for axis in raw_size]
+        # 负尺寸表示区域从 Position 向负轴延伸；预览坐标使用该区域的实际最小边界。
+        self.position = [
+            position if size > 0 else position + size + 1 for position, size in zip(raw_position, raw_size, strict=True)
+        ]
         palette_tag = region.get("BlockStatePalette") or List()
         self.block_colors = [
             _block_color(str(item.get("Name") or "air")) for item in palette_tag if isinstance(item, dict)
