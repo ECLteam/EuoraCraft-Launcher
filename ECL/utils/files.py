@@ -14,7 +14,15 @@ from pathlib import Path
 from time import sleep
 from uuid import uuid4
 
-_WINDOWS_REPLACE_RETRY_DELAYS = (0.02, 0.05, 0.1, 0.2)
+
+class AtomicWritePolicy:
+    """
+    原子替换文件时的 Windows 短暂占用重试策略。
+
+    延迟序列用于兼容杀毒软件和索引器短暂占用刚写入的文件。
+    """
+
+    windows_replace_retry_delays = (0.02, 0.05, 0.1, 0.2)
 
 
 def atomic_write_bytes(path: str | Path, data: bytes) -> None:
@@ -29,7 +37,7 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
     temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
     try:
         temporary.write_bytes(data)
-        for delay in (*_WINDOWS_REPLACE_RETRY_DELAYS, None):
+        for delay in (*AtomicWritePolicy.windows_replace_retry_delays, None):
             try:
                 temporary.replace(destination)
                 break

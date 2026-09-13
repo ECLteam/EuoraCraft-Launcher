@@ -6,7 +6,6 @@
 # 文件作用：网络工具：带重试的 GET 与下载代理解析。
 #
 # 公开接口：
-#   - DOWNLOAD_PROXY_ENV_KEY（str）
 #   - download_proxy_url() -> str | None — 读取游戏下载通道的代理地址。
 #   - get_with_retries(request, url, retries, retry_delay, **kwargs) -> httpx.Response — 对幂等 GET 请求执行有限次数的指数退避重试。
 # ============================================================
@@ -20,9 +19,16 @@ from typing import Any
 
 import httpx
 
-_RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
-DOWNLOAD_PROXY_ENV_KEY = "ECL_DOWNLOAD_PROXY"
+class NetworkPolicy:
+    """
+    下载网络请求使用的环境变量和重试条件。
+
+    下载通道与启动器其他网络请求分离，避免继承不适用的系统代理。
+    """
+
+    retryable_status_codes = frozenset({408, 425, 429, 500, 502, 503, 504})
+    download_proxy_env_key = "ECL_DOWNLOAD_PROXY"
 
 
 def download_proxy_url() -> str | None:
@@ -35,7 +41,7 @@ def download_proxy_url() -> str | None:
 
     :return: 代理地址；未配置时返回 None 表示直连
     """
-    return os.environ.get(DOWNLOAD_PROXY_ENV_KEY) or None
+    return os.environ.get(NetworkPolicy.download_proxy_env_key) or None
 
 
 def get_with_retries(
@@ -65,7 +71,7 @@ def get_with_retries(
             if attempt == retry_count:
                 raise
         else:
-            if response.status_code not in _RETRYABLE_STATUS_CODES or attempt == retry_count:
+            if response.status_code not in NetworkPolicy.retryable_status_codes or attempt == retry_count:
                 return response
             response.close()
         sleep(max(0.0, retry_delay) * (2**attempt))
