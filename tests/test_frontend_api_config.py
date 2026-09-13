@@ -509,6 +509,8 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
                 "game_path": str(tmp_path / ".minecraft"),
                 "java_path": str(tmp_path / "java.exe"),
                 "memory": 6144,
+                "width": 1366,
+                "height": 768,
                 "fullscreen": True,
                 "version_isolation": True,
             }
@@ -524,8 +526,32 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
         },
     }
     assert api.game.launch_call[1]["memory"] == 6144
+    assert api.game.launch_call[1]["width"] == 1366
+    assert api.game.launch_call[1]["height"] == 768
     assert api.game.launch_call[1]["fullscreen"] is True
     assert api.game.launch_call[1]["version_isolation"] is True
+
+
+def test_launch_instance_uses_global_window_settings_when_request_omits_them(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+    game_config = api.config.get_config("game")
+    game_config.update({"game_width": 1600, "game_height": 900, "fullscreen": True})
+    api.config.save_config("game", game_config)
+
+    result = asyncio.run(
+        api.game_launch(
+            {
+                "version_id": "1.21.8",
+                "game_path": str(tmp_path / ".minecraft"),
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert api.game.launch_call[1]["width"] == 1600
+    assert api.game.launch_call[1]["height"] == 900
+    assert api.game.launch_call[1]["fullscreen"] is True
 
 
 def test_launch_instance_applies_global_advanced_launch_settings(tmp_path) -> None:

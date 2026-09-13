@@ -68,6 +68,7 @@ from ECL.api.models import (
     LaunchRequest,
     LoaderCatalogRequest,
 )
+from ECL.utils.config import default_config
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 
@@ -473,6 +474,12 @@ class GameHandlers(_FrontendState):
         java_path = values.pop("java_path")
         quick_target = values.pop("quick_target", None)
         game_config = self._get_effective_config().get("game") or {}
+        if "width" not in request.model_fields_set:
+            values["width"] = game_config.get("game_width", default_config["game"]["game_width"])
+        if "height" not in request.model_fields_set:
+            values["height"] = game_config.get("game_height", default_config["game"]["game_height"])
+        if "fullscreen" not in request.model_fields_set:
+            values["fullscreen"] = bool(game_config.get("fullscreen", default_config["game"]["fullscreen"]))
         values["jvm_args"] = [
             *self._global_jvm_args(game_config.get("jvm_args")),
             *values.get("jvm_args", []),

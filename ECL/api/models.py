@@ -436,9 +436,10 @@ class LaunchRequest(RequestModel):
     lock_memory: bool = False
     # 游戏进程优先级: idle / below_normal / normal / above_normal / high。
     process_priority: Literal["idle", "below_normal", "normal", "above_normal", "high"] = "normal"
-    width: int = Field(default=default_config["game"]["game_width"], ge=320, le=16384)
-    height: int = Field(default=default_config["game"]["game_height"], ge=240, le=16384)
-    fullscreen: bool = False
+    # ``None`` 表示调用方没有指定，由游戏全局设置提供兜底值。
+    width: int | None = Field(default=None, ge=320, le=16384)
+    height: int | None = Field(default=None, ge=240, le=16384)
+    fullscreen: bool | None = None
     jvm_args: list[str] = Field(default_factory=list)
     game_args: list[str] = Field(default_factory=list)
     # None 表示由后端读取实例 .ecl/settings.json；显式布尔值仅用于调用方覆盖。
