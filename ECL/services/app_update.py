@@ -6,7 +6,6 @@
 # 文件作用：启动器自更新：通道检测、平台资源选择与下载落盘。
 #
 # 公开接口：
-#   - PENDING_UPDATE_FILE（str）
 #   - class AppUpdateError — 启动器自动更新流程中的用户可感知错误。
 #   - class UpdateAsset — Release 中与当前平台匹配的安装包。
 #   - class StagedUpdate — 一次已下载并待应用的新版本替换计划。
@@ -36,46 +35,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from ECL.utils import atomic_write_text, get_logger
-
-# 待应用更新的状态标记文件名，位于启动器数据目录下。
-PENDING_UPDATE_FILE = ".pending_update.json"
-
-# 自动更新通道白名单；alpha（预发布通道）与 dev（源码运行）不开放自更新。
-_SELF_UPDATE_CHANNELS = frozenset({"beta", "rc", "release"})
-
-# 下载写入缓冲区大小（字节）。
-_DOWNLOAD_CHUNK_BYTES = 64 * 1024
-
-# 需要同步复制到新启动器旁的配套文件（仅打包目录形态存在时启用）。
-_COMPANION_FILE_NAMES = frozenset({"version.json"})
-
-# 平台对应的安装包特征词；命中即视为该平台使用的文件。
-# 注意：darwin 特征词刻意不含 "app"——"*.app" 后缀过宽，会误伤其他平台的包名。
-_WINDOWS_KEYWORDS = ("windows", "win", "win32", "amd64", "x64", "x86_64")
-_LINUX_KEYWORDS = ("linux", "linux-x86_64", "appimage")
-_DARWIN_KEYWORDS = ("macos", "mac", "darwin", "dmg")
-
-# 架构特征词；用于多候选时的精确匹配加分。
-_ARCH_KEYWORDS = {
-    "win32": ("x64", "amd64", "x86_64"),
-    "darwin": ("arm64", "universal"),
-    "linux": ("x86_64", "amd64", "aarch64"),
-}
-
-# 各种打包旁路文件，不参与安装包挑选。
-_SIDECAR_PATTERNS = (
-    ".sha256",
-    ".sha512",
-    ".md5",
-    ".pdb",
-    ".debug",
-    "-symbols.",
-    "checksums",
-    "latest.",
-)
-
-# 可执行文件后缀；单文件优先，其次 zip 包。
-_EXECUTABLE_SUFFIXES = (".exe", ".appimage", ".deb", ".rpm", ".bin")
 
 
 class AppUpdateError(ValueError):
@@ -147,21 +106,28 @@ def _name_tokens(name: str) -> list[str]:
 def _is_sidecar(name: str) -> bool:
     # 判断文件是否为校验和、符号等非安装包旁路文件。
     lowered = name.lower()
-    return any(pattern in lowered for pattern in _SIDECAR_PATTERNS) and not lowered.endswith(".exe")
+    return any(pattern in lowered for pattern in UpdateApplier.sidecar_patterns) and not lowered.endswith(".exe")
 
 
 def _is_platform_asset(name: str, platform: str) -> bool:
     # 按平台特征词判断资产是否属于当前平台。
     tokens = _name_tokens(name)
     keywords = (
-        _WINDOWS_KEYWORDS
+        UpdateApplier.windows_keywords
         if platform == "win32"
-        else (_DARWIN_KEYWORDS if platform == "darwin" else (_LINUX_KEYWORDS if platform.startswith("linux") else ()))
+        else (
+            UpdateApplier.darwin_keywords
+            if platform == "darwin"
+            else (UpdateApplier.linux_keywords if platform.startswith("linux") else ())
+        )
     )
     if any(token in keywords for token in tokens):
         return True
     # 跨平台资产通常带架构但不带系统词，仅当无任何系统特征时视为通用包。
-    return not any(token in (_WINDOWS_KEYWORDS + _LINUX_KEYWORDS + _DARWIN_KEYWORDS) for token in tokens)
+    platform_keywords = (
+        UpdateApplier.windows_keywords + UpdateApplier.linux_keywords + UpdateApplier.darwin_keywords
+    )
+    return not any(token in platform_keywords for token in tokens)
 
 
 def _asset_score(name: str, platform: str) -> int:
@@ -169,14 +135,18 @@ def _asset_score(name: str, platform: str) -> int:
     tokens = _name_tokens(name)
     score = 0
     keywords = (
-        _WINDOWS_KEYWORDS
+        UpdateApplier.windows_keywords
         if platform == "win32"
-        else (_DARWIN_KEYWORDS if platform == "darwin" else (_LINUX_KEYWORDS if platform.startswith("linux") else ()))
+        else (
+            UpdateApplier.darwin_keywords
+            if platform == "darwin"
+            else (UpdateApplier.linux_keywords if platform.startswith("linux") else ())
+        )
     )
     if any(token in keywords for token in tokens):
         score += 4
     for token in tokens:
-        if token in _ARCH_KEYWORDS.get(platform, ()):
+        if token in UpdateApplier.architecture_keywords.get(platform, ()):
             score += 2
             break
     return score
@@ -185,7 +155,7 @@ def _asset_score(name: str, platform: str) -> int:
 def _binary_suffix(name: str) -> bool:
     # 判断资产是否为可直接执行的单文件包。
     lowered = name.lower()
-    return any(lowered.endswith(ext) for ext in _EXECUTABLE_SUFFIXES) or lowered.endswith(".zip")
+    return any(lowered.endswith(ext) for ext in UpdateApplier.executable_suffixes) or lowered.endswith(".zip")
 
 
 def _peer_digest_asset(release: dict[str, Any], name: str) -> tuple[str, str] | None:
@@ -229,6 +199,30 @@ class UpdateApplier:
     :param platform: 目标平台（默认取当前系统）
     """
 
+    pending_update_file = ".pending_update.json"
+    self_update_channels = frozenset({"beta", "rc", "release"})
+    download_chunk_bytes = 64 * 1024
+    companion_file_names = frozenset({"version.json"})
+    windows_keywords = ("windows", "win", "win32", "amd64", "x64", "x86_64")
+    linux_keywords = ("linux", "linux-x86_64", "appimage")
+    darwin_keywords = ("macos", "mac", "darwin", "dmg")
+    architecture_keywords = {
+        "win32": ("x64", "amd64", "x86_64"),
+        "darwin": ("arm64", "universal"),
+        "linux": ("x86_64", "amd64", "aarch64"),
+    }
+    sidecar_patterns = (
+        ".sha256",
+        ".sha512",
+        ".md5",
+        ".pdb",
+        ".debug",
+        "-symbols.",
+        "checksums",
+        "latest.",
+    )
+    executable_suffixes = (".exe", ".appimage", ".deb", ".rpm", ".bin")
+
     def __init__(
         self,
         *,
@@ -251,7 +245,7 @@ class UpdateApplier:
         self.events = event_bus
         self._platform = platform or sys.platform
         self.updates_dir = self.data_path / "updates"
-        self.pending_file = self.data_path / PENDING_UPDATE_FILE
+        self.pending_file = self.data_path / self.pending_update_file
 
     def enabled(self) -> bool:
         """
@@ -259,7 +253,7 @@ class UpdateApplier:
 
         :return: 打包运行且版本通道在 beta / rc / release 白名单内时为 True
         """
-        return self.is_frozen and self.version_type in _SELF_UPDATE_CHANNELS
+        return self.is_frozen and self.version_type in self.self_update_channels
 
     def matching_asset(self, release: dict[str, Any]) -> UpdateAsset | None:
         """
@@ -286,7 +280,9 @@ class UpdateApplier:
             )
         if not candidates:
             return None
-        executable = [candidate for candidate in candidates if candidate.name.lower().endswith(_EXECUTABLE_SUFFIXES)]
+        executable = [
+            candidate for candidate in candidates if candidate.name.lower().endswith(self.executable_suffixes)
+        ]
         # 多候选时按平台/架构得分降序、文件名升序排序，避免依赖 GitHub 返回顺序。
         ordered = sorted(
             executable or candidates,
@@ -366,7 +362,7 @@ class UpdateApplier:
             with self.http.stream("GET", asset.url, follow_redirects=True) as response:
                 response.raise_for_status()
                 with temporary.open("wb") as handle:
-                    for chunk in response.iter_bytes(_DOWNLOAD_CHUNK_BYTES):
+                    for chunk in response.iter_bytes(self.download_chunk_bytes):
                         handle.write(chunk)
                         received += len(chunk)
                         self._emit_progress(asset, received)
@@ -397,7 +393,7 @@ class UpdateApplier:
             )
         hasher = hashlib.new(algorithm)
         with package.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(_DOWNLOAD_CHUNK_BYTES), b""):
+            for chunk in iter(lambda: handle.read(self.download_chunk_bytes), b""):
                 hasher.update(chunk)
         actual = hasher.hexdigest()
         if not actual.lower().startswith(expected.lower().strip()):
@@ -554,7 +550,7 @@ def clear_stale_pending_update(data_path: Path | str) -> bool:
     :param data_path: 启动器数据目录
     :return: 是否存在并被清理的待更新标记
     """
-    pending_file = Path(data_path) / PENDING_UPDATE_FILE
+    pending_file = Path(data_path) / UpdateApplier.pending_update_file
     if not pending_file.is_file():
         return False
     try:
@@ -631,7 +627,6 @@ def _posix_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pen
 
 
 __all__ = [
-    "PENDING_UPDATE_FILE",
     "AppUpdateError",
     "StagedUpdate",
     "UpdateApplier",

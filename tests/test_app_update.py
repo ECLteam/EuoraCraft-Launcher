@@ -23,7 +23,6 @@ import json
 import pytest
 
 from ECL.services.app_update import (
-    PENDING_UPDATE_FILE,
     StagedUpdate,
     UpdateApplier,
     clear_stale_pending_update,
@@ -114,7 +113,7 @@ def test_stage_writes_pending_marker(tmp_path) -> None:
 
     assert staged.version == version
     assert new_binary.resolve() == binary.resolve()
-    pending = tmp_path / "data" / PENDING_UPDATE_FILE
+    pending = tmp_path / "data" / UpdateApplier.pending_update_file
     assert pending.is_file()
     marker = json.loads(pending.read_text(encoding="utf-8"))
     assert marker["version"] == version
@@ -131,7 +130,7 @@ def test_stage_raises_when_asset_missing(tmp_path) -> None:
 
 def test_load_pending_returns_marker(tmp_path) -> None:
     applier = _applier(tmp_path)
-    pending = tmp_path / "data" / PENDING_UPDATE_FILE
+    pending = tmp_path / "data" / UpdateApplier.pending_update_file
     pending.parent.mkdir(parents=True)
     target = tmp_path / "app" / "launcher.exe"
     new_binary = tmp_path / "updates" / "launcher.exe"
@@ -156,7 +155,7 @@ def test_load_pending_returns_marker(tmp_path) -> None:
 
 def test_load_pending_returns_none_for_corrupt_marker(tmp_path) -> None:
     applier = _applier(tmp_path)
-    pending = tmp_path / "data" / PENDING_UPDATE_FILE
+    pending = tmp_path / "data" / UpdateApplier.pending_update_file
     pending.parent.mkdir(parents=True)
     pending.write_text("{not-json", encoding="utf-8")
 
@@ -168,13 +167,13 @@ def test_clear_stale_pending_update_removes_marker_and_backup(tmp_path) -> None:
     (data_dir / "updates").mkdir(parents=True)
     backup = data_dir / "updates" / "launcher.old.exe"
     backup.write_bytes(b"old")
-    (data_dir / PENDING_UPDATE_FILE).write_text(
+    (data_dir / UpdateApplier.pending_update_file).write_text(
         json.dumps({"backup": str(backup), "version": "1.4.2"}),
         encoding="utf-8",
     )
 
     assert clear_stale_pending_update(data_dir) is True
-    assert not (data_dir / PENDING_UPDATE_FILE).exists()
+    assert not (data_dir / UpdateApplier.pending_update_file).exists()
     assert not backup.exists()
 
 
