@@ -86,7 +86,12 @@ class GameHandlers(_FrontendState):
 
     @staticmethod
     def _parse_game_args_tail(value: Any) -> list[str]:
-        """将全局游戏参数文本解析为稳定的参数数组。"""
+        """
+        将全局游戏参数文本解析为稳定的参数数组。
+
+        使用 shell 兼容的引号规则拆分文本，但不执行命令；引号不匹配时转换为
+        可由 IPC 边界统一处理的 ``ValueError``。
+        """
         if not isinstance(value, str) or not value.strip():
             return []
         try:
@@ -96,7 +101,12 @@ class GameHandlers(_FrontendState):
 
     @staticmethod
     def _global_jvm_args(value: Any) -> list[str]:
-        """校验并复制全局 JVM 参数，避免不可信配置污染启动请求。"""
+        """
+        校验并复制全局 JVM 参数，避免不可信配置污染启动请求。
+
+        仅接受字符串列表，并在返回前丢弃空白参数，避免配置文件中的异常值直接
+        进入 Java 子进程参数。
+        """
         if value in (None, ""):
             return []
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -298,9 +308,7 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(GameVersionRequest, body)
         if invalid is not None:
             return invalid
-        return success(
-            await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id)
-        )
+        return success(await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id))
 
     @_ipc_handler("GAME_CONFIG_FAILED")
     async def game_version_settings_set(self, body: dict[str, Any]) -> ApiResponse:

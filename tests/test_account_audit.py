@@ -25,6 +25,12 @@ def test_is_under_target_matches_only_the_selected_directory() -> None:
     assert not audit.is_under_target(r"C:\Users\Wuchang325\.ECL-backup\accounts.json", target)
 
 
+def test_is_under_target_uses_windows_path_rules_on_any_host() -> None:
+    target = r"C:\Users\Wuchang325\.ECL"
+
+    assert audit.is_under_target("c:/users/wuchang325/.ecl/accounts/offline.json", target)
+
+
 def test_access_actions_reports_write_and_delete_bits() -> None:
     assert audit.access_actions("0x10002") == ["write_data", "delete"]
 

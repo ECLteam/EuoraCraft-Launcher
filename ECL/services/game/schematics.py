@@ -458,7 +458,12 @@ class SchematicCoordinator:
         return self._data_path / "schematic-assets" / f"{digest}.json"
 
     def _extract_assets(self, jar_path: Path, blocks: list[str]) -> dict[str, Any]:
-        """读取 Jar 中的 JSON 与 PNG 资源，并限制总输出体积。"""
+        """
+        读取 Jar 中的 JSON 与 PNG 资源，并限制总输出体积。
+
+        仅跟随请求方块引用的模型、父模型和纹理闭包；新版纹理描述对象会读取其
+        ``sprite`` 字段，资源总量超过限制时中止，避免 IPC 返回过大的 Base64 数据。
+        """
         blockstates: dict[str, Any] = {}
         models: dict[str, Any] = {}
         textures: dict[str, str] = {}

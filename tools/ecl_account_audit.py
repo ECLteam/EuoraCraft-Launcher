@@ -19,6 +19,7 @@ import base64
 import csv
 import ctypes
 import json
+import ntpath
 import os
 import re
 import subprocess
@@ -80,14 +81,16 @@ def require_administrator() -> None:
 
 def normalize_path(path: Path | str) -> str:
     """Return a case-insensitive, absolute Windows path for reliable filtering."""
-    return os.path.normcase(str(Path(path).resolve()))
+    # 事件日志中的 ObjectName 始终使用 Windows 路径，CI 即使运行在 POSIX 上也必须
+    # 采用相同的盘符与反斜杠语义，不能交由当前宿主系统的 pathlib 解释。
+    return ntpath.normcase(ntpath.normpath(str(path)))
 
 
 def is_under_target(path: str, target: Path | str) -> bool:
     """Return whether an event object path is exactly the target or one of its children."""
     normalized_path = normalize_path(path)
     normalized_target = normalize_path(target)
-    return normalized_path == normalized_target or normalized_path.startswith(normalized_target + os.sep)
+    return normalized_path == normalized_target or normalized_path.startswith(normalized_target + "\\")
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:

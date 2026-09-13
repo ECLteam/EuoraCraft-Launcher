@@ -32,9 +32,7 @@ from .base import GameServiceError, VersionScanError, _GameState
 
 
 class ScanCoordinator(_GameState):
-    isolation_policies = frozenset(
-        {"disabled", "modded_only", "non_release_only", "modded_or_non_release", "all"}
-    )
+    isolation_policies = frozenset({"disabled", "modded_only", "non_release_only", "modded_or_non_release", "all"})
     default_isolation_policy = "all"
     non_release_version_types = frozenset({"snapshot", "april_fools", "old_alpha", "old_beta"})
 
@@ -492,7 +490,12 @@ class ScanCoordinator(_GameState):
         return self._matches_isolation_policy(game_path, version_id, self._isolation_policy())
 
     def _isolation_policy(self) -> str:
-        """读取并校验全局隔离策略，配置异常时回退到稳定默认值。"""
+        """
+        读取并校验全局隔离策略，配置异常时回退到稳定默认值。
+
+        配置提供器可能访问磁盘或外部配置；读取异常和未知策略都不会传播到扫描
+        流程，而是回退到启动器定义的默认隔离策略。
+        """
         provider = self._isolation_policy_provider
         if provider is None:
             return self.default_isolation_policy
@@ -506,7 +509,11 @@ class ScanCoordinator(_GameState):
         return self.default_isolation_policy
 
     def _matches_isolation_policy(self, game_path: Any, version_id: Any, policy: str) -> bool:
-        """按扫描元数据计算全局策略是否要求当前实例隔离。"""
+        """
+        按扫描元数据计算全局策略是否要求当前实例隔离。
+
+        仅依据实例的加载器和发布渠道元数据判断，不修改版本设置或扫描缓存。
+        """
         if policy == "disabled":
             return False
         if policy == "all":
@@ -521,7 +528,12 @@ class ScanCoordinator(_GameState):
         return is_modded or is_non_release
 
     def _version_isolation_metadata(self, game_path: Any, version_id: Any) -> dict[str, Any]:
-        """从扫描缓存或本地扫描结果中读取隔离策略所需的最小版本元数据。"""
+        """
+        从扫描缓存或本地扫描结果中读取隔离策略所需的最小版本元数据。
+
+        优先使用缓存副本；缓存未命中时进行本地扫描。读取失败仅记录警告并返回
+        空结果，让调用方按稳定回退规则处理。
+        """
         path = self._normalize_game_path(game_path)
         name = self._normalize_version_name(version_id, "实例名称")
         key = self._version_path_key(path)

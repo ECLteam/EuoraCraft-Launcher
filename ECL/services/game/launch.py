@@ -116,7 +116,12 @@ class LaunchCoordinator(_GameState):
         return str(runtime.path)
 
     def _prefer_java_executable(self, java_path: str, use_java_exe: bool) -> str:
-        """在 Windows 上按需把 javaw.exe 替换为同目录的 java.exe。"""
+        """
+        在 Windows 上按需把 javaw.exe 替换为同目录的 java.exe。
+
+        非 Windows 平台、未启用选项或同目录不存在 java.exe 时均保留原路径，
+        使该偏好不会阻断正常游戏启动。
+        """
         if not use_java_exe or sys.platform != "win32":
             return java_path
         selected = Path(java_path)
@@ -130,7 +135,12 @@ class LaunchCoordinator(_GameState):
         return java_path
 
     def _set_high_performance_gpu_preference(self, java_path: str) -> None:
-        """在 Windows 当前用户配置中登记 Java 的高性能 GPU 偏好。"""
+        """
+        在 Windows 当前用户配置中登记 Java 的高性能 GPU 偏好。
+
+        注册表写入仅影响当前用户；权限或系统策略拒绝写入时记录警告，但不影响
+        后续 Java 启动流程。
+        """
         if sys.platform != "win32" or winreg is None:
             return
         registry_path = r"Software\Microsoft\DirectX\UserGpuPreferences"
@@ -149,7 +159,12 @@ class LaunchCoordinator(_GameState):
             self.logger.warning("设置 Java 高性能 GPU 偏好失败，游戏仍会继续启动: %s", exc)
 
     def _run_pre_launch_command(self, command: str, working_directory: Path) -> None:
-        """在游戏工作目录执行用户配置的启动前命令，并将失败转换为稳定错误。"""
+        """
+        在游戏工作目录执行用户配置的启动前命令，并将失败转换为稳定错误。
+
+        命令受固定超时限制，输出只写入启动器日志；超时、无法创建进程与非零退出
+        码都会转换为明确的游戏服务错误。
+        """
         normalized = command.strip()
         if not normalized:
             return
@@ -173,13 +188,15 @@ class LaunchCoordinator(_GameState):
         if output:
             self.logger.info("启动前命令输出:\n%s", output)
         if completed.returncode != 0:
-            raise GameServiceError(
-                f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED"
-            )
+            raise GameServiceError(f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED")
 
     @classmethod
     def _normalize_renderer(cls, value: Any) -> str:
-        """规范化渲染器设置，拒绝无法映射到受控 Java Agent 的值。"""
+        """
+        规范化渲染器设置，拒绝无法映射到受控 Java Agent 的值。
+
+        只允许白名单内的标识，以免配置内容被拼接为任意 Java Agent 参数。
+        """
         renderer = str(value or "default").strip().casefold()
         if renderer not in cls._renderer_agents:
             raise GameServiceError("渲染器设置无效", "INVALID_GAME_OPTION")
@@ -187,11 +204,14 @@ class LaunchCoordinator(_GameState):
 
     @staticmethod
     def _mesa_loader_architecture() -> str:
-        """根据 Windows 系统环境选择 mesa-loader-windows 的 Maven 分类器。"""
+        """
+        根据 Windows 系统环境选择 mesa-loader-windows 的 Maven 分类器。
+
+        优先读取 WOW64 的实际系统架构变量，未识别的架构回退到 x64，以匹配
+        发布仓库默认提供的分类器。
+        """
         architecture = (
-            os.environ.get("PROCESSOR_ARCHITEW6432")
-            or os.environ.get("PROCESSOR_ARCHITECTURE")
-            or ""
+            os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE") or ""
         ).casefold()
         if architecture in {"x86", "i386", "i486", "i586", "i686"}:
             return "x86"
@@ -699,6 +719,7 @@ class LaunchCoordinator(_GameState):
                 self._running_games[run_token] = run
             self.launch_hooks.pre_launch(launch_context)
             try:
+
                 def on_instance_exit(code: int, name: str) -> None:
                     self._handle_instance_exit(run_token, code, name)
                     self.launch_hooks.on_exit(launch_context)
