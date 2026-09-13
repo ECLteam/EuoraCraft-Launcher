@@ -49,22 +49,37 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-_TAG_END = 0
-_TAG_BYTE = 1
-_TAG_SHORT = 2
-_TAG_INT = 3
-_TAG_LONG = 4
-_TAG_FLOAT = 5
-_TAG_DOUBLE = 6
-_TAG_BYTE_ARRAY = 7
-_TAG_STRING = 8
-_TAG_LIST = 9
-_TAG_COMPOUND = 10
-_TAG_INT_ARRAY = 11
-_TAG_LONG_ARRAY = 12
 
-# 限制 NBT 嵌套深度与数组长度，防止恶意构造的存档数据耗尽栈或内存。
-_MAX_DEPTH = 512
+class NbtTagIds:
+    """
+    Minecraft NBT 格式定义的标签编号。
+
+    编号与二进制协议固定对应，读写路径共用此表以保持序列化兼容。
+    """
+
+    end = 0
+    byte = 1
+    short = 2
+    integer = 3
+    long = 4
+    float = 5
+    double = 6
+    byte_array = 7
+    string = 8
+    list = 9
+    compound = 10
+    int_array = 11
+    long_array = 12
+
+
+class NbtParserPolicy:
+    """
+    NBT 二进制解析的资源限制。
+
+    限制嵌套深度，防止恶意构造的存档数据耗尽调用栈或内存。
+    """
+
+    max_depth = 512
 
 
 class _Tag:
@@ -82,77 +97,77 @@ class _Tag:
 
 
 class Byte(int, _Tag):
-    _id = _TAG_BYTE
+    _id = NbtTagIds.byte
 
     def unpack(self, json: bool = False) -> int:
         return int(self)
 
 
 class Short(int, _Tag):
-    _id = _TAG_SHORT
+    _id = NbtTagIds.short
 
     def unpack(self, json: bool = False) -> int:
         return int(self)
 
 
 class Int(int, _Tag):
-    _id = _TAG_INT
+    _id = NbtTagIds.integer
 
     def unpack(self, json: bool = False) -> int:
         return int(self)
 
 
 class Long(int, _Tag):
-    _id = _TAG_LONG
+    _id = NbtTagIds.long
 
     def unpack(self, json: bool = False) -> int:
         return int(self)
 
 
 class Float(float, _Tag):
-    _id = _TAG_FLOAT
+    _id = NbtTagIds.float
 
     def unpack(self, json: bool = False) -> float:
         return float(self)
 
 
 class Double(float, _Tag):
-    _id = _TAG_DOUBLE
+    _id = NbtTagIds.double
 
     def unpack(self, json: bool = False) -> float:
         return float(self)
 
 
 class String(str, _Tag):
-    _id = _TAG_STRING
+    _id = NbtTagIds.string
 
     def unpack(self, json: bool = False) -> str:
         return str(self)
 
 
 class ByteArray(bytes, _Tag):
-    _id = _TAG_BYTE_ARRAY
+    _id = NbtTagIds.byte_array
 
     def unpack(self, json: bool = False) -> list[int] | bytes:
         return list(self) if json else bytes(self)
 
 
 class IntArray(list, _Tag):
-    _id = _TAG_INT_ARRAY
+    _id = NbtTagIds.int_array
 
     def unpack(self, json: bool = False) -> list[int]:
         return [int(item) for item in self]
 
 
 class LongArray(list, _Tag):
-    _id = _TAG_LONG_ARRAY
+    _id = NbtTagIds.long_array
 
     def unpack(self, json: bool = False) -> list[int]:
         return [int(item) for item in self]
 
 
 class List(list, _Tag):
-    _id = _TAG_LIST
+    _id = NbtTagIds.list
     _element_type: type[_Tag] | None = None
 
     def __init__(self, values: Iterable[Any] = ()) -> None:
@@ -171,10 +186,11 @@ class List(list, _Tag):
 
 
 class Compound(dict, _Tag):
-    _id = _TAG_COMPOUND
+    _id = NbtTagIds.compound
 
     def unpack(self, json: bool = False) -> dict[str, Any]:
         return {key: value.unpack(json) if hasattr(value, "unpack") else value for key, value in self.items()}
+
 
 class File(Compound):
     """
@@ -190,6 +206,7 @@ class File(Compound):
         if self._gzipped if gzipped is None else gzipped:
             data = gzip.compress(data)
         Path(path).write_bytes(data)
+
 
 def load(path: Path | str) -> File:
     """
@@ -207,20 +224,27 @@ def load(path: Path | str) -> File:
     return File(root)
 
 
-_TAG_CLASSES: dict[int, type[_Tag]] = {
-    _TAG_BYTE: Byte,
-    _TAG_SHORT: Short,
-    _TAG_INT: Int,
-    _TAG_LONG: Long,
-    _TAG_FLOAT: Float,
-    _TAG_DOUBLE: Double,
-    _TAG_BYTE_ARRAY: ByteArray,
-    _TAG_STRING: String,
-    _TAG_LIST: List,
-    _TAG_COMPOUND: Compound,
-    _TAG_INT_ARRAY: IntArray,
-    _TAG_LONG_ARRAY: LongArray,
-}
+class NbtTypeRegistry:
+    """
+    NBT 标签编号到 Python 标签类型的映射。
+
+    列表解析通过本注册表恢复元素类型，保持空列表和具名标签的语义。
+    """
+
+    tag_classes: dict[int, type[_Tag]] = {
+        NbtTagIds.byte: Byte,
+        NbtTagIds.short: Short,
+        NbtTagIds.integer: Int,
+        NbtTagIds.long: Long,
+        NbtTagIds.float: Float,
+        NbtTagIds.double: Double,
+        NbtTagIds.byte_array: ByteArray,
+        NbtTagIds.string: String,
+        NbtTagIds.list: List,
+        NbtTagIds.compound: Compound,
+        NbtTagIds.int_array: IntArray,
+        NbtTagIds.long_array: LongArray,
+    }
 
 
 def _read_string(buffer: io.BytesIO) -> str:
@@ -277,7 +301,7 @@ def _parse_list(buffer: io.BytesIO, _depth: int = 0) -> List:
     if length < 0:
         raise ValueError("NBT 数组长度非法")
     result = List()
-    result._element_type = _TAG_CLASSES.get(element_id)
+    result._element_type = NbtTypeRegistry.tag_classes.get(element_id)
     for _ in range(length):
         result.append(_parse_payload(buffer, element_id, _depth + 1))
     return result
@@ -301,37 +325,44 @@ def _parse_compound(buffer: io.BytesIO, _depth: int = 0) -> Compound:
     result = Compound()
     while True:
         child_id = struct.unpack(">b", _read_exactly(buffer, 1))[0]
-        if child_id == _TAG_END:
+        if child_id == NbtTagIds.end:
             break
         name = _read_string(buffer)
         result[name] = _parse_payload(buffer, child_id, _depth + 1)
     return result
 
 
-_PARSERS: dict[int, Any] = {
-    _TAG_BYTE: _parse_byte,
-    _TAG_SHORT: _parse_short,
-    _TAG_INT: _parse_int,
-    _TAG_LONG: _parse_long,
-    _TAG_FLOAT: _parse_float,
-    _TAG_DOUBLE: _parse_double,
-    _TAG_BYTE_ARRAY: _parse_byte_array,
-    _TAG_STRING: _parse_string,
-    _TAG_LIST: _parse_list,
-    _TAG_COMPOUND: _parse_compound,
-    _TAG_INT_ARRAY: _parse_int_array,
-    _TAG_LONG_ARRAY: _parse_long_array,
-}
+class NbtParserRegistry:
+    """
+    NBT 标签编号到二进制载荷解析函数的映射。
+
+    递归容器标签会在调用时额外接收当前嵌套深度。
+    """
+
+    parsers: dict[int, Any] = {
+        NbtTagIds.byte: _parse_byte,
+        NbtTagIds.short: _parse_short,
+        NbtTagIds.integer: _parse_int,
+        NbtTagIds.long: _parse_long,
+        NbtTagIds.float: _parse_float,
+        NbtTagIds.double: _parse_double,
+        NbtTagIds.byte_array: _parse_byte_array,
+        NbtTagIds.string: _parse_string,
+        NbtTagIds.list: _parse_list,
+        NbtTagIds.compound: _parse_compound,
+        NbtTagIds.int_array: _parse_int_array,
+        NbtTagIds.long_array: _parse_long_array,
+    }
 
 
 def _parse_payload(buffer: io.BytesIO, tag_id: int, depth: int = 0) -> Any:
-    if depth > _MAX_DEPTH:
+    if depth > NbtParserPolicy.max_depth:
         raise ValueError("NBT 嵌套层级过深")
-    parser = _PARSERS.get(tag_id)
+    parser = NbtParserRegistry.parsers.get(tag_id)
     if parser is None:
         raise ValueError(f"未知 NBT 标签类型：{tag_id}")
     # 只有会递归的容器标签需要接收深度参数。
-    if tag_id in (_TAG_LIST, _TAG_COMPOUND):
+    if tag_id in (NbtTagIds.list, NbtTagIds.compound):
         return parser(buffer, depth)
     return parser(buffer)
 
@@ -340,19 +371,19 @@ def _tag_id(value: Any) -> int:
     if isinstance(value, _Tag):
         return value._id
     if isinstance(value, bool):
-        return _TAG_BYTE
+        return NbtTagIds.byte
     if isinstance(value, int):
-        return _TAG_INT
+        return NbtTagIds.integer
     if isinstance(value, float):
-        return _TAG_DOUBLE
+        return NbtTagIds.double
     if isinstance(value, str):
-        return _TAG_STRING
+        return NbtTagIds.string
     if isinstance(value, (list, tuple)):
-        return _TAG_LIST
+        return NbtTagIds.list
     if isinstance(value, dict):
-        return _TAG_COMPOUND
+        return NbtTagIds.compound
     if isinstance(value, bytes):
-        return _TAG_BYTE_ARRAY
+        return NbtTagIds.byte_array
     raise TypeError(f"无法序列化 NBT 值：{type(value).__name__}")
 
 
@@ -421,40 +452,62 @@ def _write_compound(buffer: io.BytesIO, value: Any) -> None:
         buffer.write(struct.pack(">b", _tag_id(item)))
         _write_string(buffer, key)
         _write_payload(buffer, item)
-    buffer.write(struct.pack(">b", _TAG_END))
+    buffer.write(struct.pack(">b", NbtTagIds.end))
 
 
-_WRITERS: dict[int, Any] = {
-    _TAG_BYTE: _write_byte,
-    _TAG_SHORT: _write_short,
-    _TAG_INT: _write_int,
-    _TAG_LONG: _write_long,
-    _TAG_FLOAT: _write_float,
-    _TAG_DOUBLE: _write_double,
-    _TAG_BYTE_ARRAY: _write_byte_array,
-    _TAG_STRING: _write_string_tag,
-    _TAG_LIST: _write_list,
-    _TAG_COMPOUND: _write_compound,
-    _TAG_INT_ARRAY: _write_int_array,
-    _TAG_LONG_ARRAY: _write_long_array,
-}
+class NbtWriterRegistry:
+    """
+    NBT 标签编号到二进制载荷写入函数的映射。
+
+    写入函数与解析注册表共用标签编号，保证序列化格式可逆。
+    """
+
+    writers: dict[int, Any] = {
+        NbtTagIds.byte: _write_byte,
+        NbtTagIds.short: _write_short,
+        NbtTagIds.integer: _write_int,
+        NbtTagIds.long: _write_long,
+        NbtTagIds.float: _write_float,
+        NbtTagIds.double: _write_double,
+        NbtTagIds.byte_array: _write_byte_array,
+        NbtTagIds.string: _write_string_tag,
+        NbtTagIds.list: _write_list,
+        NbtTagIds.compound: _write_compound,
+        NbtTagIds.int_array: _write_int_array,
+        NbtTagIds.long_array: _write_long_array,
+    }
 
 
 def _write_payload(buffer: io.BytesIO, value: Any) -> None:
-    _WRITERS[_tag_id(value)](buffer, value)
+    NbtWriterRegistry.writers[_tag_id(value)](buffer, value)
 
 
 def _element_type_id(value: List) -> int:
     element_type = getattr(value, "_element_type", None)
-    return element_type._id if element_type is not None else _TAG_END
+    return element_type._id if element_type is not None else NbtTagIds.end
 
 
 def _serialize(root: Compound) -> bytes:
     buffer = io.BytesIO()
-    buffer.write(struct.pack(">b", _TAG_COMPOUND))
+    buffer.write(struct.pack(">b", NbtTagIds.compound))
     _write_string(buffer, "")
     _write_payload(buffer, root)
     return buffer.getvalue()
 
 
-__all__ = ["Byte", "ByteArray", "Compound", "Double", "File", "Float", "Int", "IntArray", "List", "Long", "LongArray", "Short", "String", "load"]
+__all__ = [
+    "Byte",
+    "ByteArray",
+    "Compound",
+    "Double",
+    "File",
+    "Float",
+    "Int",
+    "IntArray",
+    "List",
+    "Long",
+    "LongArray",
+    "Short",
+    "String",
+    "load",
+]
