@@ -22,7 +22,7 @@
 #       - user_agreement_save(body) -> dict[str, Any] — 保存用户已接受协议的本地状态。
 #       - user_agreement_clear(body) -> dict[str, Any] — 清除用户协议接受状态，但保留匿名标识供再次确认。
 #       - export_logs(body) -> dict[str, Any] — 将当前启动器日志打包为 ZIP 文件。
-#       - debug_reset_launcher_data(body) -> dict[str, Any] — 重置启动器数据。
+#       - debug_reset_launcher_data(body) -> dict[str, Any] — 还原启动器设置。
 #       - debug_clear_plugins(body) -> dict[str, Any] — 清理插件数据。
 #       - debug_devtools_open(body) -> dict[str, Any] — 打开 WebView 开发者工具（F12 调试窗口）。
 # ============================================================
@@ -338,7 +338,7 @@ class SystemHandlers(_FrontendState):
     @_ipc_handler("DEBUG_MAINTENANCE_FAILED")
     async def debug_reset_launcher_data(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        重置启动器数据。
+        还原启动器设置，并保留已登录账户。
 
         :param body: 经过边界校验的 IPC 请求数据
         """

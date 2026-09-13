@@ -10,7 +10,7 @@
 #   - class ScheduledMaintenance — 待执行的维护任务。
 #   - class MaintenanceResult — 维护结果。
 #   - schedule_debug_maintenance(data_path, action) -> ScheduledMaintenance — 安排一次仅在下次启动时执行的受限调试维护操作。
-#   - apply_pending_debug_maintenance(data_path, home_dir=…) -> list[MaintenanceResult] — 执行已安排的调试维护操作，并直接删除原数据（不再保留备份）。
+#   - apply_pending_debug_maintenance(data_path) -> list[MaintenanceResult] — 执行已安排的调试维护操作，并将受影响数据移入可恢复备份。
 # ============================================================
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from ECL.utils import DebugMaintenanceError, atomic_write_text
 
@@ -28,11 +29,6 @@ PENDING_MAINTENANCE_FILE = ".pending_debug_maintenance.json"
 DEBUG_MAINTENANCE_TARGETS: dict[str, tuple[str, ...]] = {
     "reset_launcher_data": ("setting.json", "info_card.json", "notice.json"),
     "clear_plugins": ("plugins", "plugin_config"),
-}
-
-# 账户数据已迁移到用户主目录；还原启动器数据时按相对主目录的路径一并删除。
-HOME_MAINTENANCE_TARGETS: dict[str, tuple[str, ...]] = {
-    "reset_launcher_data": (".ECL/accounts",),
 }
 
 
@@ -54,7 +50,8 @@ class MaintenanceResult:
     """
 
     action: str
-    removed_targets: tuple[str, ...]
+    archived_targets: tuple[str, ...]
+    backup_path: Path | None
 
 
 def _get_data_root(data_path: Path | str) -> Path:
@@ -70,19 +67,30 @@ def _get_safe_target(root: Path, relative_path: str) -> Path:
     return target
 
 
-def _get_safe_home_target(home_root: Path, relative_path: str) -> Path:
-    target = (home_root / relative_path).resolve()
-    if target == home_root or home_root not in target.parents:
-        raise DebugMaintenanceError(f"维护目标超出主目录: {relative_path}")
-    return target
+def _maintenance_backup_path(root: Path, task_id: str, action: str, relative_path: str) -> Path:
+    return root / "backups" / "debug-maintenance" / task_id / action / relative_path
 
 
-def _delete_target(target: Path) -> None:
-    # 统一删除文件或目录，存在性由调用方判断。
-    if target.is_dir():
-        shutil.rmtree(target)
-    else:
-        target.unlink()
+def _maintenance_journal_path(root: Path) -> Path:
+    return root / "maintenance-history.jsonl"
+
+
+def _append_maintenance_record(root: Path, record: dict[str, object]) -> None:
+    journal_path = _maintenance_journal_path(root)
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    with journal_path.open("a", encoding="utf-8") as journal:
+        journal.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        journal.write("\n")
+
+
+def _claim_pending_marker(marker_path: Path) -> tuple[Path, str] | None:
+    task_id = uuid4().hex
+    claimed_path = marker_path.with_name(f"{marker_path.stem}.running-{task_id}{marker_path.suffix}")
+    try:
+        marker_path.replace(claimed_path)
+    except FileNotFoundError:
+        return None
+    return claimed_path, task_id
 
 
 def _read_pending_actions(marker_path: Path) -> list[str]:
@@ -117,40 +125,78 @@ def schedule_debug_maintenance(data_path: Path | str, action: str) -> ScheduledM
     return ScheduledMaintenance(action, DEBUG_MAINTENANCE_TARGETS[action])
 
 
-def apply_pending_debug_maintenance(
-    data_path: Path | str, home_dir: Path | str | None = None
-) -> list[MaintenanceResult]:
+def apply_pending_debug_maintenance(data_path: Path | str) -> list[MaintenanceResult]:
     """
-    执行已安排的调试维护操作，并直接删除原数据（不再保留备份）。
+    执行已安排的调试维护操作，并将受影响数据移动到可恢复备份。
 
     :param data_path: 启动器数据目录
-    :param home_dir: 用户主目录；仅测试环境传入隔离目录，生产默认为 ``Path.home()``
+    :return: 本次成功执行的维护结果；不存在待处理任务时返回空列表
+
+    维护操作只允许影响 ``data_path`` 内的白名单目标，绝不访问用户主目录中的账户数据。
+    待处理标记通过原子重命名领取，避免多个启动器进程重复执行同一任务。
     """
     root = _get_data_root(data_path)
     marker_path = root / PENDING_MAINTENANCE_FILE
-    if not marker_path.exists():
+    claimed = _claim_pending_marker(marker_path)
+    if claimed is None:
         return []
-    actions = _read_pending_actions(marker_path)
+    claimed_path, task_id = claimed
+    actions = _read_pending_actions(claimed_path)
     if not actions:
-        marker_path.replace(marker_path.with_suffix(".invalid.json"))
+        invalid_path = claimed_path.with_name(f"{claimed_path.stem}.invalid{claimed_path.suffix}")
+        claimed_path.replace(invalid_path)
+        _append_maintenance_record(
+            root,
+            {
+                "actions": [],
+                "finished_at": datetime.now(UTC).isoformat(),
+                "status": "invalid",
+                "task_id": task_id,
+            },
+        )
         return []
 
-    home_root = Path(home_dir).resolve() if home_dir is not None else Path.home()
     results: list[MaintenanceResult] = []
-    for action in actions:
-        removed_targets: list[str] = []
-        for relative_path in DEBUG_MAINTENANCE_TARGETS[action]:
-            target = _get_safe_target(root, relative_path)
-            if not target.exists():
-                continue
-            _delete_target(target)
-            removed_targets.append(relative_path)
-        for relative_path in HOME_MAINTENANCE_TARGETS.get(action, ()):
-            target = _get_safe_home_target(home_root, relative_path)
-            if not target.exists():
-                continue
-            _delete_target(target)
-            removed_targets.append(str(target))
-        results.append(MaintenanceResult(action, tuple(removed_targets)))
-    marker_path.unlink(missing_ok=True)
+    try:
+        for action in actions:
+            archived_targets: list[str] = []
+            backup_path: Path | None = None
+            for relative_path in DEBUG_MAINTENANCE_TARGETS[action]:
+                target = _get_safe_target(root, relative_path)
+                if not target.exists():
+                    continue
+                destination = _maintenance_backup_path(root, task_id, action, relative_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(destination))
+                archived_targets.append(relative_path)
+                backup_path = _maintenance_backup_path(root, task_id, action, "")
+            results.append(MaintenanceResult(action, tuple(archived_targets), backup_path))
+    except OSError as exc:
+        failed_path = claimed_path.with_name(f"{claimed_path.stem}.failed{claimed_path.suffix}")
+        claimed_path.replace(failed_path)
+        _append_maintenance_record(
+            root,
+            {
+                "actions": actions,
+                "error": str(exc),
+                "finished_at": datetime.now(UTC).isoformat(),
+                "status": "failed",
+                "task_id": task_id,
+            },
+        )
+        raise
+    else:
+        claimed_path.unlink(missing_ok=True)
+        _append_maintenance_record(
+            root,
+            {
+                "actions": actions,
+                "archived_targets": {
+                    result.action: list(result.archived_targets) for result in results
+                },
+                "finished_at": datetime.now(UTC).isoformat(),
+                "status": "completed",
+                "task_id": task_id,
+            },
+        )
     return results
