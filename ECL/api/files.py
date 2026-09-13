@@ -49,14 +49,12 @@ from ECL.api.models import (
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (
-    _MAX_REMOTE_IMAGE_SIZE,
+    ImagePolicy,
     _download_remote_image,
     _encode_image_bytes,
     _FrontendState,
     _guess_image_extension,
-    _image_mime_map,
     _ipc_handler,
-    _mime_to_ext,
     _normalize_image_url,
     _open_folder,
     _read_image_data_url,
@@ -64,35 +62,31 @@ from .bridge import (
 )
 from .contracts import success
 
-_REMOTE_IMAGE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
-_REMOTE_IMAGE_CACHE_MAX_FILES = 128
-_REMOTE_IMAGE_CACHE_MAX_BYTES = 96 * 1024 * 1024
-_MAX_FILE_READ_BYTES = 20 * 1024 * 1024
-
-# 图片选择对话框按用途映射标题与允许的扩展名。
-_IMAGE_SELECTION_OPTIONS: dict[ImagePurpose, tuple[str, list[str]]] = {
-    ImagePurpose.SKIN: ("选择 Minecraft 皮肤", ["png"]),
-    ImagePurpose.CAPE: ("选择 Minecraft 披风", ["png"]),
-    ImagePurpose.INSTANCE_ICON: ("选择实例图标", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
-    ImagePurpose.BACKGROUND: ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
-}
-
-# 文件保存对话框按导出用途映射标题、默认文件名与允许的扩展名。
-_SAVE_FILE_OPTIONS: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
-    FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
-    FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
-    FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
-    FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.mrpack", ["mrpack"]),
-    FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
-    FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
-    FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
-}
-
 
 class FileHandlers(_FrontendState):
     """
     提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。
     """
+
+    remote_image_cache_ttl_seconds = 7 * 24 * 60 * 60
+    remote_image_cache_max_files = 128
+    remote_image_cache_max_bytes = 96 * 1024 * 1024
+    max_file_read_bytes = 20 * 1024 * 1024
+    image_selection_options: dict[ImagePurpose, tuple[str, list[str]]] = {
+        ImagePurpose.SKIN: ("选择 Minecraft 皮肤", ["png"]),
+        ImagePurpose.CAPE: ("选择 Minecraft 披风", ["png"]),
+        ImagePurpose.INSTANCE_ICON: ("选择实例图标", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
+        ImagePurpose.BACKGROUND: ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
+    }
+    save_file_options: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
+        FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
+        FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
+        FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
+        FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.mrpack", ["mrpack"]),
+        FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
+        FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
+        FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
+    }
 
     @staticmethod
     def _remote_image_cache_dir(data_path: Path) -> Path:
@@ -108,13 +102,13 @@ class FileHandlers(_FrontendState):
         # 按远程 URL 读取持久化图片缓存，并返回其新鲜度。
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
-        for extension in _image_mime_map:
+        for extension in ImagePolicy.mime_by_extension:
             candidate = cache_dir / f"{digest}{extension}"
             try:
                 stat = candidate.stat()
-                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > _MAX_REMOTE_IMAGE_SIZE:
+                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > ImagePolicy.max_remote_image_bytes:
                     continue
-                return candidate.read_bytes(), extension, time() - stat.st_mtime <= _REMOTE_IMAGE_CACHE_TTL_SECONDS
+                return candidate.read_bytes(), extension, time() - stat.st_mtime <= self.remote_image_cache_ttl_seconds
             except OSError:
                 continue
         return None
@@ -123,14 +117,14 @@ class FileHandlers(_FrontendState):
         # 原子写入远程图片缓存，并按最近使用时间限制缓存规模。
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
-        safe_extension = extension if extension in _image_mime_map else ".jpg"
+        safe_extension = extension if extension in ImagePolicy.mime_by_extension else ".jpg"
         target = cache_dir / f"{digest}{safe_extension}"
         atomic_write_bytes(target, image_bytes)
 
         entries: list[tuple[Path, int, float]] = []
         for candidate in cache_dir.iterdir():
             try:
-                if candidate.is_symlink() or not candidate.is_file() or candidate.suffix.lower() not in _image_mime_map:
+                if candidate.is_symlink() or not candidate.is_file() or candidate.suffix.lower() not in ImagePolicy.mime_by_extension:
                     continue
                 stat = candidate.stat()
                 entries.append((candidate, stat.st_size, stat.st_mtime))
@@ -140,7 +134,7 @@ class FileHandlers(_FrontendState):
         retained_bytes = 0
         for index, (candidate, size, _mtime) in enumerate(entries):
             retained_bytes += size
-            if index < _REMOTE_IMAGE_CACHE_MAX_FILES and retained_bytes <= _REMOTE_IMAGE_CACHE_MAX_BYTES:
+            if index < self.remote_image_cache_max_files and retained_bytes <= self.remote_image_cache_max_bytes:
                 continue
             try:
                 candidate.unlink()
@@ -226,7 +220,7 @@ class FileHandlers(_FrontendState):
         path = Path(self._normalize_file_path(raw_path)).expanduser()
         if not path.is_file():
             return {"success": False, "message": "文件不存在", "errorCode": "FILE_NOT_FOUND"}
-        if path.stat().st_size > _MAX_FILE_READ_BYTES:
+        if path.stat().st_size > self.max_file_read_bytes:
             return {"success": False, "message": "文件超过 20 MiB 读取限制", "errorCode": "FILE_TOO_LARGE"}
         content = await to_thread.run_sync(path.read_bytes)
         encoded = base64.b64encode(content).decode("ascii") if mode == "base64" else content.decode("utf-8")
@@ -314,7 +308,7 @@ class FileHandlers(_FrontendState):
             payload, mime = self._parse_image_data_url(data_url)
         except (ValueError, base64.binascii.Error) as exc:
             raise ValueError(f"无法解析图片数据: {exc}") from exc
-        ext = _mime_to_ext.get(mime, ".jpg")
+        ext = ImagePolicy.extension_by_mime.get(mime, ".jpg")
         digest = hashlib.sha1(payload).hexdigest()[:16]
         target_dir = self.data_path / "backgrounds"
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -340,7 +334,7 @@ class FileHandlers(_FrontendState):
         if isinstance(data_url, str) and data_url.startswith("data:"):
             try:
                 image_bytes, mime = self._parse_image_data_url(data_url)
-                ext = _mime_to_ext.get(mime, ".png")
+                ext = ImagePolicy.extension_by_mime.get(mime, ".png")
                 default_name = f"background{ext}"
             except (ValueError, base64.binascii.Error) as exc:
                 return {"success": False, "message": f"无法解析图片数据: {exc}", "errorCode": "INVALID_IMAGE_DATA"}
@@ -365,7 +359,7 @@ class FileHandlers(_FrontendState):
 
         picked = await to_thread.run_sync(
             lambda: DialogExt.file(self._webview).blocking_save_file(
-                add_filter=("图片", list(_image_mime_map.keys())),
+                add_filter=("图片", list(ImagePolicy.mime_by_extension)),
                 set_file_name=default_name,
                 set_title="保存背景图",
             )
@@ -442,7 +436,7 @@ class FileHandlers(_FrontendState):
             if not target.is_dir():
                 self.logger.warning("目录不存在或不是文件夹: %s", target)
                 return []
-            return sorted(str(p) for p in target.iterdir() if p.is_file() and p.suffix.lower() in _image_mime_map)
+            return sorted(str(p) for p in target.iterdir() if p.is_file() and p.suffix.lower() in ImagePolicy.mime_by_extension)
 
         files = await to_thread.run_sync(_list)
         self.logger.info("目录图片文件数量: %d", len(files))
@@ -519,7 +513,7 @@ class FileHandlers(_FrontendState):
         request, invalid = _validate_body(ImageSelectionRequest, body)
         if invalid is not None:
             return invalid
-        title, extensions = _IMAGE_SELECTION_OPTIONS.get(
+        title, extensions = self.image_selection_options.get(
             request.purpose, ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"])
         )
         path = await self._pick_path(False, title, extensions)
@@ -579,7 +573,7 @@ class FileHandlers(_FrontendState):
         request, invalid = _validate_body(FileSaveRequest, body)
         if invalid is not None:
             return invalid
-        title, default_name, extensions = _SAVE_FILE_OPTIONS.get(
+        title, default_name, extensions = self.save_file_options.get(
             request.purpose, ("导出资源清单", "resources.json", ["zip"])
         )
         if request.default_name:

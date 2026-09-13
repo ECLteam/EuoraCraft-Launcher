@@ -11,10 +11,10 @@
 
 from ECL.api.accounts import AccountHandlers
 from ECL.api.bridge import (
+    ImagePolicy,
     _Emitter,
     _FrontendState,
     _guess_image_extension,
-    _mime_to_ext,
     _normalize_image_url,
 )
 from ECL.api.connector import ConnectorHandlers
@@ -49,9 +49,9 @@ class FrontendApi(
 
 __all__ = [
     "FrontendApi",
+    "ImagePolicy",
     "_Emitter",
     "_FrontendState",
     "_guess_image_extension",
-    "_mime_to_ext",
     "_normalize_image_url",
 ]

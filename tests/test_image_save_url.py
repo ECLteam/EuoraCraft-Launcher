@@ -259,8 +259,7 @@ def test_normalize_image_url_strips_trailing_punctuation() -> None:
 
 def test_guess_image_extension_from_content_type() -> None:
     response = _MockResponse(200, b"", headers={"content-type": "image/webp"})
-    print("MIME_TO_EXT:", frontend_module._mime_to_ext)
-    print("CT:", response.headers.get("content-type"))
+    assert frontend_module.ImagePolicy.extension_by_mime["image/webp"] == ".webp"
     assert frontend_module._guess_image_extension(response, "https://example.com/a") == ".webp"
 
 
@@ -349,7 +348,7 @@ def test_image_fetch_data_url_uses_stale_disk_cache_when_texture_server_fails(tm
     png_bytes = _make_png_bytes()
     api._write_remote_image_cache(url, ".png", png_bytes)
     cache_file = next((api.data_path / "cache" / "remote-images").glob("*.png"))
-    stale_time = time.time() - files_module._REMOTE_IMAGE_CACHE_TTL_SECONDS - 10
+    stale_time = time.time() - api.remote_image_cache_ttl_seconds - 10
     os.utime(cache_file, (stale_time, stale_time))
 
     async def fail_download(_url):

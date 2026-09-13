@@ -48,91 +48,36 @@ from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url
 
-_queued_frontend_events = frozenset(
-    {
-        "launcher:error",
-        "launcher:popup",
-        "launcher:log",
-        "game:instances_changed",
-        "process:instance_log",
-        "process:instances_changed",
+
+class ImagePolicy:
+    """
+    远程图片下载、编码和缓存使用的共享限制与 MIME 映射。
+
+    文件处理器与桥接辅助函数共用本策略，避免跨模块复制配置值。
+    """
+
+    mime_by_extension = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".webp": "image/webp",
     }
-)
-_max_pending_frontend_events = 50
-
-_image_mime_map = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-    ".webp": "image/webp",
-}
-
-_mime_to_ext = {mime: ext for ext, mime in _image_mime_map.items()}
-_mime_to_ext["image/jpeg"] = ".jpg"
-
-_MAX_REMOTE_IMAGE_SIZE = 50 * 1024 * 1024
-_REMOTE_IMAGE_TIMEOUT = 15.0
-_REMOTE_IMAGE_CHUNK_BYTES = 64 * 1024
-
-# 图片读取结果内存缓存（LRU）：避免重复读盘与 Base64 编码。缓存键包含文件
-# 最后修改时间与大小，文件变化后自然失效，与先前的显式键行为一致。
-_image_cache_max = 32
-
-# 游戏运行时参数表：调用方 body 显式值优先，缺失时回退到游戏配置的对应键。
-_RUNTIME_OPTION_FIELDS = (
-    # (结果字段, body 键, 配置取值函数)
-    ("memory", "memory", lambda c: c.get("memory_size", default_config["game"]["memory_size"])),
-    ("width", "width", lambda c: c.get("game_width", default_config["game"]["game_width"])),
-    ("height", "height", lambda c: c.get("game_height", default_config["game"]["game_height"])),
-    ("fullscreen", "fullscreen", lambda c: bool(c.get("fullscreen", default_config["game"]["fullscreen"]))),
-    ("jvm_args", "jvm_args", lambda c: c.get("jvm_args", [])),
-)
+    extension_by_mime = {mime: ext for ext, mime in mime_by_extension.items()}
+    extension_by_mime["image/jpeg"] = ".jpg"
+    max_remote_image_bytes = 50 * 1024 * 1024
+    remote_image_timeout_seconds = 15.0
+    remote_image_chunk_bytes = 64 * 1024
+    read_cache_max_items = 32
 
 
-@functools.lru_cache(maxsize=_image_cache_max)
+@functools.lru_cache(maxsize=ImagePolicy.read_cache_max_items)
 def _read_image_data_url(file_path: Path, mtime_ns: int, size: int) -> tuple[str, str, int]:
     # 读取图片并编码为 Data URL（LRU 缓存），返回 Data URL、MIME 与 Base64 长度。
     ext = file_path.suffix.lower() or ".png"
     data_url, b64 = _encode_image_bytes(file_path.read_bytes(), ext)
-    return data_url, _image_mime_map.get(ext, "image/jpeg"), len(b64)
-
-
-_IPC_ERRORS = (
-    AccountError,
-    WardrobeError,
-    GameServiceError,
-    DebugMaintenanceError,
-    AuthException,
-    NetException,
-    httpx.HTTPError,
-    OSError,
-    ValueError,
-)
-
-_MODAL_ERROR_CODES = frozenset(
-    {
-        "ACCOUNT_SAVE_FAILED",
-        "ECL_CONFIG_WRITE_FAILED",
-        "MOD_COPY_FAILED",
-        "VERSION_UNINSTALL_FAILED",
-        "WARDROBE_FILE_READ_FAILED",
-        "WARDROBE_METADATA_INVALID",
-    }
-)
-
-# 弹窗展现面向用户的友好文案，原始技术细节另有 detail 字段承载，避免直接暴露给用户。
-_MODAL_ERROR_MESSAGES = {
-    "ACCOUNT_SAVE_FAILED": "账号数据保存失败，请重试。若问题持续，请导出日志以便排查。",
-    "ECL_CONFIG_WRITE_FAILED": "配置保存失败，请重试。若问题持续，请导出日志以便排查。",
-    "MOD_COPY_FAILED": "模组文件复制失败，请重试。若问题持续，请导出日志以便排查。",
-    "VERSION_UNINSTALL_FAILED": "版本卸载失败，请检查文件是否被占用后再重试。",
-    "WARDROBE_FILE_READ_FAILED": "衣柜数据读取失败，请重试。若问题持续，请导出日志以便排查。",
-    "WARDROBE_METADATA_INVALID": "衣柜数据格式异常，请重试。若问题持续，请导出日志以便排查。",
-}
-
-_FILE_ERROR_MESSAGE = "启动器执行本地文件操作时遇到问题，请关闭后重试。若问题持续，请导出日志以便排查。"
+    return data_url, ImagePolicy.mime_by_extension.get(ext, "image/jpeg"), len(b64)
 
 
 def _is_http_url(url: str, *, scheme_lower: bool = False) -> bool:
@@ -178,16 +123,16 @@ def _guess_image_extension(response: httpx.Response, url: str) -> str:
     filename = _extract_filename_from_header(response.headers.get("content-disposition"))
     if filename:
         ext = Path(filename).suffix.lower()
-        if ext in _image_mime_map:
+        if ext in ImagePolicy.mime_by_extension:
             return ext
 
     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    if content_type in _mime_to_ext:
-        return _mime_to_ext[content_type]
+    if content_type in ImagePolicy.extension_by_mime:
+        return ImagePolicy.extension_by_mime[content_type]
 
     parsed = urlsplit(str(response.url))
     ext = Path(unquote(parsed.path)).suffix.lower()
-    if ext in _image_mime_map:
+    if ext in ImagePolicy.mime_by_extension:
         return ext
 
     return ".jpg"
@@ -198,7 +143,7 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
     async with (
         httpx.AsyncClient(
             follow_redirects=True,
-            timeout=_REMOTE_IMAGE_TIMEOUT,
+            timeout=ImagePolicy.remote_image_timeout_seconds,
             headers={"User-Agent": "EuoraCraft-Launcher"},
             proxy=download_proxy_url(),
         ) as client,
@@ -206,9 +151,9 @@ async def _download_remote_image(url: str) -> tuple[bytes, httpx.Response]:
     ):
         response.raise_for_status()
         data = bytearray()
-        async for chunk in response.aiter_bytes(_REMOTE_IMAGE_CHUNK_BYTES):
+        async for chunk in response.aiter_bytes(ImagePolicy.remote_image_chunk_bytes):
             data.extend(chunk)
-            if len(data) > _MAX_REMOTE_IMAGE_SIZE:
+            if len(data) > ImagePolicy.max_remote_image_bytes:
                 raise ValueError("远程图片超过最大大小限制")
         return bytes(data), response
 
@@ -218,7 +163,7 @@ def _encode_image_bytes(
     ext: str,
 ) -> tuple[str, str]:
     # 将图片字节按扩展名编码为 Data URL 与 Base64 数据。
-    mime = _image_mime_map.get(ext, "image/jpeg")
+    mime = ImagePolicy.mime_by_extension.get(ext, "image/jpeg")
     b64 = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}", b64
 
@@ -241,10 +186,14 @@ def _make_error_response(exc: Exception, fallback_code: str, events: Any | None 
     error_code = getattr(exc, "error_code", fallback_code)
     raw_message = str(exc).strip() or type(exc).__name__
     is_unexpected_file_error = isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError)
-    if error_code in _MODAL_ERROR_CODES or is_unexpected_file_error:
+    if error_code in _FrontendState.modal_error_codes or is_unexpected_file_error:
         error_id = uuid4().hex
         title = "启动器无法完成本地数据操作"
-        message = _FILE_ERROR_MESSAGE if is_unexpected_file_error else _MODAL_ERROR_MESSAGES.get(error_code, _FILE_ERROR_MESSAGE)
+        message = (
+            _FrontendState.file_error_message
+            if is_unexpected_file_error
+            else _FrontendState.modal_error_messages.get(error_code, _FrontendState.file_error_message)
+        )
         payload = {"error_id": error_id, "title": title, "message": message, "detail": raw_message}
         if events is not None:
             events.emit("launcher:error", payload)
@@ -284,7 +233,7 @@ async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitabl
         return await awaitable
     except TimeoutError:
         return _make_timeout_response(state, operation)
-    except _IPC_ERRORS as exc:
+    except _FrontendState.ipc_errors as exc:
         if isinstance(exc, httpx.HTTPError):
             state.logger.warning("%s 远程请求失败: %s", operation, exc)
         else:
@@ -336,6 +285,55 @@ class _FrontendState:
     前端 IPC 处理器的共享状态门面，聚合日志、应用事件与各服务句柄。
     """
 
+    queued_frontend_events = frozenset(
+        {
+            "launcher:error",
+            "launcher:popup",
+            "launcher:log",
+            "game:instances_changed",
+            "process:instance_log",
+            "process:instances_changed",
+        }
+    )
+    max_pending_frontend_events = 50
+    runtime_option_fields = (
+        ("memory", "memory", lambda c: c.get("memory_size", default_config["game"]["memory_size"])),
+        ("width", "width", lambda c: c.get("game_width", default_config["game"]["game_width"])),
+        ("height", "height", lambda c: c.get("game_height", default_config["game"]["game_height"])),
+        ("fullscreen", "fullscreen", lambda c: bool(c.get("fullscreen", default_config["game"]["fullscreen"]))),
+        ("jvm_args", "jvm_args", lambda c: c.get("jvm_args", [])),
+    )
+    ipc_errors = (
+        AccountError,
+        WardrobeError,
+        GameServiceError,
+        DebugMaintenanceError,
+        AuthException,
+        NetException,
+        httpx.HTTPError,
+        OSError,
+        ValueError,
+    )
+    modal_error_codes = frozenset(
+        {
+            "ACCOUNT_SAVE_FAILED",
+            "ECL_CONFIG_WRITE_FAILED",
+            "MOD_COPY_FAILED",
+            "VERSION_UNINSTALL_FAILED",
+            "WARDROBE_FILE_READ_FAILED",
+            "WARDROBE_METADATA_INVALID",
+        }
+    )
+    modal_error_messages = {
+        "ACCOUNT_SAVE_FAILED": "账号数据保存失败，请重试。若问题持续，请导出日志以便排查。",
+        "ECL_CONFIG_WRITE_FAILED": "配置保存失败，请重试。若问题持续，请导出日志以便排查。",
+        "MOD_COPY_FAILED": "模组文件复制失败，请重试。若问题持续，请导出日志以便排查。",
+        "VERSION_UNINSTALL_FAILED": "版本卸载失败，请检查文件是否被占用后再重试。",
+        "WARDROBE_FILE_READ_FAILED": "衣柜数据读取失败，请重试。若问题持续，请导出日志以便排查。",
+        "WARDROBE_METADATA_INVALID": "衣柜数据格式异常，请重试。若问题持续，请导出日志以便排查。",
+    }
+    file_error_message = "启动器执行本地文件操作时遇到问题，请关闭后重试。若问题持续，请导出日志以便排查。"
+
     def __init__(self, context: ApplicationContext):
         """
         收集应用上下文中的日志、事件与各服务句柄。
@@ -374,11 +372,11 @@ class _FrontendState:
 
     def _queue_frontend_event(self, event: str, payload: Any) -> None:
         # 将需排队的前端事件追加到待发送缓冲，超过上限时丢弃最早的事件。
-        if event not in _queued_frontend_events:
+        if event not in self.queued_frontend_events:
             return
         with self._frontend_event_lock:
             self._pending_frontend_events.append((event, payload))
-            if len(self._pending_frontend_events) > _max_pending_frontend_events:
+            if len(self._pending_frontend_events) > self.max_pending_frontend_events:
                 self._pending_frontend_events.pop(0)
 
     def emit_to_frontend(self, event: str, payload: Any, *, target_label: str | None = None) -> None:
@@ -514,7 +512,7 @@ class _FrontendState:
             normalized["crash"] = payload["crash"]
         with self._frontend_event_lock:
             self._pending_error_presentations[normalized["error_id"]] = normalized
-            while len(self._pending_error_presentations) > _max_pending_frontend_events:
+            while len(self._pending_error_presentations) > self.max_pending_frontend_events:
                 oldest = next(iter(self._pending_error_presentations))
                 self._pending_error_presentations.pop(oldest, None)
         self.emit_to_frontend("launcher:error", normalized)
@@ -734,7 +732,7 @@ class _FrontendState:
             "source": download_config.get("mirror_source") or "official",
             "java_path": java_path,
         }
-        for field, body_key, config_lookup in _RUNTIME_OPTION_FIELDS:
+        for field, body_key, config_lookup in self.runtime_option_fields:
             value = body.get(body_key)
             if value is None:
                 value = config_lookup(game_config)
