@@ -6,7 +6,7 @@
 # 文件作用：实例资源协调器：资源包/光影包/数据包/原理图清单与安装。
 #
 # 公开接口：
-#   - RESOURCE_DIRECTORIES（dict）
+#   - class ResourceCatalogPolicy — 保存资源目录与在线平台映射。
 #   - class ResourceCoordinator — 统一管理模组、资源包、光影包、数据包和原理图。
 #       - list_resources(game_path, version_id, resource_type, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 扫描资源文件、解析元数据，并标记重复哈希、重复模组 ID 与缺失依赖。
 #       - install_resources(game_path, version_id, resource_type, source_paths, version_isolation=…, world_id=…) -> dict[str, str] — 异步复制一个或多个本地资源，目标文件通过临时文件原子提交。
@@ -74,46 +74,52 @@ def _proxied_stream(method: str, url: str, **kwargs: Any) -> Any:
     return httpx.stream(method, url, **kwargs)
 
 
-RESOURCE_DIRECTORIES = {
-    "mod": "mods",
-    "resourcepack": "resourcepacks",
-    "shaderpack": "shaderpacks",
-    "schematic": "schematics",
-}
+class ResourceCatalogPolicy:
+    """
+    保存资源目录、在线平台类型和排序映射。
+    """
 
-# 在线搜索的 resource_type -> Modrinth project_type 映射（存档无在线下载类型）
-_RESOURCE_PROJECT_TYPE = {
-    "mod": "mod",
-    "resourcepack": "resourcepack",
-    "shaderpack": "shader",
-    "datapack": "datapack",
-}
+    directories = {
+        "mod": "mods",
+        "resourcepack": "resourcepacks",
+        "shaderpack": "shaderpacks",
+        "schematic": "schematics",
+    }
 
-# CurseForge 分类 classId 映射，用于只搜索对应资源类型
-_CURSEFORGE_CLASS_ID = {
-    "mod": 6,
-    "resourcepack": 12,
-    "shaderpack": 6552,
-    "datapack": 6945,
-    "world": 17,
-}
+    # 在线搜索的 resource_type -> Modrinth project_type 映射（存档无在线下载类型）
+    project_types = {
+        "mod": "mod",
+        "resourcepack": "resourcepack",
+        "shaderpack": "shader",
+        "datapack": "datapack",
+    }
 
-_CURSEFORGE_WEB_PATH = {
-    "mod": "mc-mods",
-    "resourcepack": "texture-packs",
-    "shaderpack": "shaders",
-    "datapack": "data-packs",
-    "world": "worlds",
-}
+    # CurseForge 分类 classId 映射，用于只搜索对应资源类型
+    curseforge_class_ids = {
+        "mod": 6,
+        "resourcepack": 12,
+        "shaderpack": 6552,
+        "datapack": 6945,
+        "world": 17,
+    }
 
-# CurseForge 排序 sortField 映射；默认按人气排序（2=Popularity）
-_CURSEFORGE_SORT_FIELD = {
-    "relevance": 2,
-    "downloads": 6,
-    "follows": 2,
-    "newest": 11,
-    "updated": 3,
-}
+    curseforge_web_paths = {
+        "mod": "mc-mods",
+        "resourcepack": "texture-packs",
+        "shaderpack": "shaders",
+        "datapack": "data-packs",
+        "world": "worlds",
+    }
+
+    # CurseForge 排序 sortField 映射；默认按人气排序（2=Popularity）
+    curseforge_sort_fields = {
+        "relevance": 2,
+        "downloads": 6,
+        "follows": 2,
+        "newest": 11,
+        "updated": 3,
+    }
+    minecraft_version_pattern = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
 
 
 class _ModrinthSearchHit(BaseModel):
@@ -193,11 +199,8 @@ def _sha512(path: Path) -> str:
 
 # 匹配 version_id 中最后一个 x.y[.z] 形态的 MC 版本号；取最后一个以兼容
 # "fabric-loader-0.16.14-1.21.5" 这类加载器版本号在前、MC 版本号在后的命名。
-_MC_VERSION_RE = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
-
-
 def _extract_minecraft_version(version_id: str) -> str:
-    matches = list(_MC_VERSION_RE.finditer(version_id))
+    matches = list(ResourceCatalogPolicy.minecraft_version_pattern.finditer(version_id))
     return matches[-1].group(0) if matches else version_id
 
 
@@ -238,7 +241,7 @@ class ResourceCoordinator:
                 raise GameServiceError("数据包管理需要先选择世界", "WORLD_REQUIRED")
             world = resolve_relative_id(target.data_path / "saves", world_id)
             return world / "datapacks"
-        directory = RESOURCE_DIRECTORIES.get(resource_type)
+        directory = ResourceCatalogPolicy.directories.get(resource_type)
         if directory is None:
             raise GameServiceError("未知资源类型", "INVALID_RESOURCE_TYPE")
         return target.data_path / directory
@@ -628,7 +631,7 @@ class ResourceCoordinator:
         if resource_type in {"mod", "datapack"} and re.search(r"[\u4e00-\u9fff]", query):
             query = self._mcmod.to_english_query(query) or query
         if source == "modrinth":
-            project_type = _RESOURCE_PROJECT_TYPE.get(resource_type)
+            project_type = ResourceCatalogPolicy.project_types.get(resource_type)
             if project_type is None:
                 raise GameServiceError("未知在线资源类型", "INVALID_RESOURCE_TYPE")
             if resource_type == "mod":
@@ -671,10 +674,10 @@ class ResourceCoordinator:
             # 默认按人气排序，classId 保证只返回对应资源类型（mod 不混入整合包）。
             params: dict[str, Any] = {
                 "gameId": 432,
-                "classId": _CURSEFORGE_CLASS_ID.get(resource_type, 6),
+                "classId": ResourceCatalogPolicy.curseforge_class_ids.get(resource_type, 6),
                 "gameVersion": game_version,
                 "searchFilter": query,
-                "sortField": _CURSEFORGE_SORT_FIELD.get(sort, 2),
+                "sortField": ResourceCatalogPolicy.curseforge_sort_fields.get(sort, 2),
                 "sortOrder": "desc",
                 "index": offset,
                 "pageSize": min(limit, 50),
@@ -717,7 +720,7 @@ class ResourceCoordinator:
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定项目页 URL 路径
         :return: 前端 ``ModSearchItem`` 兼容的字典列表
         """
-        project_type = _RESOURCE_PROJECT_TYPE.get(resource_type, "mod")
+        project_type = ResourceCatalogPolicy.project_types.get(resource_type, "mod")
         result: list[dict[str, Any]] = []
         for raw in hits:
             if not isinstance(raw, dict):
@@ -725,7 +728,7 @@ class ResourceCoordinator:
             hit = _normalize_curseforge_hit(raw) if source == "curseforge" else raw
             slug = str(hit.get("slug") or "")
             if source == "curseforge":
-                section = _CURSEFORGE_WEB_PATH.get(resource_type, "mc-mods")
+                section = ResourceCatalogPolicy.curseforge_web_paths.get(resource_type, "mc-mods")
                 project_url = f"https://www.curseforge.com/minecraft/{section}/{slug}"
             else:
                 project_url = f"https://modrinth.com/{project_type}/{slug}"
@@ -794,7 +797,7 @@ class ResourceCoordinator:
                 }
             )
             slug = str(data.get("slug") or "")
-            section = _CURSEFORGE_WEB_PATH.get(resource_type, "mc-mods")
+            section = ResourceCatalogPolicy.curseforge_web_paths.get(resource_type, "mc-mods")
             links = data.get("links") or {}
             return {
                 "id": str(data.get("id") or project_id),
@@ -820,7 +823,7 @@ class ResourceCoordinator:
         response.raise_for_status()
         data = response.json()
         slug = str(data.get("slug") or "")
-        project_type = str(data.get("project_type") or _RESOURCE_PROJECT_TYPE.get(resource_type, "mod"))
+        project_type = str(data.get("project_type") or ResourceCatalogPolicy.project_types.get(resource_type, "mod"))
         dto = _ModrinthProjectInfo.model_validate(data)
         dto.slug = slug
         dto.resource_type = resource_type

@@ -95,17 +95,22 @@ def _register_frontend_injection(kind: str) -> Callable[[type, str, tuple], None
     return registrar
 
 
-_DECORATOR_REGISTRARS: dict[str, Callable[[type, str, tuple], None]] = {
-    "event": _register_event,
-    "command": _register_command,
-    "setting": _register_setting,
-    "route": _register_route,
-    "css": _register_frontend_injection("css"),
-    "html": _register_frontend_injection("html"),
-    "script": _register_frontend_injection("script"),
-    "vue_slot": _register_frontend_injection("vue_slot"),
-    "vue_route": _register_frontend_injection("vue_route"),
-}
+class PluginDecoratorRegistry:
+    """
+    保存插件装饰器类型到注册器的映射。
+    """
+
+    registrars: dict[str, Callable[[type, str, tuple], None]] = {
+        "event": _register_event,
+        "command": _register_command,
+        "setting": _register_setting,
+        "route": _register_route,
+        "css": _register_frontend_injection("css"),
+        "html": _register_frontend_injection("html"),
+        "script": _register_frontend_injection("script"),
+        "vue_slot": _register_frontend_injection("vue_slot"),
+        "vue_route": _register_frontend_injection("vue_route"),
+    }
 
 
 def _register_decorated(cls) -> None:
@@ -115,7 +120,7 @@ def _register_decorated(cls) -> None:
         if meta is None:
             continue
         kind, args = meta
-        registrar = _DECORATOR_REGISTRARS.get(kind)
+        registrar = PluginDecoratorRegistry.registrars.get(kind)
         if registrar is not None:
             registrar(cls, name, args)
 

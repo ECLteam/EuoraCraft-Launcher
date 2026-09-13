@@ -28,7 +28,13 @@ from typing import Any
 
 from ECL.utils import get_logger
 
-_SOURCE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
+
+class InstanceCompatibilityPolicy:
+    """
+    保存实例兼容来源的标识校验规则。
+    """
+
+    source_pattern = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +113,7 @@ class InstanceCompatibilityRegistry:
         :param watch_paths: 返回需要参与扫描缓存失效判断的外部文件
         """
         normalized = str(source).strip().casefold()
-        if not _SOURCE_PATTERN.fullmatch(normalized):
+        if not InstanceCompatibilityPolicy.source_pattern.fullmatch(normalized):
             raise ValueError(f"实例兼容来源标识无效: {source}")
         if not callable(reader):
             raise TypeError("实例兼容读取器必须可调用")

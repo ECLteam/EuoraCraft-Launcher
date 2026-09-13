@@ -54,4 +54,4 @@ def test_frontend_log_handler_forwards_and_keeps_history(tmp_path) -> None:
     assert history, "历史缓冲应保留已转发的日志"
     assert history[-1]["message"] == "hello-terminal"
     manager.shutdown()
-    logging_mod._FRONTEND_BUFFER = None
+    logging_mod.FrontendLogRuntimeState.buffer = None

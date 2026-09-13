@@ -40,9 +40,15 @@ from typing import Any
 
 from ECL.utils import get_logger
 
-_EXTENSION_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
-_PROTOCOL_PATTERN = re.compile(r"^[a-z0-9_]+:[a-z0-9_]+$")
-_MISSING = object()
+
+class ConnectorProtocolPolicy:
+    """
+    保存联机扩展协议的校验规则与哨兵值。
+    """
+
+    extension_pattern = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
+    protocol_pattern = re.compile(r"^[a-z0-9_]+:[a-z0-9_]+$")
+    missing = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +117,11 @@ class ConnectorSessionContext:
             raise RuntimeError("当前联机会话不支持发送扩展协议")
         return self._request(protocol, body)
 
-    def request_json(self, protocol: str, payload: Any = _MISSING) -> Any:
+    def request_json(self, protocol: str, payload: Any = ConnectorProtocolPolicy.missing) -> Any:
         """
         发送 JSON 扩展请求并解析成功响应。
         """
-        body = b"" if payload is _MISSING else _encode_json(payload)
+        body = b"" if payload is ConnectorProtocolPolicy.missing else _encode_json(payload)
         status, response_body = self.request(protocol, body)
         if status != 0:
             detail = response_body.decode("utf-8", errors="replace")
@@ -185,14 +191,14 @@ class ConnectorExtensionRegistry:
         注册或原位更新一个插件拥有的联机扩展。
         """
         normalized_name = str(name).strip().casefold()
-        if not _EXTENSION_PATTERN.fullmatch(normalized_name):
+        if not ConnectorProtocolPolicy.extension_pattern.fullmatch(normalized_name):
             raise ValueError(f"联机扩展标识无效: {name}")
         normalized_protocols: dict[str, ConnectorProtocolHandler] = {}
         for protocol, handler in protocols.items():
             normalized_protocol = str(protocol).strip().casefold()
-            if len(normalized_protocol.encode("ascii", errors="ignore")) > 255 or not _PROTOCOL_PATTERN.fullmatch(
-                normalized_protocol
-            ):
+            if len(
+                normalized_protocol.encode("ascii", errors="ignore")
+            ) > 255 or not ConnectorProtocolPolicy.protocol_pattern.fullmatch(normalized_protocol):
                 raise ValueError(f"联机扩展协议名无效: {protocol}")
             if not callable(handler):
                 raise TypeError(f"联机扩展协议处理器必须可调用: {protocol}")

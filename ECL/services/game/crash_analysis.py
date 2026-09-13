@@ -42,22 +42,6 @@ from .base import GameServiceError
 
 Confidence = Literal["certain", "likely", "possible"]
 
-_MAX_SOURCE_BYTES = 16 * 1024 * 1024
-_MAX_ARCHIVE_FILES = 100
-_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
-_MAX_ANALYSIS_CHARS = 6 * 1024 * 1024
-_MAX_EVIDENCE_LENGTH = 320
-_STALE_SESSION_SECONDS = 24 * 60 * 60
-_LOG_SETTLE_SECONDS = 2.0
-
-_TEXT_SUFFIXES = frozenset({".log", ".txt"})
-_CRASH_FILE_NAMES = frozenset({"latest.log", "debug.log"})
-_REDACTION_PATTERNS = (
-    re.compile(r"(?i)(--accessToken\s+)(\S+)"),
-    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)(\S+)"),
-    re.compile(r"(?i)((?:access[_-]?token|client[_-]?token|password|session)\s*[:=]\s*)([^\s,;]+)"),
-)
-
 
 @dataclass(frozen=True)
 class _Rule:
@@ -78,52 +62,236 @@ def _patterns(*values: str) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(value, re.IGNORECASE) for value in values)
 
 
-# 规则只匹配 Minecraft、JVM 与主流加载器的公开输出；原因代码和前端文案均为 ECL 自有定义。
-_RULES = (
-    _Rule("jvm.invalid_arguments", "certain", 0, _patterns(r"unrecognized (?:vm )?option", r"could not create the java virtual machine")),
-    _Rule("memory.out_of_memory", "certain", 0, _patterns(r"outofmemoryerror", r"out of physical ram", r"out of memory error", r"could not reserve enough space")),
-    _Rule("java.incompatible_version", "certain", 0, _patterns(r"unsupported class file (?:major|minor) version", r"compiled by a more recent version of the java runtime", r"level is not supported by the active jre")),
-    _Rule("java.module_access", "likely", 0, _patterns(r"module java\.base does not (?:export|open)", r"inaccessibleobjectexception", r"java\.lang\.nosuchfieldexception: ucp")),
-    _Rule("java.legacy_forge", "likely", 0, _patterns(r"manifestentryverifier", r"unable to make protected final java\.lang\.class")),
-    _Rule("java.openj9", "certain", 0, _patterns(r"openj9 is (?:not supported|incompatible)", r"j9vminternals")),
-    _Rule("java.32bit_heap", "likely", 0, _patterns(r"invalid maximum heap size", r"unable to allocate .* object heap")),
-    _Rule("java.architecture_mismatch", "likely", 0, _patterns(r"can.t load (?:amd )?64-bit .* on a 32-bit platform", r"wrong elf class", r"%1 is not a valid win32 application")),
-    _Rule("graphics.opengl_unsupported", "certain", 0, _patterns(r"driver does not appear to support opengl", r"pixel format not accelerated", r"couldn.t set pixel format")),
-    _Rule("graphics.driver_crash", "likely", 0, _patterns(r"exception_access_violation", r"problematic frame:.*(?:nvoglv|atio|ig\w*)")),
-    _Rule("jvm.native_crash", "likely", 0, _patterns(r"a fatal error has been detected by the java runtime environment", r"internal error \(.*?\), pid=\d+", r"sigsegv")),
-    _Rule("native.library_missing", "likely", 0, _patterns(r"unsatisfiedlinkerror", r"failed to locate library", r"no .* in java\.library\.path")),
-    _Rule("files.integrity_failure", "likely", 0, _patterns(r"signer information does not match", r"invalid or corrupt jarfile", r"zip error:.*invalid")),
-    _Rule("loader.install_incomplete", "likely", 0, _patterns(r"cannot find launch target fmlclient", r"invalid paths argument.*fmlcore", r"classnotfoundexception:.*(?:modlauncher|fabricloader)")),
-    _Rule("mod.extracted_jar", "certain", 0, _patterns(r"extracted mod jars? found", r"directories below appear to be extracted jar files")),
-    _Rule("mod.duplicate", "certain", 0, _patterns(r"duplicatemodsfoundexception", r"found duplicate mods?", r"modresolutionexception:\s*duplicate")),
-    _Rule("mod.missing_dependency", "certain", 0, _patterns(r"missing or unsupported mandatory dependencies", r"depends on .* which is missing", r"requires version .* of .* but only")),
-    _Rule("mod.incompatible", "certain", 0, _patterns(r"incompatible mods found", r"some of your mods are incompatible", r"mod resolution encountered an incompatible mod set")),
-    _Rule("mod.mixin_failure", "likely", 1, _patterns(r"mixin (?:prepare|apply|transform) failed", r"mixinbootstrap.*(?:not found|missing)", r"invalidmixinexception")),
-    _Rule("mod.config_failure", "likely", 1, _patterns(r"failed loading config file", r"parsingexception", r"failed to load config .* for mod")),
-    _Rule("mod.initialization_failure", "likely", 1, _patterns(r"failed to create mod instance", r"caught exception from ", r"exception during mod loading")),
-    _Rule("mod.loader_reported", "likely", 1, _patterns(r"failure message:", r"a potential solution has been determined", r"mod loading has failed")),
-    _Rule("mod.optifine_conflict", "likely", 1, _patterns(r"optifine.*(?:incompatible|not compatible)", r"shaders mod detected.*optifine", r"optifine.*nosuchmethoderror")),
-    _Rule("resource.render_failure", "likely", 1, _patterns(r"1282:\s*invalid operation", r"lower resolution resourcepack", r"texture.*(?:too large|out of memory)")),
-    _Rule("world.block_failure", "likely", 1, _patterns(r"block location:\s*world:", r"ticking block")),
-    _Rule("world.entity_failure", "likely", 1, _patterns(r"entity.s exact location:", r"ticking entity")),
-    _Rule("game.manual_debug_crash", "certain", 1, _patterns(r"manually triggered debug crash")),
-    _Rule("game.crash_report", "likely", 2, _patterns(r"crash report saved to", r"this crash report has been saved to", r"could not save crash report")),
-)
+class CrashAnalysisPolicy:
+    """
+    保存崩溃分析的资源限制、脱敏规则和诊断规则。
+    """
 
-_IGNORED_STACK_PREFIXES = (
-    "java.",
-    "javax.",
-    "jdk.",
-    "sun.",
-    "com.mojang.",
-    "net.minecraft.",
-    "net.minecraftforge.",
-    "net.fabricmc.",
-    "org.spongepowered.",
-    "org.lwjgl.",
-    "com.google.",
-    "org.apache.",
-)
+    max_source_bytes = 16 * 1024 * 1024
+    max_archive_files = 100
+    max_archive_bytes = 64 * 1024 * 1024
+    max_analysis_chars = 6 * 1024 * 1024
+    max_evidence_length = 320
+    stale_session_seconds = 24 * 60 * 60
+    log_settle_seconds = 2.0
+    text_suffixes = frozenset({".log", ".txt"})
+    crash_file_names = frozenset({"latest.log", "debug.log"})
+    redaction_patterns = (
+        re.compile(r"(?i)(--accessToken\s+)(\S+)"),
+        re.compile(r"(?i)(authorization\s*:\s*bearer\s+)(\S+)"),
+        re.compile(r"(?i)((?:access[_-]?token|client[_-]?token|password|session)\s*[:=]\s*)([^\s,;]+)"),
+    )
+
+    # 规则只匹配 Minecraft、JVM 与主流加载器的公开输出；原因代码和前端文案均为 ECL 自有定义。
+    rules = (
+        _Rule(
+            "jvm.invalid_arguments",
+            "certain",
+            0,
+            _patterns(r"unrecognized (?:vm )?option", r"could not create the java virtual machine"),
+        ),
+        _Rule(
+            "memory.out_of_memory",
+            "certain",
+            0,
+            _patterns(
+                r"outofmemoryerror", r"out of physical ram", r"out of memory error", r"could not reserve enough space"
+            ),
+        ),
+        _Rule(
+            "java.incompatible_version",
+            "certain",
+            0,
+            _patterns(
+                r"unsupported class file (?:major|minor) version",
+                r"compiled by a more recent version of the java runtime",
+                r"level is not supported by the active jre",
+            ),
+        ),
+        _Rule(
+            "java.module_access",
+            "likely",
+            0,
+            _patterns(
+                r"module java\.base does not (?:export|open)",
+                r"inaccessibleobjectexception",
+                r"java\.lang\.nosuchfieldexception: ucp",
+            ),
+        ),
+        _Rule(
+            "java.legacy_forge",
+            "likely",
+            0,
+            _patterns(r"manifestentryverifier", r"unable to make protected final java\.lang\.class"),
+        ),
+        _Rule("java.openj9", "certain", 0, _patterns(r"openj9 is (?:not supported|incompatible)", r"j9vminternals")),
+        _Rule(
+            "java.32bit_heap",
+            "likely",
+            0,
+            _patterns(r"invalid maximum heap size", r"unable to allocate .* object heap"),
+        ),
+        _Rule(
+            "java.architecture_mismatch",
+            "likely",
+            0,
+            _patterns(
+                r"can.t load (?:amd )?64-bit .* on a 32-bit platform",
+                r"wrong elf class",
+                r"%1 is not a valid win32 application",
+            ),
+        ),
+        _Rule(
+            "graphics.opengl_unsupported",
+            "certain",
+            0,
+            _patterns(
+                r"driver does not appear to support opengl",
+                r"pixel format not accelerated",
+                r"couldn.t set pixel format",
+            ),
+        ),
+        _Rule(
+            "graphics.driver_crash",
+            "likely",
+            0,
+            _patterns(r"exception_access_violation", r"problematic frame:.*(?:nvoglv|atio|ig\w*)"),
+        ),
+        _Rule(
+            "jvm.native_crash",
+            "likely",
+            0,
+            _patterns(
+                r"a fatal error has been detected by the java runtime environment",
+                r"internal error \(.*?\), pid=\d+",
+                r"sigsegv",
+            ),
+        ),
+        _Rule(
+            "native.library_missing",
+            "likely",
+            0,
+            _patterns(r"unsatisfiedlinkerror", r"failed to locate library", r"no .* in java\.library\.path"),
+        ),
+        _Rule(
+            "files.integrity_failure",
+            "likely",
+            0,
+            _patterns(r"signer information does not match", r"invalid or corrupt jarfile", r"zip error:.*invalid"),
+        ),
+        _Rule(
+            "loader.install_incomplete",
+            "likely",
+            0,
+            _patterns(
+                r"cannot find launch target fmlclient",
+                r"invalid paths argument.*fmlcore",
+                r"classnotfoundexception:.*(?:modlauncher|fabricloader)",
+            ),
+        ),
+        _Rule(
+            "mod.extracted_jar",
+            "certain",
+            0,
+            _patterns(r"extracted mod jars? found", r"directories below appear to be extracted jar files"),
+        ),
+        _Rule(
+            "mod.duplicate",
+            "certain",
+            0,
+            _patterns(r"duplicatemodsfoundexception", r"found duplicate mods?", r"modresolutionexception:\s*duplicate"),
+        ),
+        _Rule(
+            "mod.missing_dependency",
+            "certain",
+            0,
+            _patterns(
+                r"missing or unsupported mandatory dependencies",
+                r"depends on .* which is missing",
+                r"requires version .* of .* but only",
+            ),
+        ),
+        _Rule(
+            "mod.incompatible",
+            "certain",
+            0,
+            _patterns(
+                r"incompatible mods found",
+                r"some of your mods are incompatible",
+                r"mod resolution encountered an incompatible mod set",
+            ),
+        ),
+        _Rule(
+            "mod.mixin_failure",
+            "likely",
+            1,
+            _patterns(
+                r"mixin (?:prepare|apply|transform) failed",
+                r"mixinbootstrap.*(?:not found|missing)",
+                r"invalidmixinexception",
+            ),
+        ),
+        _Rule(
+            "mod.config_failure",
+            "likely",
+            1,
+            _patterns(r"failed loading config file", r"parsingexception", r"failed to load config .* for mod"),
+        ),
+        _Rule(
+            "mod.initialization_failure",
+            "likely",
+            1,
+            _patterns(r"failed to create mod instance", r"caught exception from ", r"exception during mod loading"),
+        ),
+        _Rule(
+            "mod.loader_reported",
+            "likely",
+            1,
+            _patterns(r"failure message:", r"a potential solution has been determined", r"mod loading has failed"),
+        ),
+        _Rule(
+            "mod.optifine_conflict",
+            "likely",
+            1,
+            _patterns(
+                r"optifine.*(?:incompatible|not compatible)",
+                r"shaders mod detected.*optifine",
+                r"optifine.*nosuchmethoderror",
+            ),
+        ),
+        _Rule(
+            "resource.render_failure",
+            "likely",
+            1,
+            _patterns(
+                r"1282:\s*invalid operation", r"lower resolution resourcepack", r"texture.*(?:too large|out of memory)"
+            ),
+        ),
+        _Rule("world.block_failure", "likely", 1, _patterns(r"block location:\s*world:", r"ticking block")),
+        _Rule("world.entity_failure", "likely", 1, _patterns(r"entity.s exact location:", r"ticking entity")),
+        _Rule("game.manual_debug_crash", "certain", 1, _patterns(r"manually triggered debug crash")),
+        _Rule(
+            "game.crash_report",
+            "likely",
+            2,
+            _patterns(r"crash report saved to", r"this crash report has been saved to", r"could not save crash report"),
+        ),
+    )
+
+    ignored_stack_prefixes = (
+        "java.",
+        "javax.",
+        "jdk.",
+        "sun.",
+        "com.mojang.",
+        "net.minecraft.",
+        "net.minecraftforge.",
+        "net.fabricmc.",
+        "org.spongepowered.",
+        "org.lwjgl.",
+        "com.google.",
+        "org.apache.",
+    )
 
 
 class CrashAnalyzer:
@@ -156,7 +324,7 @@ class CrashAnalyzer:
         self._closed = False
 
     def _cleanup_stale_sessions(self) -> None:
-        cutoff = time.time() - _STALE_SESSION_SECONDS
+        cutoff = time.time() - CrashAnalysisPolicy.stale_session_seconds
         for path in self._sessions_root.iterdir():
             try:
                 if path.is_dir() and path.stat().st_mtime < cutoff:
@@ -167,7 +335,7 @@ class CrashAnalyzer:
     @staticmethod
     def _redact(value: str) -> str:
         redacted = value
-        for pattern in _REDACTION_PATTERNS:
+        for pattern in CrashAnalysisPolicy.redaction_patterns:
             redacted = pattern.sub(r"\1***", redacted)
         try:
             home = str(Path.home())
@@ -180,12 +348,12 @@ class CrashAnalyzer:
     @staticmethod
     def _read_bounded(path: Path, *, reject_oversize: bool = False) -> str:
         with path.open("rb") as stream:
-            data = stream.read(_MAX_SOURCE_BYTES + 1)
-        if len(data) > _MAX_SOURCE_BYTES:
+            data = stream.read(CrashAnalysisPolicy.max_source_bytes + 1)
+        if len(data) > CrashAnalysisPolicy.max_source_bytes:
             if reject_oversize:
                 raise GameServiceError("崩溃分析文件过大", "CRASH_FILE_TOO_LARGE")
-            head = data[: _MAX_SOURCE_BYTES // 3]
-            tail = data[-(_MAX_SOURCE_BYTES * 2 // 3) :]
+            head = data[: CrashAnalysisPolicy.max_source_bytes // 3]
+            tail = data[-(CrashAnalysisPolicy.max_source_bytes * 2 // 3) :]
             data = head + b"\n[ECL: oversized log truncated]\n" + tail
         if b"\0" in data[:4096]:
             raise GameServiceError("崩溃分析文件不是文本日志", "CRASH_FILE_NOT_TEXT")
@@ -200,7 +368,7 @@ class CrashAnalyzer:
         mode = info.external_attr >> 16
         if stat.S_ISLNK(mode):
             raise GameServiceError("压缩包包含符号链接", "CRASH_ARCHIVE_UNSAFE")
-        if member.suffix.casefold() not in _TEXT_SUFFIXES:
+        if member.suffix.casefold() not in CrashAnalysisPolicy.text_suffixes:
             raise GameServiceError("压缩包包含不支持的文件类型", "CRASH_ARCHIVE_UNSUPPORTED")
         return member
 
@@ -211,14 +379,14 @@ class CrashAnalyzer:
         try:
             with ZipFile(source) as archive:
                 members = [entry for entry in archive.infolist() if not entry.is_dir()]
-                if len(members) > _MAX_ARCHIVE_FILES:
+                if len(members) > CrashAnalysisPolicy.max_archive_files:
                     raise GameServiceError("崩溃报告压缩包文件数量过多", "CRASH_ARCHIVE_TOO_LARGE")
                 for index, info in enumerate(members):
                     member = self._safe_member(info)
-                    if info.file_size > _MAX_SOURCE_BYTES:
+                    if info.file_size > CrashAnalysisPolicy.max_source_bytes:
                         raise GameServiceError("压缩包中的单个日志过大", "CRASH_ARCHIVE_TOO_LARGE")
                     total_size += info.file_size
-                    if total_size > _MAX_ARCHIVE_BYTES:
+                    if total_size > CrashAnalysisPolicy.max_archive_bytes:
                         raise GameServiceError("崩溃报告压缩包解压后过大", "CRASH_ARCHIVE_TOO_LARGE")
                     target = destination / f"{index:03d}-{member.name}"
                     target.write_bytes(archive.read(info))
@@ -256,10 +424,10 @@ class CrashAnalyzer:
                     if not path.is_file():
                         continue
                     if (
-                        name in _CRASH_FILE_NAMES
+                        name in CrashAnalysisPolicy.crash_file_names
                         or name.startswith("crash-")
                         or name.startswith("hs_err_pid")
-                    ) and path.suffix.casefold() in _TEXT_SUFFIXES:
+                    ) and path.suffix.casefold() in CrashAnalysisPolicy.text_suffixes:
                         candidates.add(path.resolve(strict=False))
             except OSError:
                 continue
@@ -303,7 +471,7 @@ class CrashAnalyzer:
         output_path = sources_dir / "game-output.log"
         output_path.write_text(output, encoding="utf-8")
         collected = [output_path]
-        deadline = time.monotonic() + _LOG_SETTLE_SECONDS
+        deadline = time.monotonic() + CrashAnalysisPolicy.log_settle_seconds
         candidates: list[Path] = []
         while True:
             candidates = []
@@ -346,7 +514,7 @@ class CrashAnalyzer:
         metadata_dir.mkdir(exist_ok=True)
         version_json = game_path / "versions" / version_id / f"{version_id}.json"
         try:
-            if version_json.is_file() and version_json.stat().st_size <= _MAX_SOURCE_BYTES:
+            if version_json.is_file() and version_json.stat().st_size <= CrashAnalysisPolicy.max_source_bytes:
                 raw = json.loads(version_json.read_text(encoding="utf-8"))
                 sanitized = self._sanitize_metadata(raw)
                 (metadata_dir / "version.json").write_text(
@@ -387,13 +555,15 @@ class CrashAnalyzer:
                 self._copy_text(path, target, reject_oversize=True)
                 path.unlink(missing_ok=True)
                 collected.append(target)
-        elif source.suffix.casefold() in _TEXT_SUFFIXES:
+        elif source.suffix.casefold() in CrashAnalysisPolicy.text_suffixes:
             target = sources_dir / f"manual-{source.name}"
             self._copy_text(source, target, reject_oversize=True)
             collected = [target]
         else:
             raise GameServiceError("仅支持 .log、.txt 或 .zip 崩溃报告", "CRASH_FILE_UNSUPPORTED")
-        output_path = next((path for path in collected if path.name.casefold().endswith(("latest.log", "debug.log"))), None)
+        output_path = next(
+            (path for path in collected if path.name.casefold().endswith(("latest.log", "debug.log"))), None
+        )
         if output_path is None:
             output_path = collected[0] if collected else None
         output = output_path.read_text(encoding="utf-8", errors="replace") if output_path else ""
@@ -404,7 +574,7 @@ class CrashAnalyzer:
         evidence: list[str] = []
         for line in text.splitlines():
             if pattern.search(line):
-                normalized = " ".join(line.strip().split())[:_MAX_EVIDENCE_LENGTH]
+                normalized = " ".join(line.strip().split())[: CrashAnalysisPolicy.max_evidence_length]
                 if normalized and normalized not in evidence:
                     evidence.append(normalized)
                 if len(evidence) == 3:
@@ -430,7 +600,7 @@ class CrashAnalyzer:
 
     def _match_rules(self, text: str) -> list[dict[str, Any]]:
         matches: list[tuple[_Rule, list[str]]] = []
-        for rule in _RULES:
+        for rule in CrashAnalysisPolicy.rules:
             evidence: list[str] = []
             for pattern in rule.patterns:
                 evidence.extend(item for item in self._evidence(text, pattern) if item not in evidence)
@@ -455,7 +625,7 @@ class CrashAnalyzer:
         candidates: list[str] = []
         for match in re.finditer(r"\bat\s+([A-Za-z_$][\w$]*(?:\.[\w$]+){2,})", text):
             class_name = match.group(1)
-            if class_name.startswith(_IGNORED_STACK_PREFIXES):
+            if class_name.startswith(CrashAnalysisPolicy.ignored_stack_prefixes):
                 continue
             package = ".".join(class_name.split(".")[:3])
             if package not in candidates:
@@ -498,7 +668,9 @@ class CrashAnalyzer:
                         display_name = CrashAnalyzer._mod_display_name(archive, jar.stem)
                         names = archive.namelist()
                         for name in names[:5000]:
-                            if not name.endswith(".class") or name.startswith(("net/minecraft/", "java/", "com/mojang/")):
+                            if not name.endswith(".class") or name.startswith(
+                                ("net/minecraft/", "java/", "com/mojang/")
+                            ):
                                 continue
                             parts = PurePosixPath(name).parts
                             if len(parts) >= 4:
@@ -512,7 +684,9 @@ class CrashAnalyzer:
         if not candidates:
             return None
         package_map = self._mod_package_map([game_path / "mods", game_directory / "mods"])
-        mods = sorted({name for package in candidates for prefix, name in package_map.items() if package.startswith(prefix)})
+        mods = sorted(
+            {name for package in candidates for prefix, name in package_map.items() if package.startswith(prefix)}
+        )
         if mods:
             return {
                 "code": "stack.suspected_mod",
@@ -529,8 +703,12 @@ class CrashAnalyzer:
 
     def _analyze_text(self, texts: list[str], game_path: Path, game_directory: Path) -> list[dict[str, Any]]:
         combined = "\n".join(texts)
-        if len(combined) > _MAX_ANALYSIS_CHARS:
-            combined = combined[: _MAX_ANALYSIS_CHARS // 2] + "\n" + combined[-(_MAX_ANALYSIS_CHARS // 2) :]
+        if len(combined) > CrashAnalysisPolicy.max_analysis_chars:
+            combined = (
+                combined[: CrashAnalysisPolicy.max_analysis_chars // 2]
+                + "\n"
+                + combined[-(CrashAnalysisPolicy.max_analysis_chars // 2) :]
+            )
         reasons = self._match_rules(combined)
         if reasons:
             return reasons

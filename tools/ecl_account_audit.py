@@ -31,11 +31,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-FILE_SYSTEM_AUDIT_GUID = "{0CCE921D-69AE-11D9-BED3-505054503030}"
-EVENT_ID_FILE_ACCESS = "4663"
-STATE_FILE_NAME = "ecl-account-audit-state.json"
-LOG_FILE_NAME = "ecl-account-audit.jsonl"
-MAX_SEEN_EVENT_IDS = 10_000
+
+class AccountAuditPolicy:
+    """Store the stable Windows audit identifiers and local retention limits."""
+
+    file_system_audit_guid = "{0CCE921D-69AE-11D9-BED3-505054503030}"
+    event_id_file_access = "4663"
+    state_file_name = "ecl-account-audit-state.json"
+    log_file_name = "ecl-account-audit.jsonl"
+    max_seen_event_ids = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +168,7 @@ def _parse_policy_report(report: str) -> AuditPolicy:
 
 def get_audit_policy() -> AuditPolicy:
     """Read the current Windows File System audit flags using a locale-neutral GUID."""
-    result = _run(["auditpol.exe", "/get", f"/subcategory:{FILE_SYSTEM_AUDIT_GUID}", "/r"])
+    result = _run(["auditpol.exe", "/get", f"/subcategory:{AccountAuditPolicy.file_system_audit_guid}", "/r"])
     return _parse_policy_report(_require_success(result, "读取 Windows 文件系统审计策略"))
 
 
@@ -174,7 +178,7 @@ def set_audit_policy(policy: AuditPolicy) -> None:
         [
             "auditpol.exe",
             "/set",
-            f"/subcategory:{FILE_SYSTEM_AUDIT_GUID}",
+            f"/subcategory:{AccountAuditPolicy.file_system_audit_guid}",
             f"/success:{'enable' if policy.success else 'disable'}",
             f"/failure:{'enable' if policy.failure else 'disable'}",
         ]
@@ -183,7 +187,7 @@ def set_audit_policy(policy: AuditPolicy) -> None:
 
 
 def _state_path(log_dir: Path) -> Path:
-    return log_dir / STATE_FILE_NAME
+    return log_dir / AccountAuditPolicy.state_file_name
 
 
 def load_state(log_dir: Path) -> dict[str, Any] | None:
@@ -236,7 +240,7 @@ def install(target: Path, log_dir: Path) -> None:
         },
     )
     print(f"已安装目录审计规则: {target}")
-    print(f"运行 watch 后，日志会写入: {log_dir / LOG_FILE_NAME}")
+    print(f"运行 watch 后，日志会写入: {log_dir / AccountAuditPolicy.log_file_name}")
 
 
 def uninstall(target: Path, log_dir: Path) -> None:
@@ -308,7 +312,7 @@ def parse_security_events(raw_xml: str, target: Path | str) -> list[dict[str, An
             event = ElementTree.fromstring(match.group())
         except ElementTree.ParseError:
             continue
-        if _system_value(event, "EventID") != EVENT_ID_FILE_ACCESS:
+        if _system_value(event, "EventID") != AccountAuditPolicy.event_id_file_access:
             continue
         object_path = _event_value(event, "ObjectName")
         if not object_path or not is_under_target(object_path, target):
@@ -324,7 +328,7 @@ def parse_security_events(raw_xml: str, target: Path | str) -> list[dict[str, An
             {
                 "record_id": _system_value(event, "EventRecordID"),
                 "timestamp": _event_timestamp(event),
-                "event_id": EVENT_ID_FILE_ACCESS,
+                "event_id": AccountAuditPolicy.event_id_file_access,
                 "path": object_path,
                 "actions": access_actions(_event_value(event, "AccessMask")),
                 "access_mask": _event_value(event, "AccessMask"),
@@ -357,12 +361,12 @@ def watch(target: Path, log_dir: Path, interval: float, once: bool) -> None:
     """Continuously write new target-directory audit events to a JSONL file."""
     require_administrator()
     target = target.resolve(strict=True)
-    log_path = log_dir / LOG_FILE_NAME
-    seen: deque[str] = deque(maxlen=MAX_SEEN_EVENT_IDS)
+    log_path = log_dir / AccountAuditPolicy.log_file_name
+    seen: deque[str] = deque(maxlen=AccountAuditPolicy.max_seen_event_ids)
     seen_ids: set[str] = set()
     print(f"正在监控 {target}；按 Ctrl+C 停止。日志: {log_path}")
     while True:
-        events = parse_security_events(_read_security_events(MAX_SEEN_EVENT_IDS), target)
+        events = parse_security_events(_read_security_events(AccountAuditPolicy.max_seen_event_ids), target)
         new_events = []
         for event in reversed(events):
             record_id = str(event.get("record_id") or "")
@@ -390,7 +394,7 @@ def status(target: Path, log_dir: Path) -> None:
         print(f"文件系统审计策略: 无法读取（{error}）")
     else:
         print(f"文件系统审计策略: success={policy.success}, failure={policy.failure}")
-    print(f"日志文件: {log_dir / LOG_FILE_NAME}")
+    print(f"日志文件: {log_dir / AccountAuditPolicy.log_file_name}")
 
 
 def build_parser() -> argparse.ArgumentParser:

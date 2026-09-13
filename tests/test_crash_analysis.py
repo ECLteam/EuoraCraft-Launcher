@@ -131,7 +131,7 @@ def test_archive_rejects_nested_archives_and_binary_files(tmp_path: Path) -> Non
 
 def test_manual_file_rejects_oversize_input(tmp_path: Path, monkeypatch) -> None:
     game_path, _ = _game(tmp_path)
-    monkeypatch.setattr(crash_analysis_module, "_MAX_SOURCE_BYTES", 32)
+    monkeypatch.setattr(crash_analysis_module.CrashAnalysisPolicy, "max_source_bytes", 32)
     source = tmp_path / "oversize.log"
     source.write_text("x" * 64, encoding="utf-8")
     analyzer = CrashAnalyzer(tmp_path / "data")
@@ -175,9 +175,10 @@ def test_report_is_session_only_and_removed_on_close(tmp_path: Path) -> None:
     analyzer = CrashAnalyzer(tmp_path / "data")
     result = analyzer.analyze_file(source, game_path, "Test")
     session_path = analyzer.session_path
-    assert json.loads((session_path / result["reportId"] / "analysis.json").read_text(encoding="utf-8"))[
-        "reportId"
-    ] == result["reportId"]
+    assert (
+        json.loads((session_path / result["reportId"] / "analysis.json").read_text(encoding="utf-8"))["reportId"]
+        == result["reportId"]
+    )
 
     analyzer.close()
 

@@ -49,7 +49,7 @@ class AuthlibInjector:
     :param http_client: 可注入的 HTTP 客户端
     """
 
-    METADATA_URL = "https://authlib-injector.yushi.moe/artifact/latest.json"
+    metadata_url = "https://authlib-injector.yushi.moe/artifact/latest.json"
 
     def __init__(self, data_path: Path | str, http_client: httpx.Client | None = None) -> None:
         self.path = Path(data_path) / "dependencies" / "authlib-injector"
@@ -82,7 +82,7 @@ class AuthlibInjector:
         if not self.needs_download():
             return self.jar_path
 
-        metadata = self.http.get(self.METADATA_URL)
+        metadata = self.http.get(self.metadata_url)
         metadata.raise_for_status()
         artifact = metadata.json()
         download_url = artifact["download_url"]
@@ -398,9 +398,9 @@ class AuthlibAccountManager:
             )
 
         response_profile = response.get("selectedProfile")
-        response_selected = isinstance(response_profile, dict) and response_profile.get(
+        response_selected = isinstance(response_profile, dict) and response_profile.get("id") == selected_profile.get(
             "id"
-        ) == selected_profile.get("id")
+        )
         token_selected = self._token_profile_id(response) == str(selected_profile.get("id") or "")
         target_account_id = existing_accounts.get(str(selected_profile.get("id") or ""), account_id)
         if response_selected or token_selected:
@@ -436,9 +436,7 @@ class AuthlibAccountManager:
         target_account_id = pending["ExistingAccounts"].get(profile_id, account_id)
         bound_profile = response.get("selectedProfile")
         bound_profile_id = (
-            str(bound_profile.get("id") or "")
-            if isinstance(bound_profile, dict)
-            else self._token_profile_id(response)
+            str(bound_profile.get("id") or "") if isinstance(bound_profile, dict) else self._token_profile_id(response)
         )
         if bound_profile_id == profile_id:
             account = self._store_response(

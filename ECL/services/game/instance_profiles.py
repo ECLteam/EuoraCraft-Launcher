@@ -6,9 +6,7 @@
 # 文件作用：实例资料存储：图标/封面/分类/标签等持久化。
 #
 # 公开接口：
-#   - PROFILE_FIELDS（常量）
-#   - EXTERNAL_SOURCES（常量）
-#   - BUILTIN_CATEGORIES（tuple）
+#   - class InstanceProfilePolicy — 保存实例资料字段与内置分类规则。
 #   - class InstanceProfileStore — 管理 ECL 自有实例资料、分类和第三方只读元数据的解析结果。
 #       - read_profile(game_path, version_id) -> dict[str, Any] — 读取实例自有资料并过滤未知或损坏字段。
 #       - patch_profile(game_path, version_id, patch) -> dict[str, Any] — 合并实例资料覆盖字段，显式 ``False`` 会按原值保存。
@@ -39,29 +37,35 @@ from ECL.utils import atomic_write_bytes, atomic_write_text, get_logger
 from .instance_compat import ExternalInstanceMetadata, InstanceCompatibilityReader
 from .version_stats import VersionStatsStore
 
-PROFILE_FIELDS = frozenset(
-    {
-        "alias",
-        "description",
-        "favorite",
-        "pinned",
-        "hidden",
-        "categoryId",
-        "tags",
-        "icon",
-        "cover",
-        "pinOrder",
-    }
-)
-EXTERNAL_SOURCES = frozenset({"auto", "pcl", "hmcl"})
-_EXTERNAL_SOURCE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
-BUILTIN_CATEGORIES = (
-    {"id": "unclassified", "name": "未分类", "color": "#8b95a5", "order": 0, "builtin": True},
-    {"id": "vanilla", "name": "原版", "color": "#69a84f", "order": 10, "builtin": True},
-    {"id": "modded", "name": "模组", "color": "#8a73c7", "order": 20, "builtin": True},
-    {"id": "modpack", "name": "整合包", "color": "#d58b45", "order": 30, "builtin": True},
-    {"id": "test", "name": "测试", "color": "#d55d72", "order": 40, "builtin": True},
-)
+
+class InstanceProfilePolicy:
+    """
+    保存实例资料字段、外部来源和内置分类规则。
+    """
+
+    profile_fields = frozenset(
+        {
+            "alias",
+            "description",
+            "favorite",
+            "pinned",
+            "hidden",
+            "categoryId",
+            "tags",
+            "icon",
+            "cover",
+            "pinOrder",
+        }
+    )
+    external_sources = frozenset({"auto", "pcl", "hmcl"})
+    external_source_pattern = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
+    builtin_categories = (
+        {"id": "unclassified", "name": "未分类", "color": "#8b95a5", "order": 0, "builtin": True},
+        {"id": "vanilla", "name": "原版", "color": "#69a84f", "order": 10, "builtin": True},
+        {"id": "modded", "name": "模组", "color": "#8a73c7", "order": 20, "builtin": True},
+        {"id": "modpack", "name": "整合包", "color": "#d58b45", "order": 30, "builtin": True},
+        {"id": "test", "name": "测试", "color": "#d55d72", "order": 40, "builtin": True},
+    )
 
 
 def _default_profile() -> dict[str, Any]:
@@ -70,7 +74,7 @@ def _default_profile() -> dict[str, Any]:
 
 def _normalize_external_source(value: Any) -> str:
     normalized = str(value or "auto").strip().casefold()
-    if normalized != "auto" and not _EXTERNAL_SOURCE_PATTERN.fullmatch(normalized):
+    if normalized != "auto" and not InstanceProfilePolicy.external_source_pattern.fullmatch(normalized):
         raise ValueError("未知的第三方元数据来源")
     return normalized
 
@@ -208,7 +212,7 @@ class InstanceProfileStore:
         if not isinstance(data, dict):
             return _default_profile()
         profile = _default_profile()
-        for key in PROFILE_FIELDS:
+        for key in InstanceProfilePolicy.profile_fields:
             if key in data:
                 profile[key] = data[key]
         try:
@@ -279,7 +283,7 @@ class InstanceProfileStore:
 
     @classmethod
     def _normalize_patch(cls, patch: dict[str, Any]) -> dict[str, Any]:
-        unknown = set(patch) - PROFILE_FIELDS - {"preferredExternalSource"}
+        unknown = set(patch) - InstanceProfilePolicy.profile_fields - {"preferredExternalSource"}
         if unknown:
             raise ValueError(f"不支持的实例资料字段: {', '.join(sorted(unknown))}")
         return {key: cls._normalize_patch_value(key, value) for key, value in patch.items()}
@@ -310,7 +314,7 @@ class InstanceProfileStore:
         :param fields: 需要恢复自动的字段列表
         :return: 写入后的资料
         """
-        unknown = set(fields) - PROFILE_FIELDS - {"preferredExternalSource"}
+        unknown = set(fields) - InstanceProfilePolicy.profile_fields - {"preferredExternalSource"}
         if unknown:
             raise ValueError(f"不支持的实例资料字段: {', '.join(sorted(unknown))}")
         with self._lock:
@@ -415,11 +419,15 @@ class InstanceProfileStore:
                     custom = [item for item in data if isinstance(item, dict)]
             except (OSError, UnicodeDecodeError, ValueError) as exc:
                 self._logger.warning("读取实例分类失败 %s: %s", self._categories_path, exc)
-        categories = [dict(item) for item in BUILTIN_CATEGORIES]
+        categories = [dict(item) for item in InstanceProfilePolicy.builtin_categories]
         for item in custom:
             category_id = str(item.get("id") or "").strip()
             name = str(item.get("name") or "").strip()
-            if not category_id or not name or category_id in {entry["id"] for entry in BUILTIN_CATEGORIES}:
+            if (
+                not category_id
+                or not name
+                or category_id in {entry["id"] for entry in InstanceProfilePolicy.builtin_categories}
+            ):
                 continue
             categories.append(
                 {
@@ -462,7 +470,7 @@ class InstanceProfileStore:
             int(normalized_color[1:], 16)
         except ValueError as exc:
             raise ValueError("分类颜色必须是十六进制颜色") from exc
-        builtin_ids = {item["id"] for item in BUILTIN_CATEGORIES}
+        builtin_ids = {item["id"] for item in InstanceProfilePolicy.builtin_categories}
         normalized_id = (category_id or f"custom-{uuid4().hex[:12]}").strip()
         if normalized_id in builtin_ids:
             raise ValueError("内置分类不可修改")
@@ -485,7 +493,7 @@ class InstanceProfileStore:
 
         :param category_id: 自定义分类 ID
         """
-        if category_id in {item["id"] for item in BUILTIN_CATEGORIES}:
+        if category_id in {item["id"] for item in InstanceProfilePolicy.builtin_categories}:
             raise ValueError("内置分类不可删除")
         with self._lock:
             custom = [item for item in self.get_categories() if not item["builtin"] and item["id"] != category_id]
@@ -547,7 +555,9 @@ class InstanceProfileStore:
             "categoryId": self._automatic_category(version),
             "tags": [],
             "icon": {
-                "type": "loader" if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla" else "builtin",
+                "type": "loader"
+                if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla"
+                else "builtin",
                 "value": str(version.get("primaryLoader") or "grass").casefold()
                 if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla"
                 else "grass",
@@ -605,9 +615,7 @@ class InstanceProfileStore:
         result.update(stats)
         return result
 
-    def compatibility_watch_paths(
-        self, options: dict[str, Any] | None = None
-    ) -> list[tuple[str, Path]]:
+    def compatibility_watch_paths(self, options: dict[str, Any] | None = None) -> list[tuple[str, Path]]:
         """
         返回插件兼容来源要求加入版本缓存快照的外部文件。
 
@@ -623,4 +631,4 @@ class InstanceProfileStore:
         return self._compatibility.revision
 
 
-__all__ = ["BUILTIN_CATEGORIES", "PROFILE_FIELDS", "InstanceProfileStore"]
+__all__ = ["InstanceProfilePolicy", "InstanceProfileStore"]

@@ -52,7 +52,7 @@ class VersionStatsStore:
     替换目标文件。统计失败只影响统计本身，不应阻止版本扫描或游戏启动。
     """
 
-    FILE_NAME = "eclversion.json"
+    file_name = "eclversion.json"
 
     def __init__(self) -> None:
         self._lock = RLock()
@@ -60,7 +60,7 @@ class VersionStatsStore:
 
     @staticmethod
     def _stats_path(game_path: Path, version_id: str) -> Path:
-        return game_path / "versions" / version_id / VersionStatsStore.FILE_NAME
+        return game_path / "versions" / version_id / VersionStatsStore.file_name
 
     @staticmethod
     def _normalize(data: object) -> VersionRunStats:

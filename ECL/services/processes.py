@@ -39,7 +39,7 @@ class ProcessService:
     :param instances_manager: 与游戏服务共享的进程管理器，缺省时自行创建
     """
 
-    BUFFER_LIMIT = 300
+    buffer_limit = 300
 
     def __init__(self, event_bus: EventBus, instances_manager: InstancesManager | None = None) -> None:
         self._events = event_bus
@@ -64,7 +64,7 @@ class ProcessService:
                     "type": "Minecraft",
                     "stdin": False,
                 }
-                self._buffers[instance_id] = deque(maxlen=self.BUFFER_LIMIT)
+                self._buffers[instance_id] = deque(maxlen=self.buffer_limit)
         else:
             with self._lock:
                 self._meta.pop(instance_id, None)
@@ -101,7 +101,7 @@ class ProcessService:
         )
         with self._lock:
             self._meta[instance_id] = {"name": name, "type": type_, "stdin": stdin}
-            self._buffers[instance_id] = deque(maxlen=self.BUFFER_LIMIT)
+            self._buffers[instance_id] = deque(maxlen=self.buffer_limit)
         self._events.emit("process:instances_changed", self.list())
         return instance_id
 
@@ -136,7 +136,7 @@ class ProcessService:
         返回当前登注册表的实例信息列表。
 
         每条信息包含唯一标识、名称、类型、进程号、标准输入支持情况、运行状态，
-        以及该实例最近的输出行（最多 ``BUFFER_LIMIT`` 条），供前端实例视图初始化。
+        以及该实例最近的输出行（最多 ``buffer_limit`` 条），供前端实例视图初始化。
 
         :return: 实例信息列表
         """
@@ -154,7 +154,7 @@ class ProcessService:
                         "pid": pid,
                         "stdin": meta["stdin"],
                         "running": running,
-                        "lines": list(self._buffers.get(iid, ()))[: self.BUFFER_LIMIT],
+                        "lines": list(self._buffers.get(iid, ()))[: self.buffer_limit],
                     }
                 )
             return items

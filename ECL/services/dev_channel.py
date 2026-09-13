@@ -43,11 +43,12 @@ from ECL.plugins import PluginActionResult
 from ECL.services.frontend_events import subscribe_frontend_event
 from ECL.utils import PluginCommandError
 from ECL.utils.files import atomic_write_text
-from ECL.utils.logging import LOGGER_NAME, get_logger
+from ECL.utils.logging import LoggingPolicy, get_logger
 
 if TYPE_CHECKING:
     from ECL.events import EventBus
     from ECL.plugins import PluginManager
+
 
 class DevChannelError(Exception):
     """
@@ -211,7 +212,7 @@ class DevChannelService:
         if self._thread is not None or self._closed:
             return
         self._log_handler = _ChannelLogHandler(self)
-        logging.getLogger(LOGGER_NAME).addHandler(self._log_handler)
+        logging.getLogger(LoggingPolicy.logger_name).addHandler(self._log_handler)
         started = threading.Event()
         failures: list[BaseException] = []
         self._thread = threading.Thread(
@@ -300,7 +301,7 @@ class DevChannelService:
         # 从根日志器移除推送处理器，避免关闭后继续分发。
         if self._log_handler is None:
             return
-        logging.getLogger(LOGGER_NAME).removeHandler(self._log_handler)
+        logging.getLogger(LoggingPolicy.logger_name).removeHandler(self._log_handler)
         self._log_handler = None
 
     def _write_discovery_file(self) -> None:
@@ -481,7 +482,11 @@ class DevChannelService:
             "PLUGIN_NOT_FOUND": "插件不存在",
             "NOT_READY": "依赖的服务未就绪",
         }
-        payload = {"id": request_id, "ok": False, "error": {"code": code, "message": message or messages.get(code, code)}}
+        payload = {
+            "id": request_id,
+            "ok": False,
+            "error": {"code": code, "message": message or messages.get(code, code)},
+        }
         await websocket.send(json.dumps(payload, ensure_ascii=False))
 
     def _notify(self, session: _Session, event: str, data: Any) -> None:
@@ -538,6 +543,7 @@ class DevChannelService:
             if event in session.frontend_subscribed:
                 subscribed.append(event)
                 continue
+
             def emit(frontend_event: str, payload: Any) -> None:
                 self._notify(session, frontend_event, payload)
 

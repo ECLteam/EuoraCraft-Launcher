@@ -56,14 +56,16 @@ from websockets.exceptions import ConnectionClosed
 from ECL.events import EventBus
 from ECL.plugins import PluginAction, PluginActionResult
 from ECL.services.dev_channel import DevChannelService
-from ECL.utils.logging import LOGGER_NAME
+from ECL.utils.logging import LoggingPolicy
 
 
 def _action_result(name: str, action: PluginAction, status: str, message: str = "") -> PluginActionResult:
     return PluginActionResult(plugin_name=name, action=action, status=status, message=message)
 
 
-def _make_service(tmp_path, plugins: Mock | None = None, events: EventBus | None = None, frontend_dist=None) -> DevChannelService:
+def _make_service(
+    tmp_path, plugins: Mock | None = None, events: EventBus | None = None, frontend_dist=None
+) -> DevChannelService:
     return DevChannelService(
         plugins=plugins or Mock(),
         events=events or EventBus(),
@@ -82,7 +84,7 @@ def _read_discovery(service: DevChannelService) -> dict[str, Any]:
 @pytest.fixture
 def service(tmp_path):
     # 测试进程未配置 LoggingRuntime，显式放开级别确保 INFO 日志能到达推送处理器。
-    launcher_logger = logging.getLogger(LOGGER_NAME)
+    launcher_logger = logging.getLogger(LoggingPolicy.logger_name)
     original_level = launcher_logger.level
     launcher_logger.setLevel(logging.DEBUG)
     instance = _make_service(tmp_path)
@@ -324,21 +326,21 @@ async def test_plugin_call_command_returns_result(tmp_path) -> None:
 async def test_logs_subscribe_returns_history_and_pushes_live(service) -> None:
     websocket = await _authed_client(service)
     try:
-        logging.getLogger(LOGGER_NAME).info("历史日志")
+        logging.getLogger(LoggingPolicy.logger_name).info("历史日志")
         reply = await _request(websocket, 9, "logs.subscribe")
         assert reply["ok"] is True
         assert reply["data"]["history"][-1]["message"] == "历史日志"
         assert reply["data"]["history"][-1]["level"] == "INFO"
         assert "T" in reply["data"]["history"][-1]["timestamp"]
 
-        logging.getLogger(LOGGER_NAME).warning("实时日志")
+        logging.getLogger(LoggingPolicy.logger_name).warning("实时日志")
         notification = json.loads(await websocket.recv())
         assert notification["event"] == "log.line"
         assert notification["data"]["message"] == "实时日志"
         assert notification["data"]["level"] == "WARNING"
 
         await _request(websocket, 10, "logs.unsubscribe")
-        logging.getLogger(LOGGER_NAME).error("不应推送")
+        logging.getLogger(LoggingPolicy.logger_name).error("不应推送")
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(websocket.recv(), timeout=0.5)
     finally:

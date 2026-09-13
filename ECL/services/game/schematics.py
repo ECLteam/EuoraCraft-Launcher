@@ -20,7 +20,7 @@ from typing import Any
 from ECL.utils.nbt import Compound, IntArray, List, load
 
 from .base import GameServiceError
-from .resources import RESOURCE_DIRECTORIES
+from .resources import ResourceCatalogPolicy
 from .workspace import resolve_relative_id
 
 
@@ -249,7 +249,7 @@ class SchematicCoordinator:
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
-        root = target.data_path / RESOURCE_DIRECTORIES["schematic"]
+        root = target.data_path / ResourceCatalogPolicy.directories["schematic"]
         return resolve_relative_id(root, resource_id)
 
     def schematic_preview(

@@ -311,7 +311,7 @@ def test_authlib_injector_downloads_verified_artifact_once(tmp_path) -> None:
 
     def download(request: httpx.Request) -> httpx.Response:
         requests.append(str(request.url))
-        if str(request.url) == AuthlibInjector.METADATA_URL:
+        if str(request.url) == AuthlibInjector.metadata_url:
             return httpx.Response(
                 200,
                 request=request,
@@ -333,7 +333,7 @@ def test_authlib_injector_downloads_verified_artifact_once(tmp_path) -> None:
     assert first_path == second_path
     assert first_path.read_bytes() == jar_data
     assert requests == [
-        AuthlibInjector.METADATA_URL,
+        AuthlibInjector.metadata_url,
         "https://download.example.com/authlib-injector.jar",
     ]
     injector.close()

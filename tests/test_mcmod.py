@@ -40,7 +40,7 @@ import pytest
 from ECL.services.game import GameService
 from ECL.services.game.mcmod import McmodTranslator
 
-_SAMPLE_MODS = [
+sample_mods = [
     {"id": 2785, "name": "钠", "english": "Sodium", "abbr": "", "cf": "sodium", "mr": "sodium", "modIds": ["sodium"]},
     {
         "id": 2021,
@@ -74,7 +74,7 @@ _SAMPLE_MODS = [
 
 def _write_sample(tmp_path: Path) -> Path:
     path = tmp_path / "mcmod_data.json"
-    path.write_text(json.dumps({"version": 1, "mods": _SAMPLE_MODS}, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps({"version": 1, "mods": sample_mods}, ensure_ascii=False), encoding="utf-8")
     return path
 
 
@@ -152,7 +152,7 @@ def test_list_local_mod_uses_chinese_display_name(tmp_path: Path) -> None:
     resources = tmp_path / "resources"
     resources.mkdir()
     (resources / "mcmod_data.json").write_text(
-        json.dumps({"version": 1, "mods": _SAMPLE_MODS}, ensure_ascii=False), encoding="utf-8"
+        json.dumps({"version": 1, "mods": sample_mods}, ensure_ascii=False), encoding="utf-8"
     )
     game_path = tmp_path / ".minecraft"
     mods_path = game_path / "mods"
@@ -185,7 +185,7 @@ def test_map_search_hits_fills_wiki_and_chinese_title(tmp_path: Path) -> None:
     resources = tmp_path / "resources"
     resources.mkdir()
     (resources / "mcmod_data.json").write_text(
-        json.dumps({"version": 1, "mods": _SAMPLE_MODS}, ensure_ascii=False), encoding="utf-8"
+        json.dumps({"version": 1, "mods": sample_mods}, ensure_ascii=False), encoding="utf-8"
     )
     service = GameService(_FakeAccounts(), resource_path=tmp_path)
 
@@ -283,7 +283,7 @@ def test_map_search_hits_maps_curseforge_format(tmp_path: Path) -> None:
     resources = tmp_path / "resources"
     resources.mkdir()
     (resources / "mcmod_data.json").write_text(
-        json.dumps({"version": 1, "mods": _SAMPLE_MODS}, ensure_ascii=False), encoding="utf-8"
+        json.dumps({"version": 1, "mods": sample_mods}, ensure_ascii=False), encoding="utf-8"
     )
     service = GameService(_FakeAccounts(), resource_path=tmp_path)
 

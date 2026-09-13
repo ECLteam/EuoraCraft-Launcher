@@ -680,8 +680,6 @@ class FileSaveRequest(RequestModel):
         return value
 
 
-
-
 class PortRequest(RequestModel):
     """
     指定端口号的请求体。
@@ -714,90 +712,89 @@ class KickRequest(RequestModel):
     machine_id: str = Field(min_length=1, max_length=128)
 
 
+class RequestModelRegistry:
+    """
+    保存 IPC 命令到请求模型的映射。
+    """
 
+    models: dict[str, type[RequestModel]] = {
+        "settings_get": SettingsQuery,
+        "settings_set": SettingsUpdate,
+        "frontend_log": FrontendLogRequest,
+        "window_open": WindowOpenRequest,
+        "window_focus": WindowLabelRequest,
+        "window_close": WindowLabelRequest,
+        "window_update_bounds": WindowBoundsRequest,
+        "game_versions": GameCatalogRequest,
+        "game_loader_versions": LoaderCatalogRequest,
+        "game_scan": GameScanRequest,
+        "game_java_scan": JavaScanRequest,
+        "game_install": InstallRequest,
+        "game_launch": LaunchRequest,
+        "game_uninstall": GameUninstallRequest,
+        "game_config_get": GamePathRequest,
+        "game_config_set": GameConfigUpdate,
+        "game_config_patch": GameConfigPatch,
+        "game_version_stats": GameVersionRequest,
+        "game_version_settings_get": GameVersionRequest,
+        "game_version_settings_set": GameVersionSettingsUpdate,
+        "game_instance_profile_get": GameVersionRequest,
+        "game_instance_profile_patch": InstanceProfilePatchRequest,
+        "game_instance_profile_reset": InstanceProfileResetRequest,
+        "game_instance_icon_set": InstanceIconRequest,
+        "game_instance_pin_order_set": InstancePinOrderRequest,
+        "game_instance_categories_upsert": InstanceCategoryUpsertRequest,
+        "game_instance_categories_delete": InstanceCategoryDeleteRequest,
+        "game_instance_stop": GameInstanceRequest,
+        "game_crash_list": GameVersionRequest,
+        "game_crash_analyze": CrashAnalyzeRequest,
+        "game_crash_output": CrashReportRequest,
+        "game_crash_export": CrashExportRequest,
+        "wardrobe_import": WardrobeImportRequest,
+        "wardrobe_sync_account_skin": AccountTextureRequest,
+        "wardrobe_update": WardrobeUpdateRequest,
+        "wardrobe_delete": WardrobeItemRequest,
+        "wardrobe_texture": WardrobeItemRequest,
+        "wardrobe_export": WardrobeItemRequest,
+        "wardrobe_apply_skin": WardrobeApplySkinRequest,
+        "accounts_texture_urls": AccountTextureRequest,
+        "microsoft_reset_skin": AccountTextureRequest,
+        "microsoft_set_cape": MicrosoftCapeRequest,
+        "microsoft_reset_cape": AccountTextureRequest,
+        "select_image": ImageSelectionRequest,
+        "select_file": FileSelectionRequest,
+        "select_save_file": FileSaveRequest,
+        "connector_host_port": PortRequest,
+        "connector_join": RoomCodeRequest,
+        "connector_kick": KickRequest,
+        "connector_search_mc_port": PortsRequest,
+    }
 
-
-
-
-
-
-REQUEST_MODELS: dict[str, type[RequestModel]] = {
-    "settings_get": SettingsQuery,
-    "settings_set": SettingsUpdate,
-    "frontend_log": FrontendLogRequest,
-    "window_open": WindowOpenRequest,
-    "window_focus": WindowLabelRequest,
-    "window_close": WindowLabelRequest,
-    "window_update_bounds": WindowBoundsRequest,
-    "game_versions": GameCatalogRequest,
-    "game_loader_versions": LoaderCatalogRequest,
-    "game_scan": GameScanRequest,
-    "game_java_scan": JavaScanRequest,
-    "game_install": InstallRequest,
-    "game_launch": LaunchRequest,
-    "game_uninstall": GameUninstallRequest,
-    "game_config_get": GamePathRequest,
-    "game_config_set": GameConfigUpdate,
-    "game_config_patch": GameConfigPatch,
-    "game_version_stats": GameVersionRequest,
-    "game_version_settings_get": GameVersionRequest,
-    "game_version_settings_set": GameVersionSettingsUpdate,
-    "game_instance_profile_get": GameVersionRequest,
-    "game_instance_profile_patch": InstanceProfilePatchRequest,
-    "game_instance_profile_reset": InstanceProfileResetRequest,
-    "game_instance_icon_set": InstanceIconRequest,
-    "game_instance_pin_order_set": InstancePinOrderRequest,
-    "game_instance_categories_upsert": InstanceCategoryUpsertRequest,
-    "game_instance_categories_delete": InstanceCategoryDeleteRequest,
-    "game_instance_stop": GameInstanceRequest,
-    "game_crash_list": GameVersionRequest,
-    "game_crash_analyze": CrashAnalyzeRequest,
-    "game_crash_output": CrashReportRequest,
-    "game_crash_export": CrashExportRequest,
-    "wardrobe_import": WardrobeImportRequest,
-    "wardrobe_sync_account_skin": AccountTextureRequest,
-    "wardrobe_update": WardrobeUpdateRequest,
-    "wardrobe_delete": WardrobeItemRequest,
-    "wardrobe_texture": WardrobeItemRequest,
-    "wardrobe_export": WardrobeItemRequest,
-    "wardrobe_apply_skin": WardrobeApplySkinRequest,
-    "accounts_texture_urls": AccountTextureRequest,
-    "microsoft_reset_skin": AccountTextureRequest,
-    "microsoft_set_cape": MicrosoftCapeRequest,
-    "microsoft_reset_cape": AccountTextureRequest,
-    "select_image": ImageSelectionRequest,
-    "select_file": FileSelectionRequest,
-    "select_save_file": FileSaveRequest,
-    "connector_host_port": PortRequest,
-    "connector_join": RoomCodeRequest,
-    "connector_kick": KickRequest,
-    "connector_search_mc_port": PortsRequest,
-}
 
 def request_schemas() -> dict[str, dict]:
     """
     返回前端集成所需的请求模型 JSON Schema 文档。
 
-    REQUEST_MODELS 的键（IPC 命令名）必须是 `ECL.api.registry.COMMAND_NAMES`
+    RequestModelRegistry.models 的键（IPC 命令名）必须是
+    `ECL.api.registry.IpcCommandRegistry.command_names`
     中已注册的命令，否则抛错，防止请求模型与正式命令表脱钩。
     （此处延迟导入 registry 以避免模块级循环依赖：registry -> bridge -> models。）
 
     :return: 命令名到 JSON Schema 的映射
     :raises RuntimeError: 存在未在 registry 注册的命令名时抛出
     """
-    from ECL.api.registry import COMMAND_NAMES  # 延迟导入，避免循环依赖
+    from ECL.api.registry import IpcCommandRegistry  # 延迟导入，避免循环依赖
 
-    _unregistered = sorted(set(REQUEST_MODELS) - set(COMMAND_NAMES))
-    if _unregistered:
+    unregistered = sorted(set(RequestModelRegistry.models) - set(IpcCommandRegistry.command_names))
+    if unregistered:
         raise RuntimeError(
-            "REQUEST_MODELS 包含未在 registry.COMMAND_NAMES 中注册的命令: "
-            + ", ".join(_unregistered)
+            "RequestModelRegistry.models 包含未在 IpcCommandRegistry.command_names 中注册的命令: "
+            + ", ".join(unregistered)
         )
-    return {command: model.model_json_schema() for command, model in REQUEST_MODELS.items()}
+    return {command: model.model_json_schema() for command, model in RequestModelRegistry.models.items()}
 
 
 __all__ = [
-    "REQUEST_MODELS",
     "AccountTextureRequest",
     "CrashAnalyzeRequest",
     "CrashExportRequest",
@@ -832,6 +829,7 @@ __all__ = [
     "MicrosoftCapeRequest",
     "PortRequest",
     "PortsRequest",
+    "RequestModelRegistry",
     "RoomCodeRequest",
     "SettingsQuery",
     "SettingsUpdate",
@@ -846,4 +844,3 @@ __all__ = [
     "WindowOpenRequest",
     "request_schemas",
 ]
-

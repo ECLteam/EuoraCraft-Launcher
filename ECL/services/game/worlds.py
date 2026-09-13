@@ -55,17 +55,22 @@ def _nbt_scalar(value: Any, default: Any = None) -> Any:
 
 
 # 存档枚举字段：patch 键 → (NBT 键, 标签类型, 合法取值范围, 错误码, 提示文案)。
-_ENUM_WORLD_FIELDS: dict[str, tuple[str, type, range, str, str]] = {
-    "difficulty": ("Difficulty", Byte, range(4), "INVALID_WORLD_DIFFICULTY", "难度值无效"),
-    "gameMode": ("GameType", Int, range(4), "INVALID_WORLD_GAMEMODE", "游戏模式值无效"),
-}
-# 存档布尔字段：patch 键 → NBT 键。
-_BOOL_WORLD_FIELDS: dict[str, str] = {
-    "allowCommands": "allowCommands",
-    "difficultyLocked": "DifficultyLocked",
-    "raining": "raining",
-    "thundering": "thundering",
-}
+class WorldPatchPolicy:
+    """
+    保存允许修改的世界 NBT 字段规则。
+    """
+
+    enum_fields: dict[str, tuple[str, type, range, str, str]] = {
+        "difficulty": ("Difficulty", Byte, range(4), "INVALID_WORLD_DIFFICULTY", "难度值无效"),
+        "gameMode": ("GameType", Int, range(4), "INVALID_WORLD_GAMEMODE", "游戏模式值无效"),
+    }
+    # 存档布尔字段：patch 键 → NBT 键。
+    boolean_fields: dict[str, str] = {
+        "allowCommands": "allowCommands",
+        "difficultyLocked": "DifficultyLocked",
+        "raining": "raining",
+        "thundering": "thundering",
+    }
 
 
 class WorldCoordinator:
@@ -199,13 +204,13 @@ class WorldCoordinator:
     @staticmethod
     def _apply_world_patch(data: Compound, patch: dict[str, Any]) -> None:
         # 校验并写入存档常用字段；非法取值在落盘前被拒绝。
-        for field, (key, tag, valid, code, message) in _ENUM_WORLD_FIELDS.items():
+        for field, (key, tag, valid, code, message) in WorldPatchPolicy.enum_fields.items():
             if field in patch:
                 value = int(patch[field])
                 if value not in valid:
                     raise GameServiceError(message, code)
                 data[key] = tag(value)
-        for field, key in _BOOL_WORLD_FIELDS.items():
+        for field, key in WorldPatchPolicy.boolean_fields.items():
             if field in patch:
                 data[key] = Byte(1 if patch[field] else 0)
         if "seed" in patch:
@@ -216,8 +221,7 @@ class WorldCoordinator:
         if "spawn" in patch:
             spawn = patch["spawn"]
             if not isinstance(spawn, dict) or any(
-                not isinstance(spawn.get(axis), int) or isinstance(spawn.get(axis), bool)
-                for axis in ("x", "y", "z")
+                not isinstance(spawn.get(axis), int) or isinstance(spawn.get(axis), bool) for axis in ("x", "y", "z")
             ):
                 raise GameServiceError("出生点坐标必须是整数", "INVALID_WORLD_SPAWN")
             if any(not -30000000 <= int(spawn[axis]) <= 30000000 for axis in ("x", "y", "z")):
@@ -273,9 +277,7 @@ class WorldCoordinator:
             raise GameServiceError("世界图标必须是可读图片", "INVALID_WORLD_ICON") from exc
         return {"path": str(world / "icon.png")}
 
-    def delete_world(
-        self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
-    ) -> None:
+    def delete_world(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> None:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         world = self._world_path(game_path, version_id, world_id, version_isolation)
         self._assert_world_writable(target, world)

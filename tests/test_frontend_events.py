@@ -23,7 +23,7 @@ from typing import Any
 
 from ECL.events import EventBus
 from ECL.services.frontend_events import (
-    FRONTEND_EVENT_BRIDGES,
+    FrontendEventPolicy,
     subscribe_all_frontend_events,
     subscribe_frontend_event,
 )
@@ -100,7 +100,7 @@ def test_bridge_passthrough_events_keep_name_and_payload() -> None:
 
 def test_bridge_omits_side_effect_events() -> None:
     # launcher:error 的规范化与内存副本依赖 FrontendApi，不应进入纯转换桥。
-    assert "launcher:error" not in FRONTEND_EVENT_BRIDGES
+    assert "launcher:error" not in FrontendEventPolicy.bridges
 
 
 def test_bridge_subscribe_returns_working_unsubscribers() -> None:

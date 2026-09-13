@@ -6,7 +6,7 @@
 # 文件作用：针对 architecture 模块的自动化测试。
 #
 # 公开接口：
-#   - ECL_ROOT（常量）
+#   - ecl_root（路径夹具）
 #   - test_application_imports_game_only_through_public_entrypoint() -> None
 #   - test_no_service_locator_api_or_duplicate_libs_remains() -> None
 #   - test_no_internal_compatibility_aliases_remain() -> None
@@ -23,12 +23,12 @@ from pathlib import Path
 
 import ECL
 
-ECL_ROOT = Path(ECL.__file__).parent
+ecl_root = Path(ECL.__file__).parent
 
 
 def _python_files() -> list[Path]:
-    submodule_roots = (ECL_ROOT / "game", ECL_ROOT / "services" / "florolding")
-    return [path for path in ECL_ROOT.rglob("*.py") if not any(path.is_relative_to(root) for root in submodule_roots)]
+    submodule_roots = (ecl_root / "game", ecl_root / "services" / "florolding")
+    return [path for path in ecl_root.rglob("*.py") if not any(path.is_relative_to(root) for root in submodule_roots)]
 
 
 def test_application_imports_game_only_through_public_entrypoint() -> None:
@@ -51,9 +51,9 @@ def test_no_service_locator_api_or_duplicate_libs_remains() -> None:
     assert "register_services" not in source
     assert "EventBus().get(" not in source
     assert "EventBus().register(" not in source
-    assert [path for path in ECL_ROOT.rglob("Libs.py") if not path.is_relative_to(ECL_ROOT / "game")] == []
-    assert not (ECL_ROOT / "api" / "legacy").exists()
-    assert not (ECL_ROOT / "api" / "domain_handlers.py").exists()
+    assert [path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(ecl_root / "game")] == []
+    assert not (ecl_root / "api" / "legacy").exists()
+    assert not (ecl_root / "api" / "domain_handlers.py").exists()
 
 
 def test_no_internal_compatibility_aliases_remain() -> None:
@@ -64,7 +64,7 @@ def test_no_internal_compatibility_aliases_remain() -> None:
 
 
 def test_ipc_registry_has_no_retired_compatibility_commands() -> None:
-    from ECL.api.registry import COMMAND_NAMES
+    from ECL.api.registry import IpcCommandRegistry
 
     retired = {
         "config_get",
@@ -93,18 +93,18 @@ def test_ipc_registry_has_no_retired_compatibility_commands() -> None:
         "instance_stop",
     }
 
-    assert retired.isdisjoint(COMMAND_NAMES)
+    assert retired.isdisjoint(IpcCommandRegistry.command_names)
 
 
 def test_game_package_root_contains_only_public_boundary_modules() -> None:
-    root_modules = {path.name for path in (ECL_ROOT / "game").glob("*.py")}
+    root_modules = {path.name for path in (ecl_root / "game").glob("*.py")}
 
     assert root_modules == {"__init__.py"}
 
 
 def test_game_service_raw_body_is_not_typed_as_any() -> None:
     methods = {}
-    for path in (ECL_ROOT / "services" / "game").glob("*.py"):
+    for path in (ecl_root / "services" / "game").glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         methods.update(
             {

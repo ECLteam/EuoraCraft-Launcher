@@ -6,7 +6,7 @@
 # 文件作用：针对 info_card 模块的自动化测试。
 #
 # 公开接口：
-#   - NOW（常量）
+#   - now（固定时钟）
 #   - test_info_card_uses_backend_content_and_remote_announcements(tmp_path) -> None
 #   - test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tmp_path) -> None
 #   - test_info_card_uses_last_valid_cache_when_remote_request_fails(tmp_path) -> None
@@ -22,7 +22,7 @@ import httpx
 
 from ECL.services import InfoCardManager
 
-NOW = datetime(2026, 7, 30, 12, tzinfo=UTC)
+now = datetime(2026, 7, 30, 12, tzinfo=UTC)
 
 
 def _notice_payload(*announcements):
@@ -55,7 +55,7 @@ def _announcement(
 
 def test_info_card_uses_backend_content_and_remote_announcements(tmp_path) -> None:
     payload = _notice_payload(_announcement())
-    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: NOW)
+    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
 
     data = manager.get_info_card()
 
@@ -88,7 +88,7 @@ def test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tm
         _announcement("important", title="重复公告", priority=200),
         {"id": "", "title": "无效公告", "content": "缺少有效 ID"},
     )
-    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: NOW)
+    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
 
     data = manager.get_info_card()
 
@@ -97,13 +97,13 @@ def test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tm
 
 def test_info_card_uses_last_valid_cache_when_remote_request_fails(tmp_path) -> None:
     payload = _notice_payload(_announcement())
-    online = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: NOW)
+    online = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
     online.get_info_card()
 
     def offline(_url):
         raise httpx.ConnectError("offline")
 
-    offline_manager = InfoCardManager(tmp_path, notice_loader=offline, clock=lambda: NOW)
+    offline_manager = InfoCardManager(tmp_path, notice_loader=offline, clock=lambda: now)
 
     assert offline_manager.get_info_card()["announcements"][0]["id"] == "maintenance-20260730"
 
@@ -113,7 +113,7 @@ def test_info_card_returns_empty_announcements_when_remote_and_cache_are_invalid
     manager = InfoCardManager(
         tmp_path,
         notice_loader=lambda _url: {"schema_version": 99, "announcements": []},
-        clock=lambda: NOW,
+        clock=lambda: now,
     )
 
     data = manager.get_info_card()
@@ -130,7 +130,7 @@ def test_info_card_does_not_refetch_within_refresh_window(tmp_path) -> None:
         calls += 1
         return _notice_payload(_announcement())
 
-    manager = InfoCardManager(tmp_path, notice_loader=load_notice, clock=lambda: NOW)
+    manager = InfoCardManager(tmp_path, notice_loader=load_notice, clock=lambda: now)
 
     manager.get_info_card()
     manager.get_info_card()
@@ -147,7 +147,7 @@ def test_info_card_injected_client_does_not_pass_verify_per_request(tmp_path) ->
         return httpx.Response(200, json=payload)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    manager = InfoCardManager(tmp_path, http_client=client, clock=lambda: NOW)
+    manager = InfoCardManager(tmp_path, http_client=client, clock=lambda: now)
 
     data = manager._download_notice("https://example.test/notice.json")
 

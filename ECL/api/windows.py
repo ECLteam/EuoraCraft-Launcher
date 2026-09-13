@@ -40,12 +40,19 @@ except ImportError:  # pragma: no cover - lightweight unit-test stubs omit windo
         def build(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("PyTauri 窗口 API 不可用")
 
+
 from ECL.api.bridge import _FrontendState, _validate_body
 from ECL.api.contracts import failure, success
 from ECL.api.models import WindowBoundsRequest, WindowLabelRequest, WindowOpenRequest
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
 
-BUILTIN_WINDOW_DESCRIPTORS: dict[str, dict[str, Any]] = {}
+
+class WindowDescriptorRegistry:
+    """
+    保存宿主内置窗口的描述符。
+    """
+
+    descriptors: dict[str, dict[str, Any]] = {}
 
 
 def _create_child_window_icon() -> Any | None:
@@ -64,9 +71,7 @@ def _create_child_window_icon() -> Any | None:
             if visible:
                 pixels[offset : offset + 4] = bytes((91, 111, 245, 255))
             # Small white "E" mark.
-            if (9 <= x <= 12 and 8 <= y <= 23) or (
-                12 <= x <= 22 and (8 <= y <= 11 or 14 <= y <= 17 or 20 <= y <= 23)
-            ):
+            if (9 <= x <= 12 and 8 <= y <= 23) or (12 <= x <= 22 and (8 <= y <= 11 or 14 <= y <= 17 or 20 <= y <= 23)):
                 pixels[offset : offset + 4] = bytes((255, 255, 255, 255))
     return TauriImage(bytes(pixels), size, size)
 
@@ -83,7 +88,9 @@ class WindowHandlers(_FrontendState):
         plugin = self.plugins.get_plugin(plugin_name)
         if plugin is None:
             return None
-        status = next((item.get("status") for item in self.plugins.list_plugins() if item.get("name") == plugin_name), None)
+        status = next(
+            (item.get("status") for item in self.plugins.list_plugins() if item.get("name") == plugin_name), None
+        )
         if status != "enabled":
             return None
         permission = Permission(PermissionScope.UI, PermissionAction.WRITE, f"window:{window_id}")
@@ -119,7 +126,7 @@ class WindowHandlers(_FrontendState):
         return None
 
     def _resolve_window_descriptor(self, descriptor_id: str) -> dict[str, Any] | None:
-        descriptor = BUILTIN_WINDOW_DESCRIPTORS.get(descriptor_id)
+        descriptor = WindowDescriptorRegistry.descriptors.get(descriptor_id)
         return dict(descriptor) if descriptor else self._plugin_window_descriptor(descriptor_id)
 
     async def window_list(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -199,12 +206,17 @@ class WindowHandlers(_FrontendState):
             "allowedEvents": descriptor.get("allowedEvents", []),
             "allowedSettings": descriptor.get("allowedSettings", []),
             "ready": False,
-            "bounds": {"width": width, "height": height, **({"x": saved_bounds["x"], "y": saved_bounds["y"]} if "position" in builder_options else {})},
+            "bounds": {
+                "width": width,
+                "height": height,
+                **({"x": saved_bounds["x"], "y": saved_bounds["y"]} if "position" in builder_options else {}),
+            },
         }
         self._window_metadata[label] = metadata
         self.logger.info("已创建受控窗口: label=%s, type=%s", label, descriptor["type"])
         on_window_event = getattr(webview, "on_window_event", None)
         if callable(on_window_event):
+
             def handle_native_window_event(*args: Any) -> None:
                 event = args[-1] if args else None
                 event_name = type(event).__name__.lower()
@@ -216,6 +228,7 @@ class WindowHandlers(_FrontendState):
                     self.emit_to_frontend("window:closed", removed)
 
             on_window_event(handle_native_window_event)
+
         def reveal_window() -> None:
             webview.unminimize()
             webview.show()
@@ -284,11 +297,7 @@ class WindowHandlers(_FrontendState):
         return success(metadata)
 
     def close_plugin_windows(self, plugin_name: str) -> None:
-        labels = [
-            label
-            for label, metadata in self._window_metadata.items()
-            if metadata.get("plugin") == plugin_name
-        ]
+        labels = [label for label, metadata in self._window_metadata.items() if metadata.get("plugin") == plugin_name]
         for label in labels:
             webview = self._webviews.pop(label, None)
             metadata = self._window_metadata.pop(label, None)
@@ -298,4 +307,4 @@ class WindowHandlers(_FrontendState):
             self.emit_to_frontend("window:closed", metadata or {"label": label, "plugin": plugin_name})
 
 
-__all__ = ["BUILTIN_WINDOW_DESCRIPTORS", "WindowHandlers"]
+__all__ = ["WindowDescriptorRegistry", "WindowHandlers"]

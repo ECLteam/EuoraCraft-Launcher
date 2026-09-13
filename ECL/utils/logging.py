@@ -6,7 +6,7 @@
 # 文件作用：日志体系：控制台彩色格式化、文件落盘与前端日志缓冲。
 #
 # 公开接口：
-#   - LOGGER_NAME（str）
+#   - class LoggingPolicy — 保存日志根名称和 ANSI 输出样式。
 #   - class ColoredFormatter — 为交互式终端中的日志级别和消息添加 ANSI 颜色。
 #       - format(record) -> str — 格式化日志副本，避免修改随后写入文件的原始记录。
 #   - resolve_log_level(name) -> int — 将配置中的日志级别名称解析为标准库日志级别。
@@ -37,7 +37,21 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ECL.events.event_bus import EventBus
 
-LOGGER_NAME = "EuoraCraft-Launcher"
+
+class LoggingPolicy:
+    """
+    保存日志根名称和 ANSI 输出样式。
+    """
+
+    logger_name = "EuoraCraft-Launcher"
+    colors = {
+        "DEBUG": "\033[36m",
+        "INFO": "\033[32m",
+        "WARNING": "\033[33m",
+        "ERROR": "\033[31m",
+        "CRITICAL": "\033[35m",
+    }
+    reset = "\033[0m"
 
 
 class ColoredFormatter(logging.Formatter):
@@ -47,15 +61,6 @@ class ColoredFormatter(logging.Formatter):
     文件日志始终使用无颜色格式，保证归档文件可被普通文本工具读取。
     """
 
-    COLORS = {
-        "DEBUG": "\033[36m",
-        "INFO": "\033[32m",
-        "WARNING": "\033[33m",
-        "ERROR": "\033[31m",
-        "CRITICAL": "\033[35m",
-    }
-    RESET = "\033[0m"
-
     def format(self, record: logging.LogRecord) -> str:
         """
         格式化日志副本，避免修改随后写入文件的原始记录。
@@ -64,10 +69,10 @@ class ColoredFormatter(logging.Formatter):
         :return: 带终端颜色的日志文本
         """
         copy = logging.makeLogRecord(record.__dict__.copy())
-        color = self.COLORS.get(copy.levelname)
+        color = LoggingPolicy.colors.get(copy.levelname)
         if color:
-            copy.levelname = f"{color}\033[1m{copy.levelname:8s}{self.RESET}"
-            copy.msg = f"{color}{copy.msg}{self.RESET}"
+            copy.levelname = f"{color}\033[1m{copy.levelname:8s}{LoggingPolicy.reset}"
+            copy.msg = f"{color}{copy.msg}{LoggingPolicy.reset}"
         return super().format(copy)
 
 
@@ -92,8 +97,13 @@ def resolve_log_level(name: str | None) -> int:
     return logging.INFO
 
 
-_FRONTEND_BUFFER: deque[dict[str, Any]] | None = None
-_FRONTEND_BUFFER_LOCK = RLock()
+class FrontendLogRuntimeState:
+    """
+    保存前端日志缓冲的进程级运行状态。
+    """
+
+    buffer: deque[dict[str, Any]] | None = None
+    buffer_lock = RLock()
 
 
 class FrontendLogHandler(logging.Handler):
@@ -122,7 +132,7 @@ class FrontendLogHandler(logging.Handler):
             "lineno": record.lineno,
             "message": record.getMessage(),
         }
-        with _FRONTEND_BUFFER_LOCK:
+        with FrontendLogRuntimeState.buffer_lock:
             self._buffer.append(entry)
         with suppress(Exception):
             self._events.emit("launcher:log", entry)
@@ -144,7 +154,7 @@ class LoggingRuntime:
         self.data_path = Path(data_path)  # 启动器数据目录。
         self.log_dir = self.data_path / "logs"  # 当前运行的日志目录。
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.root_logger = logging.getLogger(LOGGER_NAME)  # 应用根日志器。
+        self.root_logger = logging.getLogger(LoggingPolicy.logger_name)  # 应用根日志器。
         self.root_logger.setLevel(logging.DEBUG)
         self.root_logger.propagate = False
         self._replace_handlers(colored)
@@ -219,15 +229,14 @@ class LoggingRuntime:
         :param events: 用于中转 ``launcher:log`` 事件的事件总线
         :param history_limit: 历史日志缓冲的最大条数
         """
-        global _FRONTEND_BUFFER
-        if _FRONTEND_BUFFER is not None:
+        if FrontendLogRuntimeState.buffer is not None:
             return
-        with _FRONTEND_BUFFER_LOCK:
-            if _FRONTEND_BUFFER is not None:
+        with FrontendLogRuntimeState.buffer_lock:
+            if FrontendLogRuntimeState.buffer is not None:
                 return
             buffer: deque[dict[str, Any]] = deque(maxlen=history_limit)
             self.root_logger.addHandler(FrontendLogHandler(events, buffer))
-            _FRONTEND_BUFFER = buffer
+            FrontendLogRuntimeState.buffer = buffer
 
     def shutdown(self) -> None:
         """
@@ -258,7 +267,7 @@ def get_logger(name: str | None = None) -> logging.Logger:
     :param name: 可选的组件名称
     :return: 启动器根日志器或其命名子日志器
     """
-    logger = logging.getLogger(LOGGER_NAME)
+    logger = logging.getLogger(LoggingPolicy.logger_name)
     return logger.getChild(name) if name else logger
 
 
@@ -268,8 +277,8 @@ def get_frontend_log_history() -> list[dict[str, Any]]:
 
     :return: 结构化的日志记录列表，未安装处理器时为空列表
     """
-    with _FRONTEND_BUFFER_LOCK:
-        buffer = _FRONTEND_BUFFER
+    with FrontendLogRuntimeState.buffer_lock:
+        buffer = FrontendLogRuntimeState.buffer
         return list(buffer) if buffer is not None else []
 
 
