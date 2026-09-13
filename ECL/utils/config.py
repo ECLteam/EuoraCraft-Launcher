@@ -58,7 +58,17 @@ default_config: dict[str, Any] = {
         "jvm_args": [],
         "fullscreen": False,
         # 实例未单独指定时的游戏目录隔离策略。
-        "instance_isolation_policy": "modded_only",
+        "instance_isolation_policy": "all",
+        # 在 Minecraft 原始游戏参数后追加的全局参数，使用与命令行一致的引号规则。
+        "game_args_tail": "",
+        # 在创建 Minecraft 进程前执行的用户命令；为空时跳过。
+        "pre_launch_command": "",
+        # Windows 下将实际使用的 Java 可执行文件登记为高性能 GPU 偏好。
+        "prefer_high_performance_gpu": False,
+        # Windows 下优先以 java.exe 取代选中的 javaw.exe，便于收集标准输出。
+        "use_java_exe": False,
+        # 禁止异常退出后自动创建崩溃分析报告，不影响用户手动分析日志。
+        "disable_crash_analysis": False,
         "last_install_path": "",
         "last_manage_path": "",
     },

@@ -41,8 +41,14 @@ from ECL.utils.files import atomic_write_text
 
 from .base import GameServiceError, _GameState, _RunningGame
 
+if sys.platform == "win32":
+    import winreg
+else:
+    winreg = None
+
 
 class LaunchCoordinator(_GameState):
+    pre_launch_command_timeout_seconds = 60
     crash_log_markers = (
         "crash report saved to",
         "this crash report has been saved to",
@@ -101,6 +107,68 @@ class LaunchCoordinator(_GameState):
         else:
             runtime = max(candidates, key=lambda item: self._java_major_version(item.version))
         return str(runtime.path)
+
+    def _prefer_java_executable(self, java_path: str, use_java_exe: bool) -> str:
+        """在 Windows 上按需把 javaw.exe 替换为同目录的 java.exe。"""
+        if not use_java_exe or sys.platform != "win32":
+            return java_path
+        selected = Path(java_path)
+        if selected.name.casefold() != "javaw.exe":
+            return java_path
+        java_executable = selected.with_name("java.exe")
+        if java_executable.is_file():
+            self.logger.info("按设置使用 java.exe 代替 javaw.exe: %s", java_executable)
+            return str(java_executable.resolve())
+        self.logger.warning("未找到与 javaw.exe 同目录的 java.exe，继续使用原路径: %s", selected)
+        return java_path
+
+    def _set_high_performance_gpu_preference(self, java_path: str) -> None:
+        """在 Windows 当前用户配置中登记 Java 的高性能 GPU 偏好。"""
+        if sys.platform != "win32" or winreg is None:
+            return
+        registry_path = r"Software\Microsoft\DirectX\UserGpuPreferences"
+        executable = str(Path(java_path).resolve())
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
+                try:
+                    current, _ = winreg.QueryValueEx(key, executable)
+                except FileNotFoundError:
+                    current = ""
+                if str(current) == "GpuPreference=2;":
+                    return
+                winreg.SetValueEx(key, executable, 0, winreg.REG_SZ, "GpuPreference=2;")
+                self.logger.info("已设置 Java 高性能 GPU 偏好: %s", executable)
+        except OSError as exc:
+            self.logger.warning("设置 Java 高性能 GPU 偏好失败，游戏仍会继续启动: %s", exc)
+
+    def _run_pre_launch_command(self, command: str, working_directory: Path) -> None:
+        """在游戏工作目录执行用户配置的启动前命令，并将失败转换为稳定错误。"""
+        normalized = command.strip()
+        if not normalized:
+            return
+        try:
+            completed = subprocess.run(
+                normalized,
+                cwd=working_directory,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.pre_launch_command_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise GameServiceError("启动前命令执行超时", "PRE_LAUNCH_COMMAND_TIMEOUT") from exc
+        except OSError as exc:
+            raise GameServiceError(f"启动前命令无法执行: {exc}", "PRE_LAUNCH_COMMAND_FAILED") from exc
+        output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+        if output:
+            self.logger.info("启动前命令输出:\n%s", output)
+        if completed.returncode != 0:
+            raise GameServiceError(
+                f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED"
+            )
 
     @staticmethod
     def _fallback_required_java(game_version: Any) -> int | None:
@@ -238,6 +306,10 @@ class LaunchCoordinator(_GameState):
         version_isolation: Any = None,
         lock_memory: Any = False,
         process_priority: Any = "normal",
+        pre_launch_command: Any = None,
+        prefer_high_performance_gpu: Any = False,
+        use_java_exe: Any = False,
+        disable_crash_analysis: Any = False,
     ) -> dict[str, str]:
         """
         检查游戏文件并启动实例。
@@ -255,6 +327,10 @@ class LaunchCoordinator(_GameState):
         :param version_isolation: 是否启用版本目录隔离
         :param lock_memory: 是否锁定 JVM 初始堆与最大堆一致（-Xms=-Xmx）
         :param process_priority: 游戏进程优先级: idle / below_normal / normal / above_normal / high
+        :param pre_launch_command: 创建游戏进程前在实例工作目录执行的命令
+        :param prefer_high_performance_gpu: 是否在 Windows 中登记 Java 的高性能 GPU 偏好
+        :param use_java_exe: 是否在 Windows 中将 javaw.exe 替换为 java.exe
+        :param disable_crash_analysis: 是否禁止本次运行异常退出后的自动崩溃分析
         """
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
@@ -287,6 +363,10 @@ class LaunchCoordinator(_GameState):
         custom_jvm_args = self._normalize_string_list(jvm_args, "JVM 参数")
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
         lock_memory_enabled = bool(lock_memory)
+        command_before_launch = str(pre_launch_command or "").strip()
+        high_performance_gpu = bool(prefer_high_performance_gpu)
+        use_console_java = bool(use_java_exe)
+        crash_analysis_disabled = bool(disable_crash_analysis)
         normalized_priority = self._normalize_process_priority(process_priority)
         context = self._context(path, self._normalize_source(source))
         isolated = self.resolve_version_isolation(path, version_name, version_isolation)
@@ -402,6 +482,7 @@ class LaunchCoordinator(_GameState):
 
             self._emit_launch_progress("environment_check", "正在校验 Java 与实例运行环境", 22)
             java = await to_thread.run_sync(self._resolve_java_path, java_path, required_java)
+            java = self._prefer_java_executable(java, use_console_java)
             await to_thread.run_sync(
                 self._validate_launch_environment,
                 java,
@@ -518,6 +599,11 @@ class LaunchCoordinator(_GameState):
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
 
             self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
+            if command_before_launch:
+                self._emit_launch_progress("pre_launch_command", "正在执行启动前命令", 95)
+                await to_thread.run_sync(self._run_pre_launch_command, command_before_launch, game_directory)
+            if high_performance_gpu:
+                await to_thread.run_sync(self._set_high_performance_gpu_preference, java)
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
             run = _RunningGame(
@@ -528,6 +614,7 @@ class LaunchCoordinator(_GameState):
                 game_directory=game_directory,
                 started_at=monotonic(),
                 started_wall_time=time(),
+                crash_analysis_disabled=crash_analysis_disabled,
             )
             with self._lock:
                 self._running_games[run_token] = run
@@ -665,7 +752,7 @@ class LaunchCoordinator(_GameState):
         if action != "launcher_closed":
             self._emit_instance_change(run, action)
         detected_by = self._crash_detection_signals(run, action)
-        if detected_by:
+        if detected_by and not run.crash_analysis_disabled:
             self._schedule_crash_analysis(run, detected_by)
 
     @staticmethod

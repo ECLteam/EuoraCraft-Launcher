@@ -82,6 +82,7 @@ class _RunningGame:
     stopping: bool = False
     startup_complete: bool = False
     crash_marked: bool = False
+    crash_analysis_disabled: bool = False
     output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=500))
 
 

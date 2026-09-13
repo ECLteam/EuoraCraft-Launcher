@@ -642,6 +642,112 @@ def _fullscreen_launch_fixture(tmp_path, monkeypatch):
     return service, game_path, java_path
 
 
+def test_launch_runs_pre_launch_command_in_final_game_directory(tmp_path, monkeypatch) -> None:
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    executed: list[tuple[str, object]] = []
+    monkeypatch.setattr(service, "_run_pre_launch_command", lambda command, cwd: executed.append((command, cwd)))
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+            pre_launch_command="prepare-world.cmd",
+        )
+    )
+
+    assert executed == [("prepare-world.cmd", game_path / "versions" / "1.21.8")]
+    service.close()
+
+
+def test_pre_launch_command_rejects_nonzero_exit_code(tmp_path, monkeypatch) -> None:
+    service = _build_service()
+    monkeypatch.setattr(
+        "ECL.services.game.launch.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="", stderr="failed", returncode=3),
+    )
+
+    with pytest.raises(GameServiceError, match="退出码: 3") as raised:
+        service._run_pre_launch_command("exit 3", tmp_path)
+
+    assert raised.value.error_code == "PRE_LAUNCH_COMMAND_FAILED"
+    service.close()
+
+
+def test_javaw_is_replaced_with_java_exe_when_enabled_on_windows(tmp_path, monkeypatch) -> None:
+    from ECL.services.game import launch as launch_module
+
+    service = _build_service()
+    javaw_path = tmp_path / "javaw.exe"
+    java_path = tmp_path / "java.exe"
+    javaw_path.write_bytes(b"")
+    java_path.write_bytes(b"")
+    monkeypatch.setattr(launch_module.sys, "platform", "win32")
+
+    assert service._prefer_java_executable(str(javaw_path), True) == str(java_path.resolve())
+    service.close()
+
+
+def test_high_performance_gpu_preference_uses_current_user_registry(tmp_path, monkeypatch) -> None:
+    from ECL.services.game import launch as launch_module
+
+    class FakeRegistryKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class FakeWinreg:
+        HKEY_CURRENT_USER = object()
+        REG_SZ = 1
+
+        def __init__(self):
+            self.values: dict[str, str] = {}
+
+        def CreateKey(self, *_args):  # noqa: N802 - mirror winreg's public API.
+            return FakeRegistryKey()
+
+        def QueryValueEx(self, _key, name):  # noqa: N802 - mirror winreg's public API.
+            if name not in self.values:
+                raise FileNotFoundError
+            return self.values[name], self.REG_SZ
+
+        def SetValueEx(self, _key, name, _reserved, _kind, value):  # noqa: N802 - mirror winreg's public API.
+            self.values[name] = value
+
+    service = _build_service()
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    registry = FakeWinreg()
+    monkeypatch.setattr(launch_module.sys, "platform", "win32")
+    monkeypatch.setattr(launch_module, "winreg", registry)
+
+    service._set_high_performance_gpu_preference(str(java_path))
+
+    assert registry.values[str(java_path.resolve())] == "GpuPreference=2;"
+    service.close()
+
+
+def test_disabled_crash_analysis_skips_automatic_report(tmp_path, monkeypatch) -> None:
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    errors: list[dict] = []
+    service.events.subscribe("launcher:error", errors.append)
+
+    result = asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+            disable_crash_analysis=True,
+        )
+    )
+    service.instances.exit_instance(result["instanceId"], exit_code=1)
+
+    assert errors == []
+    service.close()
+
+
 def test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_path, monkeypatch) -> None:
     service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
     options_path = game_path / "versions" / "options.txt"
@@ -653,6 +759,7 @@ def test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_pat
             game_path=game_path,
             java_path=java_path,
             fullscreen=True,
+            version_isolation=False,
         )
     )
 
@@ -668,6 +775,7 @@ def test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monke
             {"version_id": "1.21.8"},
             game_path=game_path,
             java_path=java_path,
+            version_isolation=False,
         )
     )
 
@@ -1447,6 +1555,7 @@ def test_instance_mods_follow_saved_isolation_setting(tmp_path) -> None:
     assert not (game_path / "versions" / "mods" / "example.jar").exists()
     assert service.list_instance_mods(game_path, "isolated")[0]["filename"] == "example.jar"
 
+    service.write_version_settings(game_path, "shared", {"isolationMode": "disabled"})
     service.add_instance_mod(game_path, "shared", source)
     assert (game_path / "versions" / "mods" / "example.jar").is_file()
     assert service.resolve_version_isolation(game_path, "isolated") is True

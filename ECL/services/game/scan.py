@@ -35,7 +35,7 @@ class ScanCoordinator(_GameState):
     isolation_policies = frozenset(
         {"disabled", "modded_only", "non_release_only", "modded_or_non_release", "all"}
     )
-    default_isolation_policy = "modded_only"
+    default_isolation_policy = "all"
     non_release_version_types = frozenset({"snapshot", "april_fools", "old_alpha", "old_beta"})
 
     @staticmethod
