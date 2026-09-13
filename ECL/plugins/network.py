@@ -16,7 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-_MAX_HTTP_BODY_BYTES = 8 * 1024 * 1024
+
+class PluginNetworkPolicy:
+    """
+    插件受控 HTTP 请求的资源限制。
+
+    限制响应体大小，防止插件读取不受控的大型网络内容占用宿主内存。
+    """
+
+    max_http_body_bytes = 8 * 1024 * 1024
 
 
 class PluginHttpError(RuntimeError):

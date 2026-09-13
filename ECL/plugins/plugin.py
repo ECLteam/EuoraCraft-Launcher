@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from ECL.plugins.auth_providers import AuthField
 from ECL.plugins.launch_hooks import LaunchContext
-from ECL.plugins.network import _MAX_HTTP_BODY_BYTES, PluginHttpError, PluginHttpResponse, _action_for_method
+from ECL.plugins.network import PluginHttpError, PluginHttpResponse, PluginNetworkPolicy, _action_for_method
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
 from ECL.utils import get_logger
 
@@ -591,8 +591,8 @@ class Plugin:
             raise PluginHttpError(f"网络请求失败: {exc}") from exc
 
         body = response.content or b""
-        truncated = len(body) > _MAX_HTTP_BODY_BYTES
-        content = body[:_MAX_HTTP_BODY_BYTES]
+        truncated = len(body) > PluginNetworkPolicy.max_http_body_bytes
+        content = body[: PluginNetworkPolicy.max_http_body_bytes]
         content_type = str(response.headers.get("content-type", "")).lower()
         text = ""
         content_b64 = ""
