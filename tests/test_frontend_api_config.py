@@ -534,6 +534,8 @@ def test_launch_instance_applies_global_advanced_launch_settings(tmp_path) -> No
     game_config = api.config.get_config("game")
     game_config.update(
         {
+            "jvm_args": ["-XX:+UseG1GC"],
+            "renderer": "vulkan",
             "game_args_tail": '--tail "two words"',
             "pre_launch_command": "prepare.cmd",
             "prefer_high_performance_gpu": True,
@@ -554,8 +556,10 @@ def test_launch_instance_applies_global_advanced_launch_settings(tmp_path) -> No
     )
 
     assert result["success"] is True
+    assert api.game.launch_call[1]["jvm_args"] == ["-XX:+UseG1GC"]
     assert api.game.launch_call[1]["game_args"] == ["--tail", "two words", "--instance"]
     assert api.game.launch_call[1]["pre_launch_command"] == "prepare.cmd"
+    assert api.game.launch_call[1]["renderer"] == "vulkan"
     assert api.game.launch_call[1]["prefer_high_performance_gpu"] is True
     assert api.game.launch_call[1]["use_java_exe"] is True
     assert api.game.launch_call[1]["disable_crash_analysis"] is True

@@ -93,6 +93,15 @@ class GameHandlers(_FrontendState):
         except ValueError as exc:
             raise ValueError("游戏参数尾部的引号格式无效") from exc
 
+    @staticmethod
+    def _global_jvm_args(value: Any) -> list[str]:
+        """校验并复制全局 JVM 参数，避免不可信配置污染启动请求。"""
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError("全局 JVM 参数配置格式无效")
+        return [item.strip() for item in value if item.strip()]
+
     @_ipc_handler("VERSION_CATALOG_FAILED")
     async def game_versions(self, body: dict[str, Any]) -> ApiResponse:
         """
@@ -464,6 +473,10 @@ class GameHandlers(_FrontendState):
         java_path = values.pop("java_path")
         quick_target = values.pop("quick_target", None)
         game_config = self._get_effective_config().get("game") or {}
+        values["jvm_args"] = [
+            *self._global_jvm_args(game_config.get("jvm_args")),
+            *values.get("jvm_args", []),
+        ]
         values["game_args"] = [
             *self._parse_game_args_tail(game_config.get("game_args_tail")),
             *values.get("game_args", []),
@@ -490,6 +503,7 @@ class GameHandlers(_FrontendState):
             source=self._download_source(source.value if source else None),
             java_path=str(java_path) if java_path else None,
             pre_launch_command=game_config.get("pre_launch_command"),
+            renderer=game_config.get("renderer"),
             prefer_high_performance_gpu=bool(game_config.get("prefer_high_performance_gpu")),
             use_java_exe=bool(game_config.get("use_java_exe")),
             disable_crash_analysis=bool(game_config.get("disable_crash_analysis")),

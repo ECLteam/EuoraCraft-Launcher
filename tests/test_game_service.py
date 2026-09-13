@@ -74,6 +74,7 @@ import json
 import shlex
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -745,6 +746,65 @@ def test_disabled_crash_analysis_skips_automatic_report(tmp_path, monkeypatch) -
     service.instances.exit_instance(result["instanceId"], exit_code=1)
 
     assert errors == []
+    service.close()
+
+
+def test_renderer_agent_downloads_matching_windows_artifact(tmp_path, monkeypatch) -> None:
+    downloads: list[list[tuple[str, object]]] = []
+
+    class RendererDownloader(FakeDownloader):
+        def __init__(self, download_list, **options):
+            super().__init__(download_list, **options)
+            downloads.append(download_list)
+
+        async def run(self):
+            for _url, target in self.download_list:
+                target_path = Path(target)
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(b"mesa-loader")
+
+    service = _build_service(data_path=tmp_path, downloader_factory=RendererDownloader)
+    monkeypatch.setattr("ECL.services.game.launch.sys.platform", "win32")
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "ARM64")
+
+    agent = asyncio.run(service._ensure_renderer_agent("vulkan"))
+
+    assert agent == f'-javaagent:"{tmp_path / "mesa-loader-windows" / "26.0.4" / "Loader.jar"}"=zink'
+    assert downloads[0][0][0].endswith("mesa-loader-windows-26.0.4-arm64.jar")
+    service.close()
+
+
+def test_renderer_agent_is_not_enabled_outside_windows(tmp_path, monkeypatch) -> None:
+    service = _build_service(data_path=tmp_path)
+    monkeypatch.setattr("ECL.services.game.launch.sys.platform", "linux")
+
+    assert asyncio.run(service._ensure_renderer_agent("software")) is None
+    service.close()
+
+
+def test_launch_injects_renderer_agent_before_custom_jvm_args(tmp_path, monkeypatch) -> None:
+    captured_configs = []
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    service._command_builder = lambda config: captured_configs.append(config) or '"java.exe" game.Main'
+
+    async def renderer_agent(_renderer):
+        return '-javaagent:"C:\\ECL\\Loader.jar"=d3d12'
+
+    monkeypatch.setattr(service, "_ensure_renderer_agent", renderer_agent)
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.8"},
+            game_path=game_path,
+            java_path=java_path,
+            renderer="directx12",
+            jvm_args=["-XX:+UseG1GC"],
+        )
+    )
+
+    assert captured_configs[0].custom_jvm_params == [
+        '-javaagent:"C:\\ECL\\Loader.jar"=d3d12',
+        "-XX:+UseG1GC",
+    ]
     service.close()
 
 

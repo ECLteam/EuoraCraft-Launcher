@@ -56,6 +56,8 @@ default_config: dict[str, Any] = {
         "game_width": 854,
         "game_height": 480,
         "jvm_args": [],
+        # Windows 下使用 mesa-loader-windows 提供的兼容渲染后端。
+        "renderer": "default",
         "fullscreen": False,
         # 实例未单独指定时的游戏目录隔离策略。
         "instance_isolation_policy": "all",

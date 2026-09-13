@@ -49,6 +49,13 @@ else:
 
 class LaunchCoordinator(_GameState):
     pre_launch_command_timeout_seconds = 60
+    mesa_loader_windows_version = "26.0.4"
+    _renderer_agents = {
+        "default": None,
+        "software": "llvmpipe",
+        "directx12": "d3d12",
+        "vulkan": "zink",
+    }
     crash_log_markers = (
         "crash report saved to",
         "this crash report has been saved to",
@@ -169,6 +176,70 @@ class LaunchCoordinator(_GameState):
             raise GameServiceError(
                 f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED"
             )
+
+    @classmethod
+    def _normalize_renderer(cls, value: Any) -> str:
+        """规范化渲染器设置，拒绝无法映射到受控 Java Agent 的值。"""
+        renderer = str(value or "default").strip().casefold()
+        if renderer not in cls._renderer_agents:
+            raise GameServiceError("渲染器设置无效", "INVALID_GAME_OPTION")
+        return renderer
+
+    @staticmethod
+    def _mesa_loader_architecture() -> str:
+        """根据 Windows 系统环境选择 mesa-loader-windows 的 Maven 分类器。"""
+        architecture = (
+            os.environ.get("PROCESSOR_ARCHITEW6432")
+            or os.environ.get("PROCESSOR_ARCHITECTURE")
+            or ""
+        ).casefold()
+        if architecture in {"x86", "i386", "i486", "i586", "i686"}:
+            return "x86"
+        if architecture in {"arm64", "aarch64"}:
+            return "arm64"
+        return "x64"
+
+    async def _ensure_renderer_agent(self, renderer: str) -> str | None:
+        """
+        确保 Windows 兼容渲染器对应的 Mesa Loader 已就绪并返回 Java Agent 参数。
+
+        运行时资源只保存于启动器数据目录；下载失败时中止启动，避免把指向
+        不存在文件的 ``-javaagent`` 交给 Java 后产生难以定位的错误。
+
+        :param renderer: 已规范化的渲染器标识
+        :return: 默认/非 Windows 时返回 ``None``，否则返回完整 Java Agent 参数
+        :raises GameServiceError: 下载后资源仍不可用时抛出
+        """
+        agent_mode = self._renderer_agents[renderer]
+        if agent_mode is None or sys.platform != "win32":
+            return None
+        architecture = self._mesa_loader_architecture()
+        loader_path = self._data_path / "mesa-loader-windows" / self.mesa_loader_windows_version / "Loader.jar"
+        if not loader_path.is_file() or loader_path.stat().st_size <= 0:
+            artifact_name = f"mesa-loader-windows-{self.mesa_loader_windows_version}-{architecture}.jar"
+            artifact_url = (
+                "https://repo.maven.apache.org/maven2/org/glavo/mesa-loader-windows/"
+                f"{self.mesa_loader_windows_version}/{artifact_name}"
+            )
+            self._emit_launch_progress("renderer_loader", "正在准备兼容渲染器组件", 74)
+            downloader = self._downloader_factory(
+                [(artifact_url, loader_path)],
+                progress_callback=lambda done, total: self._emit_launch_progress(
+                    "renderer_loader",
+                    "正在下载兼容渲染器组件",
+                    74 + int(done * 4 / total) if total else 74,
+                ),
+            )
+            with self._lock:
+                self._active_downloads["__launch__"] = downloader
+            try:
+                await downloader.run()
+            finally:
+                with self._lock:
+                    self._active_downloads.pop("__launch__", None)
+            if downloader.failed_entries or not loader_path.is_file() or loader_path.stat().st_size <= 0:
+                raise GameServiceError("兼容渲染器组件下载失败", "RENDERER_LOADER_DOWNLOAD_FAILED")
+        return f'-javaagent:"{loader_path}"={agent_mode}'
 
     @staticmethod
     def _fallback_required_java(game_version: Any) -> int | None:
@@ -307,6 +378,7 @@ class LaunchCoordinator(_GameState):
         lock_memory: Any = False,
         process_priority: Any = "normal",
         pre_launch_command: Any = None,
+        renderer: Any = "default",
         prefer_high_performance_gpu: Any = False,
         use_java_exe: Any = False,
         disable_crash_analysis: Any = False,
@@ -328,6 +400,7 @@ class LaunchCoordinator(_GameState):
         :param lock_memory: 是否锁定 JVM 初始堆与最大堆一致（-Xms=-Xmx）
         :param process_priority: 游戏进程优先级: idle / below_normal / normal / above_normal / high
         :param pre_launch_command: 创建游戏进程前在实例工作目录执行的命令
+        :param renderer: Windows 下使用的兼容渲染器类型
         :param prefer_high_performance_gpu: 是否在 Windows 中登记 Java 的高性能 GPU 偏好
         :param use_java_exe: 是否在 Windows 中将 javaw.exe 替换为 java.exe
         :param disable_crash_analysis: 是否禁止本次运行异常退出后的自动崩溃分析
@@ -364,6 +437,7 @@ class LaunchCoordinator(_GameState):
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
         lock_memory_enabled = bool(lock_memory)
         command_before_launch = str(pre_launch_command or "").strip()
+        selected_renderer = self._normalize_renderer(renderer)
         high_performance_gpu = bool(prefer_high_performance_gpu)
         use_console_java = bool(use_java_exe)
         crash_analysis_disabled = bool(disable_crash_analysis)
@@ -559,6 +633,9 @@ class LaunchCoordinator(_GameState):
                     )
 
             self._apply_fullscreen_option(game_directory, fullscreen_enabled)
+            renderer_agent = await self._ensure_renderer_agent(selected_renderer)
+            if cancel_event.is_set():
+                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
             self._emit_launch_progress("building_args", "正在生成启动参数", 72)
             launch_context = LaunchContext(
                 version_id=version_name,
@@ -570,6 +647,8 @@ class LaunchCoordinator(_GameState):
                 game_args=list(custom_game_args),
             )
             self.launch_hooks.prepare(launch_context)
+            if renderer_agent is not None:
+                launch_context.jvm_args.insert(0, renderer_agent)
             launch_config = LaunchConfig(
                 java_path=java,
                 game_path=path,

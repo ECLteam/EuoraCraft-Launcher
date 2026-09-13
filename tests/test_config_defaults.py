@@ -33,6 +33,8 @@ def test_game_defaults_use_full_instance_isolation() -> None:
     game_config = default_config["game"]
 
     assert game_config["instance_isolation_policy"] == "all"
+    assert game_config["jvm_args"] == []
+    assert game_config["renderer"] == "default"
     assert game_config["game_args_tail"] == ""
     assert game_config["pre_launch_command"] == ""
     assert game_config["prefer_high_performance_gpu"] is False
