@@ -138,13 +138,20 @@ def _apply_http_network_settings(client: httpx.Client, launcher_config: Mapping[
             close()
 
 
-_PROXY_MODES = ("none", "system", "custom")
+class NetworkProxyPolicy:
+    """
+    启动器网络代理模式的允许值。
+
+    代理配置解析和共享 HTTP 客户端热更新均依赖此策略。
+    """
+
+    modes = ("none", "system", "custom")
 
 
 def _proxy_mode(launcher_config: Mapping[str, Any], mode_key: str = "proxy_mode") -> str:
     # 读取代理模式；proxy_mode 兼容旧版 ignore_proxy 布尔配置（true→直连、false→系统代理）。
     mode = launcher_config.get(mode_key)
-    if mode in _PROXY_MODES:
+    if mode in NetworkProxyPolicy.modes:
         return mode
     if mode_key != "proxy_mode":
         return "none"

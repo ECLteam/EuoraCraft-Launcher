@@ -17,8 +17,8 @@ import pytest
 
 from ECL.services import maintenance
 from ECL.services.maintenance import (
-    PENDING_MAINTENANCE_FILE,
     DebugMaintenanceError,
+    MaintenancePolicy,
     apply_pending_debug_maintenance,
     schedule_debug_maintenance,
 )
@@ -59,7 +59,7 @@ def test_reset_launcher_data_archives_only_declared_targets(tmp_path) -> None:
     assert (home_dir / ".ECL" / "accounts" / "accounts.json").is_file()
     assert results[0].backup_path is not None
     assert (results[0].backup_path / "setting.json").is_file()
-    assert not (data_path / PENDING_MAINTENANCE_FILE).exists()
+    assert not (data_path / MaintenancePolicy.pending_marker_filename).exists()
 
 
 def test_clear_plugins_can_be_scheduled_with_data_reset(tmp_path) -> None:
@@ -70,7 +70,7 @@ def test_clear_plugins_can_be_scheduled_with_data_reset(tmp_path) -> None:
 
     schedule_debug_maintenance(data_path, "reset_launcher_data")
     schedule_debug_maintenance(data_path, "clear_plugins")
-    marker = json.loads((data_path / PENDING_MAINTENANCE_FILE).read_text(encoding="utf-8"))
+    marker = json.loads((data_path / MaintenancePolicy.pending_marker_filename).read_text(encoding="utf-8"))
 
     assert marker["actions"] == ["reset_launcher_data", "clear_plugins"]
 
@@ -108,7 +108,7 @@ def test_failed_maintenance_task_is_not_replayed(tmp_path, monkeypatch) -> None:
     with pytest.raises(OSError, match="模拟移动失败"):
         apply_pending_debug_maintenance(data_path)
 
-    assert not (data_path / PENDING_MAINTENANCE_FILE).exists()
+    assert not (data_path / MaintenancePolicy.pending_marker_filename).exists()
     assert list(data_path.glob(".pending_debug_maintenance.running-*.failed.json"))
     assert apply_pending_debug_maintenance(data_path) == []
     journal = (data_path / "maintenance-history.jsonl").read_text(encoding="utf-8")
