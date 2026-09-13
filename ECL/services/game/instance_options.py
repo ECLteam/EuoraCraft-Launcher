@@ -19,25 +19,6 @@ from ECL.utils import atomic_write_text
 
 from .base import GameServiceError
 
-# 可结构化编辑的 options.txt 键及其取值约束；未知键保持只读不写，避免损坏不确定字段。
-_OPTION_SPECS: dict[str, dict[str, Any]] = {
-    "language": {"type": "string"},
-    "fullscreen": {"type": "bool"},
-    "vsync": {"type": "bool"},
-    "renderDistance": {"type": "int", "min": 2, "max": 32},
-    "guiScale": {"type": "int", "min": 0, "max": 4},
-    "fov": {"type": "float", "min": 30.0, "max": 110.0},
-    "sensitivity": {"type": "float", "min": 0.0, "max": 1.0},
-    "mouseSensitivity": {"type": "float", "min": 0.0, "max": 1.0},
-    "gamma": {"type": "float", "min": 0.0, "max": 5.0},
-    "difficulty": {"type": "int", "min": 0, "max": 3},
-    "particles": {"type": "int", "min": 0, "max": 2},
-    "clouds": {"type": "int", "min": 0, "max": 3},
-}
-_SOUND_CATEGORIES = frozenset(
-    {"master", "music", "records", "weather", "block", "hostile", "neutral", "player", "ambient", "voice"}
-)
-
 
 class InstanceOptionsCoordinator:
     """
@@ -47,11 +28,29 @@ class InstanceOptionsCoordinator:
     ``GameService`` 多重继承时经 ``WorkspaceCoordinator`` 提供。
     """
 
+    option_specs: dict[str, dict[str, Any]] = {
+        "language": {"type": "string"},
+        "fullscreen": {"type": "bool"},
+        "vsync": {"type": "bool"},
+        "renderDistance": {"type": "int", "min": 2, "max": 32},
+        "guiScale": {"type": "int", "min": 0, "max": 4},
+        "fov": {"type": "float", "min": 30.0, "max": 110.0},
+        "sensitivity": {"type": "float", "min": 0.0, "max": 1.0},
+        "mouseSensitivity": {"type": "float", "min": 0.0, "max": 1.0},
+        "gamma": {"type": "float", "min": 0.0, "max": 5.0},
+        "difficulty": {"type": "int", "min": 0, "max": 3},
+        "particles": {"type": "int", "min": 0, "max": 2},
+        "clouds": {"type": "int", "min": 0, "max": 3},
+    }
+    sound_categories = frozenset(
+        {"master", "music", "records", "weather", "block", "hostile", "neutral", "player", "ambient", "voice"}
+    )
+
     @staticmethod
     def _spec(key: str) -> dict[str, Any] | None:
-        if key in _OPTION_SPECS:
-            return _OPTION_SPECS[key]
-        if key.startswith("soundCategory_") and key.removeprefix("soundCategory_") in _SOUND_CATEGORIES:
+        if key in InstanceOptionsCoordinator.option_specs:
+            return InstanceOptionsCoordinator.option_specs[key]
+        if key.startswith("soundCategory_") and key.removeprefix("soundCategory_") in InstanceOptionsCoordinator.sound_categories:
             return {"type": "float", "min": 0.0, "max": 1.0}
         return None
 

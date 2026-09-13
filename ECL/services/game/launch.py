@@ -41,25 +41,25 @@ from ECL.utils.files import atomic_write_text
 
 from .base import GameServiceError, _GameState, _RunningGame
 
-_CRASH_LOG_MARKERS = (
-    "crash report saved to",
-    "this crash report has been saved to",
-    "could not save crash report",
-    "/error]: unable to launch",
-    "an exception was thrown, the game will display an error screen and halt",
-    "exception_access_violation",
-)
-_STARTUP_COMPLETE_MARKERS = (
-    "sound engine started",
-    "openal initialized",
-    "created: ",
-    "loaded 0 advancements",
-    "connecting to ",
-    "joining world",
-)
-
 
 class LaunchCoordinator(_GameState):
+    crash_log_markers = (
+        "crash report saved to",
+        "this crash report has been saved to",
+        "could not save crash report",
+        "/error]: unable to launch",
+        "an exception was thrown, the game will display an error screen and halt",
+        "exception_access_violation",
+    )
+    startup_complete_markers = (
+        "sound engine started",
+        "openal initialized",
+        "created: ",
+        "loaded 0 advancements",
+        "connecting to ",
+        "joining world",
+    )
+
     def _emit_launch_progress(
         self,
         phase: str,
@@ -629,9 +629,9 @@ class LaunchCoordinator(_GameState):
             if run is None:
                 return
             run.output_lines.append(normalized)
-            if any(marker in folded for marker in _CRASH_LOG_MARKERS):
+            if any(marker in folded for marker in self.crash_log_markers):
                 run.crash_marked = True
-            if any(marker in folded for marker in _STARTUP_COMPLETE_MARKERS):
+            if any(marker in folded for marker in self.startup_complete_markers):
                 run.startup_complete = True
 
     def _handle_instance_exit(self, run_token: str, exit_code: int, instance_name: str) -> None:
