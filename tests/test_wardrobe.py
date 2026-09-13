@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.wardrobe import MAX_TEXTURE_BYTES, WardrobeError, WardrobeStore
+from ECL.services.wardrobe import WardrobeError, WardrobeStore
 
 
 def png_header(width: int, height: int, suffix: bytes = b"") -> bytes:
@@ -128,7 +128,7 @@ def test_import_rejects_invalid_png_and_large_file(tmp_path: Path) -> None:
     invalid = tmp_path / "invalid.png"
     invalid.write_bytes(b"not a png")
     large = tmp_path / "large.png"
-    large.write_bytes(png_header(64, 64) + b"0" * MAX_TEXTURE_BYTES)
+    large.write_bytes(png_header(64, 64) + b"0" * WardrobeStore.max_texture_bytes)
 
     with pytest.raises(WardrobeError) as invalid_error:
         store.import_file(invalid, "skin")

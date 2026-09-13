@@ -6,11 +6,6 @@
 # 文件作用：主页信息卡服务：公告/小贴士内容与远程公告拉取。
 #
 # 公开接口：
-#   - NOTICE_URL（str）
-#   - NOTICE_SCHEMA_VERSION（int）
-#   - NOTICE_REFRESH_SECONDS（float）
-#   - NOTICE_TIMEOUT_SECONDS（float）
-#   - DEFAULT_INFO_CARD（dict）
 #   - class InfoCardManager — 组装首页信息卡数据，并管理远程公告的拉取、校验与本地缓存。
 #       - get_info_card() -> dict[str, Any] — 返回首页轮播模式、提示、公告和欢迎卡片数据。
 # ============================================================
@@ -29,28 +24,6 @@ from typing import Any
 import httpx
 
 from ECL.utils import atomic_write_text, get_logger, get_with_retries
-
-NOTICE_URL = "https://api.eclteam.top/raw/ECLteam/ECL-Api/main/notice.json"
-NOTICE_SCHEMA_VERSION = 1
-NOTICE_REFRESH_SECONDS = 300.0
-NOTICE_TIMEOUT_SECONDS = 5.0
-
-DEFAULT_INFO_CARD = {
-    "mode": "rotate",
-    "tip_title": "你知道吗",
-    "announcement_title": "公告",
-    "tips": [
-        "可以在设置中调整游戏内存、窗口大小和 Java 路径。",
-        "可以在版本管理中为不同游戏版本保存独立设置。",
-        "账户管理支持离线账户与 Microsoft 正版账户。",
-        "插件、日志和账户等可变数据统一保存在 ECL_data 目录。",
-    ],
-    "welcome": {
-        "title": "欢迎使用 EuoraCraft Launcher",
-        "content": "选择账户和游戏版本后即可开始游戏。",
-    },
-    "interval": 8000,
-}
 
 NoticeLoader = Callable[[str], Any]
 Clock = Callable[[], datetime]
@@ -75,6 +48,27 @@ class InfoCardManager:
     :param data_path: 启动器数据目录，用于持久化公告缓存
     """
 
+    notice_url = "https://api.eclteam.top/raw/ECLteam/ECL-Api/main/notice.json"
+    notice_schema_version = 1
+    notice_refresh_seconds = 300.0
+    notice_timeout_seconds = 5.0
+    default_info_card = {
+        "mode": "rotate",
+        "tip_title": "你知道吗",
+        "announcement_title": "公告",
+        "tips": [
+            "可以在设置中调整游戏内存、窗口大小和 Java 路径。",
+            "可以在版本管理中为不同游戏版本保存独立设置。",
+            "账户管理支持离线账户与 Microsoft 正版账户。",
+            "插件、日志和账户等可变数据统一保存在 ECL_data 目录。",
+        ],
+        "welcome": {
+            "title": "欢迎使用 EuoraCraft Launcher",
+            "content": "选择账户和游戏版本后即可开始游戏。",
+        },
+        "interval": 8000,
+    }
+
     def __init__(
         self,
         data_path: Path | str,
@@ -82,8 +76,8 @@ class InfoCardManager:
         notice_loader: NoticeLoader | None = None,
         http_client: httpx.Client | None = None,
         clock: Clock = _utc_now,
-        refresh_seconds: float = NOTICE_REFRESH_SECONDS,
-        request_timeout: float = NOTICE_TIMEOUT_SECONDS,
+        refresh_seconds: float | None = None,
+        request_timeout: float | None = None,
         request_retries: int = 2,
     ):
         self.logger = get_logger("InfoCardManager")
@@ -92,8 +86,10 @@ class InfoCardManager:
         self.http = http_client
         self._notice_loader = notice_loader or self._download_notice
         self._clock = clock
-        self._refresh_seconds = max(0.0, refresh_seconds)
-        self._request_timeout = max(1.0, float(request_timeout))
+        self._refresh_seconds = max(0.0, self.notice_refresh_seconds if refresh_seconds is None else refresh_seconds)
+        self._request_timeout = max(
+            1.0, float(self.notice_timeout_seconds if request_timeout is None else request_timeout)
+        )
         self._request_retries = max(0, int(request_retries))
         self._lock = RLock()
         self._last_refresh_at: float | None = None
@@ -135,7 +131,7 @@ class InfoCardManager:
     def _normalize_announcements(cls, data: Any, now: datetime) -> list[dict[str, str]]:
         if not isinstance(data, dict):
             raise ValueError("远程公告根节点必须是对象")
-        if data.get("schema_version") != NOTICE_SCHEMA_VERSION:
+        if data.get("schema_version") != cls.notice_schema_version:
             raise ValueError(f"不支持的公告数据版本: {data.get('schema_version')!r}")
 
         raw_announcements = data.get("announcements")
@@ -212,7 +208,7 @@ class InfoCardManager:
 
         now = self._clock()
         try:
-            remote_data = self._notice_loader(NOTICE_URL)
+            remote_data = self._notice_loader(self.notice_url)
             announcements = self._normalize_announcements(remote_data, now)
             self._write_notice_cache(remote_data)
         except (httpx.HTTPError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
@@ -232,6 +228,6 @@ class InfoCardManager:
         返回首页轮播模式、提示、公告和欢迎卡片数据。
         """
         with self._lock:
-            data = deepcopy(DEFAULT_INFO_CARD)
+            data = deepcopy(self.default_info_card)
             data["announcements"] = self._load_announcements()
             return data

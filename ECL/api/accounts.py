@@ -60,7 +60,7 @@ from ECL.api.models import (
     WardrobeItemRequest,
     WardrobeUpdateRequest,
 )
-from ECL.services.wardrobe import MAX_TEXTURE_BYTES, WardrobeError
+from ECL.services.wardrobe import WardrobeError, WardrobeStore
 from ECL.utils import atomic_write_bytes
 
 from .bridge import _FrontendState, _ipc_handler, _normalize_image_url, _validate_body
@@ -371,7 +371,7 @@ class AccountHandlers(_FrontendState):
             response.raise_for_status()
             for chunk in response.iter_bytes(_SKIN_DOWNLOAD_CHUNK_BYTES):
                 data.extend(chunk)
-                if len(data) > MAX_TEXTURE_BYTES:
+                if len(data) > WardrobeStore.max_texture_bytes:
                     raise WardrobeError("账户皮肤超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
         return bytes(data)
 

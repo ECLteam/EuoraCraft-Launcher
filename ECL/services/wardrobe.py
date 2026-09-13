@@ -6,9 +6,6 @@
 # 文件作用：衣橱服务：皮肤/披风纹理导入、去重与导出。
 #
 # 公开接口：
-#   - PNG_SIGNATURE（bytes）
-#   - MAX_TEXTURE_BYTES（常量）
-#   - MAX_TEXTURE_DIMENSION（int）
 #   - class WardrobeItem
 #   - class WardrobeStore — 管理本地皮肤与披风收藏，并保证元数据和纹理文件始终位于衣柜目录中。
 #       - list_items() -> list[WardrobeItem] — 返回按最近更新时间排序的衣柜条目副本。
@@ -39,11 +36,6 @@ logger = logging.getLogger("EuoraCraft-Launcher.Wardrobe")
 WardrobeKind = Literal["skin", "cape"]
 SkinModel = Literal["classic", "slim"]
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-MAX_TEXTURE_BYTES = 5 * 1024 * 1024
-MAX_TEXTURE_DIMENSION = 1024
-
-
 class WardrobeItem(TypedDict):
     id: str
     kind: WardrobeKind
@@ -63,6 +55,10 @@ class WardrobeStore:
     管理本地皮肤与披风收藏，并保证元数据和纹理文件始终位于衣柜目录中。
     :param data_path: 启动器持久化数据目录
     """
+
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    max_texture_bytes = 5 * 1024 * 1024
+    max_texture_dimension = 1024
 
     def __init__(self, data_path: Path) -> None:
         self.root = data_path / "wardrobe"
@@ -84,7 +80,7 @@ class WardrobeStore:
     @staticmethod
     def _png_dimensions(data: bytes) -> tuple[int, int]:
         # 从 PNG 签名和 IHDR 块直接读取尺寸，避免完整图像解码。
-        if len(data) < 24 or data[:8] != PNG_SIGNATURE or data[12:16] != b"IHDR":
+        if len(data) < 24 or data[:8] != WardrobeStore.png_signature or data[12:16] != b"IHDR":
             raise WardrobeError("请选择有效的 PNG 图片", "WARDROBE_INVALID_PNG")
         width, height = struct.unpack(">II", data[16:24])
         if width <= 0 or height <= 0:
@@ -93,7 +89,7 @@ class WardrobeStore:
 
     @staticmethod
     def _validate_dimensions(kind: WardrobeKind, width: int, height: int) -> None:
-        if width > MAX_TEXTURE_DIMENSION or height > MAX_TEXTURE_DIMENSION:
+        if width > WardrobeStore.max_texture_dimension or height > WardrobeStore.max_texture_dimension:
             raise WardrobeError("纹理尺寸不能超过 1024×1024", "WARDROBE_INVALID_DIMENSIONS")
         scale, remainder = divmod(width, 64)
         if scale < 1 or remainder:
@@ -201,7 +197,7 @@ class WardrobeStore:
         if not source.is_file():
             raise WardrobeError("选择的文件不存在", "WARDROBE_FILE_NOT_FOUND")
         size = source.stat().st_size
-        if size > MAX_TEXTURE_BYTES:
+        if size > self.max_texture_bytes:
             raise WardrobeError("纹理文件不能超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
         try:
             data = source.read_bytes()
@@ -225,7 +221,7 @@ class WardrobeStore:
         :param model: 皮肤手臂模型；披风必须为空
         :return: 衣柜条目以及是否命中重复内容
         """
-        if len(data) > MAX_TEXTURE_BYTES:
+        if len(data) > self.max_texture_bytes:
             raise WardrobeError("纹理文件不能超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
         width, height = self._png_dimensions(data)
         self._validate_dimensions(kind, width, height)

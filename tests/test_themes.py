@@ -12,13 +12,13 @@
 
 from __future__ import annotations
 
-from ECL.services.themes import BUILTIN_THEME_IDS, normalize_theme_id
+from ECL.services.themes import ThemeCatalog, normalize_theme_id
 
 
 def test_builtin_theme_ids_are_classic_and_folia() -> None:
     # 内置主题仅保留 classic 与 folia 两个皮肤标识。
-    assert BUILTIN_THEME_IDS == ("classic", "folia")
-    assert isinstance(BUILTIN_THEME_IDS, tuple)
+    assert ThemeCatalog.builtin_theme_ids == ("classic", "folia")
+    assert isinstance(ThemeCatalog.builtin_theme_ids, tuple)
 
 
 def test_normalize_theme_id_accepts_builtin_and_rejects_unknown() -> None:

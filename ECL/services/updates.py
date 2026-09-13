@@ -6,7 +6,6 @@
 # 文件作用：版本更新比较与 GitHub Releases 拉取。
 #
 # 公开接口：
-#   - RELEASES_API（str）
 #   - parse_version(version) -> tuple[tuple[int, ...], tuple[int, int] | None] | None — 解析 SemVer 版本为可比较结构，忽略构建元数据。
 #   - compare_versions(left, right) -> int — 按 SemVer 规则比较两个版本号：left 小于 right 返回负数、相等返回 0、大于返回正数。
 #   - class UpdateCheckResult — 一次版本检测的结果。
@@ -24,14 +23,6 @@ import httpx
 
 from ECL.utils import get_logger, get_with_retries
 
-# GitHub Releases API 地址：仓库与前端 issues 链接保持一致。
-RELEASES_API = "https://api.github.com/repos/ECLteam/EuoraCraft-Launcher/releases"
-_RELEASES_PER_PAGE = 50
-_REQUESTS_TIMEOUT = 10.0
-
-# 预发布标识的通道优先级：序号相同且 release 相同时，alpha < beta < rc < 正式版。
-_PRERELEASE_ORDER = {"alpha": 0, "beta": 1, "rc": 2}
-
 
 def parse_version(version: str) -> tuple[tuple[int, ...], tuple[int, int] | None] | None:
     """
@@ -48,7 +39,7 @@ def parse_version(version: str) -> tuple[tuple[int, ...], tuple[int, int] | None
         marker = marker.strip()
         if marker:
             parts = marker.split(".")
-            order = _PRERELEASE_ORDER.get(parts[0], 99)
+            order = UpdateChecker.prerelease_order.get(parts[0], 99)
             try:
                 number = int(parts[1]) if len(parts) > 1 else 0
             except ValueError:
@@ -127,20 +118,27 @@ class UpdateChecker:
     :param version_type: 当前版本类型（alpha / beta / rc / release）
     """
 
+    releases_api = "https://api.github.com/repos/ECLteam/EuoraCraft-Launcher/releases"
+    releases_per_page = 50
+    request_timeout_seconds = 10.0
+    prerelease_order = {"alpha": 0, "beta": 1, "rc": 2}
+
     def __init__(
         self,
         http_client: httpx.Client,
         *,
         current_version: str,
         version_type: str,
-        request_timeout: float = _REQUESTS_TIMEOUT,
+        request_timeout: float | None = None,
         request_retries: int = 2,
     ):
         self.logger = get_logger("UpdateChecker")
         self.http = http_client
         self.current_version = current_version
         self.version_type = version_type or "release"
-        self._request_timeout = max(1.0, float(request_timeout))
+        self._request_timeout = max(
+            1.0, float(self.request_timeout_seconds if request_timeout is None else request_timeout)
+        )
         self._request_retries = max(0, int(request_retries))
 
     def check(self) -> UpdateCheckResult:
@@ -208,10 +206,10 @@ class UpdateChecker:
         try:
             response = get_with_retries(
                 self.http.get,
-                RELEASES_API,
+                self.releases_api,
                 retries=self._request_retries,
                 timeout=self._request_timeout,
-                params={"per_page": _RELEASES_PER_PAGE},
+                params={"per_page": self.releases_per_page},
                 headers={"Accept": "application/vnd.github+json"},
             )
         except httpx.RequestError as exc:

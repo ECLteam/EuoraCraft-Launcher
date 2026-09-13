@@ -6,17 +6,22 @@
 # 文件作用：内置主题标识。前端根据 ui.theme.theme_id 应用皮肤，无需后端服务。
 #
 # 公开接口：
-#   - BUILTIN_THEME_IDS（tuple）
+#   - class ThemeCatalog — 内置主题标识。
 #   - normalize_theme_id(value) -> str
 # ============================================================
 
 """内置主题标识。前端根据 ui.theme.theme_id 应用皮肤，无需后端服务。"""
 
-BUILTIN_THEME_IDS = ("classic", "folia")
+class ThemeCatalog:
+    """
+    集中管理启动器内置主题的稳定标识。
+    """
+
+    builtin_theme_ids = ("classic", "folia")
 
 
 def normalize_theme_id(value: object) -> str:
-    return value if value in BUILTIN_THEME_IDS else "classic"
+    return value if value in ThemeCatalog.builtin_theme_ids else "classic"
 
 
-__all__ = ["BUILTIN_THEME_IDS", "normalize_theme_id"]
+__all__ = ["ThemeCatalog", "normalize_theme_id"]
