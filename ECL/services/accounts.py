@@ -6,7 +6,6 @@
 # 文件作用：账户领域服务：微软/离线/外置登录、凭据刷新与皮肤同步。
 #
 # 公开接口：
-#   - MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS（int）
 #   - class LauncherMicrosoftAccountManager — 将底层 Microsoft 认证流程适配为启动器账户管理流程。
 #       - add_microsoft_account() -> str — 完成 Microsoft 登录并保存可用于启动游戏的账户。
 #   - class AccountManager — 聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
@@ -61,15 +60,6 @@ from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError
 from ECL.utils import AccountError, atomic_write_text, get_logger
 
-MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS = 2
-_DEFAULT_LOGIN_POLL_INTERVAL_SECONDS = 5
-_LOGIN_START_WAIT_SECONDS = 15
-_LOGIN_WAITING_STATUSES = frozenset({"starting", "pending", "progress"})
-_LOGIN_STATUS_MESSAGES = {
-    "error": "Microsoft 登录失败",
-    "cancelled": "Microsoft 登录已取消",
-}
-
 
 def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]]:
     # 读取默认皮肤资源，返回 ``skin_id -> (显示名, 贴图 data URL)``。
@@ -89,7 +79,7 @@ def _login_progress_result(status: str, state: dict[str, Any], *, force_pending:
     # 将等待中的登录状态映射为前端可轮询的进度响应。
     result = {
         "status": "pending" if force_pending or status != "progress" else "progress",
-        "retry_after": state.get("interval", _DEFAULT_LOGIN_POLL_INTERVAL_SECONDS),
+        "retry_after": state.get("interval", AccountManager.default_login_poll_interval_seconds),
     }
     if state.get("stage"):
         result["stage"] = state["stage"]
@@ -202,6 +192,15 @@ class AccountManager:
     :param authlib_manager: 测试或定制环境提供的 Authlib 管理器
     :param event_bus: 当前应用上下文拥有的事件总线
     """
+
+    microsoft_login_poll_interval_seconds = 2
+    default_login_poll_interval_seconds = 5
+    login_start_wait_seconds = 15
+    login_waiting_statuses = frozenset({"starting", "pending", "progress"})
+    login_status_messages = {
+        "error": "Microsoft 登录失败",
+        "cancelled": "Microsoft 登录已取消",
+    }
 
     def __init__(
         self,
@@ -1061,13 +1060,13 @@ class AccountManager:
                 self._login_state = {"status": "cancelled"}
                 self._login_event.set()
                 return
-            flow["interval"] = MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS
+            flow["interval"] = self.microsoft_login_poll_interval_seconds
             self._login_state = {
                 "status": "pending",
                 "userCode": flow.get("user_code", ""),
                 "verificationUri": flow.get("verification_uri", ""),
                 "message": flow.get("message", ""),
-                "interval": MICROSOFT_LOGIN_POLL_INTERVAL_SECONDS,
+                "interval": self.microsoft_login_poll_interval_seconds,
             }
             self._login_event.set()
 
@@ -1144,7 +1143,7 @@ class AccountManager:
 
         if state.get("status") == "starting":
             with suppress(TimeoutError):
-                await asyncio.wait_for(self._login_event.wait(), timeout=_LOGIN_START_WAIT_SECONDS)
+                await asyncio.wait_for(self._login_event.wait(), timeout=self.login_start_wait_seconds)
             with self._lock:
                 state = deepcopy(self._login_state)
 
@@ -1164,7 +1163,7 @@ class AccountManager:
             "userCode": state.get("userCode", ""),
             "verificationUri": state.get("verificationUri", ""),
             "message": state.get("message", ""),
-            "interval": state.get("interval", _DEFAULT_LOGIN_POLL_INTERVAL_SECONDS),
+            "interval": state.get("interval", self.default_login_poll_interval_seconds),
         }
 
     def poll_microsoft_login(self) -> dict[str, Any]:
@@ -1176,9 +1175,9 @@ class AccountManager:
         status = state.get("status")
         if status == "ready":
             return {"status": "ready"}
-        if status in _LOGIN_WAITING_STATUSES:
+        if status in self.login_waiting_statuses:
             return _login_progress_result(status, state)
-        message = state.get("message") or _LOGIN_STATUS_MESSAGES.get(status, "当前没有进行中的 Microsoft 登录")
+        message = state.get("message") or self.login_status_messages.get(status, "当前没有进行中的 Microsoft 登录")
         return {"status": "error", "message": message}
 
     def complete_microsoft_login(self) -> dict[str, Any]:
@@ -1192,7 +1191,7 @@ class AccountManager:
                 raise AccountError(state.get("message") or "Microsoft 登录失败", "MICROSOFT_LOGIN_FAILED")
             if status == "cancelled":
                 raise AccountError("Microsoft 登录已取消", "MICROSOFT_LOGIN_CANCELLED")
-            if status in _LOGIN_WAITING_STATUSES:
+            if status in self.login_waiting_statuses:
                 return _login_progress_result(status, state, force_pending=True)
             if status != "ready":
                 raise AccountError("当前没有可完成的 Microsoft 登录", "MICROSOFT_LOGIN_NOT_STARTED")
