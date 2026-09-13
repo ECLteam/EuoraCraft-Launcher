@@ -6,12 +6,6 @@
 # 文件作用：开发者通道服务：本地 WebSocket 鉴权、方法分发与日志回放。
 #
 # 公开接口：
-#   - PROTOCOL_VERSION（int）
-#   - AUTH_TIMEOUT_SECONDS（int）
-#   - MAX_PAYLOAD_BYTES（int）
-#   - DISCOVERY_FILENAME（str）
-#   - LOG_HISTORY_LIMIT（int）
-#   - EVENT_PREFIX_WHITELIST（tuple）
 #   - class DevChannelError — 携带协议错误码的通道异常，用于把插件操作失败映射为响应错误信封。
 #   - class DevChannelService — 开发者通道服务：在本地回环地址上提供 WebSocket 服务，把插件管理与日志能力
 #       - port() -> int | None — 返回实际监听端口，服务未启动时为 None。
@@ -54,14 +48,6 @@ from ECL.utils.logging import LOGGER_NAME, get_logger
 if TYPE_CHECKING:
     from ECL.events import EventBus
     from ECL.plugins import PluginManager
-
-PROTOCOL_VERSION = 1  # Dev Channel 协议版本，与工具箱 shared/protocol/protocol.json 保持一致
-AUTH_TIMEOUT_SECONDS = 5  # 连接建立后允许完成鉴权的最长时间
-MAX_PAYLOAD_BYTES = 1048576  # 单条消息体积上限
-DISCOVERY_FILENAME = "dev_channel.json"  # 写入数据目录的连接发现文件名
-LOG_HISTORY_LIMIT = 500  # logs.subscribe 返回的最近日志缓存条数
-EVENT_PREFIX_WHITELIST = ("plugin:", "game:", "launcher:", "process:", "config:", "accounts:")
-
 
 class DevChannelError(Exception):
     """
@@ -123,6 +109,13 @@ class DevChannelService:
     数据目录下的 ``dev_channel.json``，由工具箱读取后完成鉴权接入。
     """
 
+    protocol_version = 1
+    auth_timeout_seconds = 5
+    max_payload_bytes = 1_048_576
+    discovery_filename = "dev_channel.json"
+    log_history_limit = 500
+    event_prefix_whitelist = ("plugin:", "game:", "launcher:", "process:", "config:", "accounts:")
+
     def __init__(
         self,
         *,
@@ -152,14 +145,14 @@ class DevChannelService:
         self._frontend_dist = Path(frontend_dist) if frontend_dist else None  # 前端构建产物目录
         self._frontend_enabled = bool(self._frontend_dist and self._frontend_dist.is_dir())  # 是否托管内嵌前端
         self._index_template: bytes | None = None  # 注入连接信息后的内嵌前端入口缓存
-        self._discovery_path = self._data_path / DISCOVERY_FILENAME  # 连接发现文件路径
+        self._discovery_path = self._data_path / self.discovery_filename  # 连接发现文件路径
         self._token = secrets.token_urlsafe(32)  # 一次性访问令牌，随进程生成
         self._port: int | None = None  # 实际监听端口
         self._loop: asyncio.AbstractEventLoop | None = None  # 服务线程的事件循环
         self._stop_future: asyncio.Future[None] | None = None  # 通知服务线程退出的信号
         self._thread: threading.Thread | None = None  # 承载服务事件循环的后台线程
         self._log_handler: _ChannelLogHandler | None = None  # 挂在根日志器上的推送处理器
-        self._log_history: deque[dict[str, Any]] = deque(maxlen=LOG_HISTORY_LIMIT)  # 最近日志缓存
+        self._log_history: deque[dict[str, Any]] = deque(maxlen=self.log_history_limit)  # 最近日志缓存
         self._sessions: set[_Session] = set()  # 已通过鉴权的连接会话
         self._pending_sends: set[asyncio.Task[None]] = set()  # 进行中的通知发送任务，防止任务被提前回收
         self._closed = False  # 服务是否已关闭（用于幂等）
@@ -281,7 +274,7 @@ class DevChannelService:
                     self._handle,
                     "127.0.0.1",
                     0,
-                    max_size=MAX_PAYLOAD_BYTES,
+                    max_size=self.max_payload_bytes,
                     process_request=self._process_http_request,
                 )
             except OSError as exc:
@@ -317,7 +310,7 @@ class DevChannelService:
             "token": self._token,
             "pid": os.getpid(),
             "launcherVersion": self._launcher_version,
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": self.protocol_version,
             "frontendUrl": self.frontend_url,
         }
         self._data_path.mkdir(parents=True, exist_ok=True)
@@ -413,7 +406,7 @@ class DevChannelService:
     async def _authenticate(self, websocket: ServerConnection) -> bool:
         # 等待首条鉴权消息并校验令牌，失败时回复错误信封并断开。
         try:
-            raw = await asyncio.wait_for(websocket.recv(), timeout=AUTH_TIMEOUT_SECONDS)
+            raw = await asyncio.wait_for(websocket.recv(), timeout=self.auth_timeout_seconds)
             message = json.loads(raw)
         except (TimeoutError, ConnectionError, ValueError, TypeError):
             return False
@@ -427,7 +420,7 @@ class DevChannelService:
                 json.dumps(
                     {
                         "op": "auth_ok",
-                        "protocolVersion": PROTOCOL_VERSION,
+                        "protocolVersion": self.protocol_version,
                         "launcherVersion": self._launcher_version,
                     },
                     ensure_ascii=False,
@@ -684,7 +677,7 @@ class DevChannelService:
             raise DevChannelError("INVALID_PARAMS", "参数 events 必须为字符串数组")
         subscribed = []
         for event in events:
-            if not event.startswith(EVENT_PREFIX_WHITELIST):
+            if not event.startswith(self.event_prefix_whitelist):
                 continue
             if event in session.event_unsubscribers:
                 subscribed.append(event)
