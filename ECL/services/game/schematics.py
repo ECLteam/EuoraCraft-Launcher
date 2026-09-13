@@ -208,13 +208,17 @@ def _block_palette_entry(value: Any) -> dict[str, Any]:
     :return: 包含方块标识、状态属性和颜色回退值的字典
     """
     entry = value if isinstance(value, Mapping) else {}
-    name = str(entry.get("Name") or "minecraft:air")
+    raw_name = str(entry.get("Name") or "minecraft:air")
+    name, separator, serialized_properties = raw_name.partition("[")
     properties_tag = entry.get("Properties")
     properties = (
-        {str(key): str(item) for key, item in properties_tag.items()}
-        if isinstance(properties_tag, Mapping)
-        else {}
+        {str(key): str(item) for key, item in properties_tag.items()} if isinstance(properties_tag, Mapping) else {}
     )
+    if separator and serialized_properties.endswith("]"):
+        for pair in serialized_properties[:-1].split(","):
+            key, equals, item = pair.partition("=")
+            if key and equals:
+                properties[key] = item
     return {"name": name, "properties": properties, "color": list(_block_color(name))}
 
 
@@ -304,6 +308,7 @@ class SchematicCoordinator:
     max_axis = 1024
     max_asset_blocks = 512
     max_asset_bytes = 24 * 1024 * 1024
+    asset_cache_version = 2
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
@@ -405,8 +410,10 @@ class SchematicCoordinator:
             if not isinstance(block, str) or ":" not in block:
                 raise GameServiceError("原理图方块标识无效", "SCHEMATIC_ASSETS_INVALID")
             namespace, name = block.split(":", 1)
-            if not namespace.replace("_", "").replace("-", "").isalnum() or not name or any(
-                part in {"", ".", ".."} for part in name.split("/")
+            if (
+                not namespace.replace("_", "").replace("-", "").isalnum()
+                or not name
+                or any(part in {"", ".", ".."} for part in name.split("/"))
             ):
                 raise GameServiceError("原理图方块标识无效", "SCHEMATIC_ASSETS_INVALID")
             normalized.add(f"{namespace}:{name}")
@@ -445,7 +452,9 @@ class SchematicCoordinator:
 
     def _asset_cache_path(self, jar_path: Path, blocks: list[str]) -> Path:
         stat = jar_path.stat()
-        digest = hashlib.sha256(f"{jar_path}:{stat.st_mtime_ns}:{stat.st_size}:{','.join(blocks)}".encode()).hexdigest()
+        digest = hashlib.sha256(
+            f"{self.asset_cache_version}:{jar_path}:{stat.st_mtime_ns}:{stat.st_size}:{','.join(blocks)}".encode()
+        ).hexdigest()
         return self._data_path / "schematic-assets" / f"{digest}.json"
 
     def _extract_assets(self, jar_path: Path, blocks: list[str]) -> dict[str, Any]:
@@ -453,6 +462,7 @@ class SchematicCoordinator:
         blockstates: dict[str, Any] = {}
         models: dict[str, Any] = {}
         textures: dict[str, str] = {}
+        animated: list[str] = []
         missing: set[str] = set()
         pending_models: set[str] = set()
         pending_textures: set[str] = set()
@@ -488,12 +498,16 @@ class SchematicCoordinator:
                     if total_bytes > self.max_asset_bytes:
                         raise GameServiceError("原理图纹理资源过大", "SCHEMATIC_ASSETS_TOO_LARGE")
                     textures[texture] = base64.b64encode(data).decode("ascii")
+                    metadata = self._read_json_asset(archive, namespace, f"textures/{name}.png.mcmeta")
+                    if metadata is not None and isinstance(metadata.get("animation"), dict):
+                        animated.append(texture)
         except (BadZipFile, OSError) as exc:
             raise GameServiceError("游戏资源 Jar 无法读取", "SCHEMATIC_ASSETS_INVALID") from exc
         return {
             "blockstates": blockstates,
             "models": models,
             "textures": textures,
+            "animated": sorted(animated),
             "missingBlocks": sorted(missing),
         }
 

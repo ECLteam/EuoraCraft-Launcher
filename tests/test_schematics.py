@@ -83,10 +83,11 @@ def _write_schem(path: Path) -> None:
             "minecraft:air": Int(0),
             "minecraft:grass_block": Int(1),
             "minecraft:stone": Int(2),
+            "minecraft:piston[extended=false,facing=north]": Int(3),
         }
     )
     # Sponge 索引 = (y * length + z) * width + x；size[2,2,1] 共 4 格。
-    blocks = ByteArray(bytes([1, 0, 2, 0]))
+    blocks = ByteArray(bytes([1, 0, 2, 3]))
     document = File(
         {
             "Version": Int(2),
@@ -169,7 +170,9 @@ def test_schematic_assets_extracts_model_closure_and_texture(tmp_path: Path) -> 
     version_path = game_path / "versions" / "demo"
     version_path.mkdir(parents=True)
     with ZipFile(version_path / "demo.jar", "w") as archive:
-        archive.writestr("assets/minecraft/blockstates/stone.json", json.dumps({"variants": {"": {"model": "block/stone"}}}))
+        archive.writestr(
+            "assets/minecraft/blockstates/stone.json", json.dumps({"variants": {"": {"model": "block/stone"}}})
+        )
         archive.writestr(
             "assets/minecraft/models/block/stone.json",
             json.dumps({"parent": "block/cube_all", "textures": {"all": "minecraft:block/stone"}}),
@@ -177,6 +180,7 @@ def test_schematic_assets_extracts_model_closure_and_texture(tmp_path: Path) -> 
         archive.writestr("assets/minecraft/models/block/cube_all.json", json.dumps({"parent": "block/block"}))
         archive.writestr("assets/minecraft/models/block/block.json", "{}")
         archive.writestr("assets/minecraft/textures/block/stone.png", b"png")
+        archive.writestr("assets/minecraft/textures/block/stone.png.mcmeta", json.dumps({"animation": {}}))
     harness = _SchematicHarness(tmp_path / "app-data")
 
     bundle = harness.schematic_assets(game_path, "demo", ["minecraft:stone"], True)
@@ -185,6 +189,7 @@ def test_schematic_assets_extracts_model_closure_and_texture(tmp_path: Path) -> 
     assert "minecraft:block/stone" in bundle["models"]
     assert "minecraft:block/cube_all" in bundle["models"]
     assert bundle["textures"]["minecraft:block/stone"] == "cG5n"
+    assert bundle["animated"] == ["minecraft:block/stone"]
     assert bundle["missingBlocks"] == []
 
 
@@ -201,6 +206,9 @@ def test_schem_preview_parses_sponge_layout(tmp_path: Path) -> None:
     assert len(region["indices"]) == 4
     assert region["indices"][0] == 1  # grass_block
     assert region["indices"][2] == 2  # stone
+    piston = region["palette"][3]
+    assert piston["name"] == "minecraft:piston"
+    assert piston["properties"] == {"extended": "false", "facing": "north"}
 
 
 def test_downsample_caps_voxel_count(tmp_path: Path) -> None:
