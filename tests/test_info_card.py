@@ -95,6 +95,30 @@ def test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tm
     assert [item["id"] for item in data["announcements"]] == ["important", "normal"]
 
 
+def test_info_card_preserves_valid_remote_announcement_translations(tmp_path) -> None:
+    payload = _notice_payload(
+        {
+            **_announcement(),
+            "locales": {
+                "zh-CN": {"title": "中文公告", "content": "中文正文"},
+                "en-US": {"title": "English notice", "content": "English content"},
+                "ja-JP": {"title": "不完整翻译"},
+                "": {"title": "无效语言", "content": "无效正文"},
+            },
+        }
+    )
+    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
+
+    announcement = manager.get_info_card()["announcements"][0]
+
+    assert announcement["title"] == "内部测试开发"
+    assert announcement["content"] == "**本条为测试公告，仅用于内部测试**"
+    assert announcement["locales"] == {
+        "zh-CN": {"title": "中文公告", "content": "中文正文"},
+        "en-US": {"title": "English notice", "content": "English content"},
+    }
+
+
 def test_info_card_uses_last_valid_cache_when_remote_request_fails(tmp_path) -> None:
     payload = _notice_payload(_announcement())
     online = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)

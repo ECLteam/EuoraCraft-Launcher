@@ -27,6 +27,8 @@ from ECL.utils import atomic_write_text, get_logger, get_with_retries
 
 NoticeLoader = Callable[[str], Any]
 Clock = Callable[[], datetime]
+LocalizedAnnouncement = dict[str, str]
+Announcement = dict[str, str | dict[str, LocalizedAnnouncement]]
 
 
 def _utc_now() -> datetime:
@@ -93,7 +95,7 @@ class InfoCardManager:
         self._request_retries = max(0, int(request_retries))
         self._lock = RLock()
         self._last_refresh_at: float | None = None
-        self._announcements: list[dict[str, str]] | None = None
+        self._announcements: list[Announcement] | None = None
         self.data_path.mkdir(parents=True, exist_ok=True)
 
     def _download_notice(self, url: str) -> Any:
@@ -127,8 +129,56 @@ class InfoCardManager:
             parsed = parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
 
+    @staticmethod
+    def _normalize_locales(value: Any) -> dict[str, LocalizedAnnouncement]:
+        """
+        校验远程公告的多语言字段并剔除不完整翻译。
+
+        远程数据不能直接透传到前端；每个语言项必须同时包含非空标题与正文，
+        以便前端能够在当前语言、中文和根级默认文案之间稳定回退。
+
+        :param value: 远程公告的 locales 字段
+        :return: 按语言代码索引的有效标题和正文
+        """
+        if not isinstance(value, dict):
+            return {}
+
+        locales: dict[str, LocalizedAnnouncement] = {}
+        for locale, translation in value.items():
+            if not isinstance(locale, str) or not locale.strip() or not isinstance(translation, dict):
+                continue
+            title = translation.get("title")
+            content = translation.get("content")
+            if not all(isinstance(item, str) and item.strip() for item in (title, content)):
+                continue
+            locales[locale.strip()] = {"title": title.strip(), "content": content.strip()}
+        return locales
+
     @classmethod
-    def _normalize_announcements(cls, data: Any, now: datetime) -> list[dict[str, str]]:
+    def _create_announcement(cls, item: dict[str, Any], notice_id: str, title: str, content: str) -> Announcement:
+        """
+        构建面向前端的公告数据，并保留经过校验的可选翻译表。
+
+        :param item: 已通过公告基础字段校验的远程条目
+        :param notice_id: 规范化后的公告标识
+        :param title: 根级回退标题
+        :param content: 根级回退正文
+        :return: 可安全返回给前端的公告数据
+        """
+        date = item.get("date")
+        announcement: Announcement = {
+            "id": notice_id,
+            "title": title.strip(),
+            "date": date.strip() if isinstance(date, str) else "",
+            "content": content.strip(),
+        }
+        locales = cls._normalize_locales(item.get("locales"))
+        if locales:
+            announcement["locales"] = locales
+        return announcement
+
+    @classmethod
+    def _normalize_announcements(cls, data: Any, now: datetime) -> list[Announcement]:
         if not isinstance(data, dict):
             raise ValueError("远程公告根节点必须是对象")
         if data.get("schema_version") != cls.notice_schema_version:
@@ -140,7 +190,7 @@ class InfoCardManager:
 
         current_time = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
         current_time = current_time.astimezone(UTC)
-        normalized: list[tuple[int, int, dict[str, str]]] = []
+        normalized: list[tuple[int, int, Announcement]] = []
         seen_ids: set[str] = set()
 
         for index, item in enumerate(raw_announcements):
@@ -168,24 +218,13 @@ class InfoCardManager:
             if end_at is not None and current_time >= end_at:
                 continue
 
-            date = item.get("date")
             priority = item.get("priority", 0)
             if not isinstance(priority, int) or isinstance(priority, bool):
                 priority = 0
 
             seen_ids.add(normalized_id)
-            normalized.append(
-                (
-                    priority,
-                    index,
-                    {
-                        "id": normalized_id,
-                        "title": title.strip(),
-                        "date": date.strip() if isinstance(date, str) else "",
-                        "content": content.strip(),
-                    },
-                )
-            )
+            announcement = cls._create_announcement(item, normalized_id, title, content)
+            normalized.append((priority, index, announcement))
 
         normalized.sort(key=lambda entry: (-entry[0], entry[1]))
         return [announcement for _, _, announcement in normalized]
@@ -193,11 +232,11 @@ class InfoCardManager:
     def _write_notice_cache(self, data: Any) -> None:
         atomic_write_text(self.notice_cache_path, json.dumps(data, ensure_ascii=False, indent=2))
 
-    def _read_cached_announcements(self, now: datetime) -> list[dict[str, str]]:
+    def _read_cached_announcements(self, now: datetime) -> list[Announcement]:
         data = json.loads(self.notice_cache_path.read_text(encoding="utf-8"))
         return self._normalize_announcements(data, now)
 
-    def _load_announcements(self) -> list[dict[str, str]]:
+    def _load_announcements(self) -> list[Announcement]:
         refresh_started_at = monotonic()
         if (
             self._announcements is not None
