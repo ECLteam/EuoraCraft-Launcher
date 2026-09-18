@@ -50,12 +50,7 @@ def make_service() -> tuple[ProcessService, EventBus, list[dict[str, Any]]]:
 
 def test_spawn_captures_output_then_exits() -> None:
     service, _events, logs = make_service()
-    script = (
-        "import time\n"
-        "for i in range(3):\n"
-        "    print(f'line-{i}', flush=True)\n"
-        "time.sleep(1)\n"
-    )
+    script = "import time\nfor i in range(3):\n    print(f'line-{i}', flush=True)\ntime.sleep(1)\n"
     iid = service.spawn("demo", "plugin:test", [sys.executable, "-u", "-c", script])
 
     assert iid

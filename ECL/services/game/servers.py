@@ -91,19 +91,23 @@ class ServerCoordinator:
         """
         path = self._servers_path(game_path, version_id, version_isolation)
         _, servers = self._load_servers(path)
-        favorites = {str(item).casefold() for item in self._read_server_meta(game_path, version_id).get("favorites") or []}
+        favorites = {
+            str(item).casefold() for item in self._read_server_meta(game_path, version_id).get("favorites") or []
+        }
         result: list[dict[str, Any]] = []
         for index, server in enumerate(servers):
             address = str(server.get("ip", ""))
-            result.append({
-                "id": str(index),
-                "name": str(server.get("name", "服务器")),
-                "address": address,
-                "icon": str(server.get("icon", "")) or None,
-                "acceptTextures": int(server.get("acceptTextures", 0)) if "acceptTextures" in server else None,
-                "favorite": address.casefold() in favorites,
-                "order": index,
-            })
+            result.append(
+                {
+                    "id": str(index),
+                    "name": str(server.get("name", "服务器")),
+                    "address": address,
+                    "icon": str(server.get("icon", "")) or None,
+                    "acceptTextures": int(server.get("acceptTextures", 0)) if "acceptTextures" in server else None,
+                    "favorite": address.casefold() in favorites,
+                    "order": index,
+                }
+            )
         return result
 
     def upsert_server(
@@ -209,7 +213,9 @@ class ServerCoordinator:
                 "playersMax": int(status.players.max),
                 "version": status.version.name,
                 "protocol": status.version.protocol,
-                "motd": status.description.to_plain() if hasattr(status.description, "to_plain") else str(status.description),
+                "motd": status.description.to_plain()
+                if hasattr(status.description, "to_plain")
+                else str(status.description),
                 "icon": icon,
             }
         except Exception as exc:

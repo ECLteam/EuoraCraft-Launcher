@@ -59,11 +59,7 @@ def get_runtime_info() -> RuntimeInfo:
         # Nuitka onefile：资源随负载解压到临时目录，而持久化数据目录应定位到原始
         # onefile 可执行文件所在目录（由引导进程注入 NUITKA_ONEFILE_DIRECTORY）。
         onefile_dir = os.environ.get("NUITKA_ONEFILE_DIRECTORY")
-        app_path = (
-            Path(onefile_dir).resolve()
-            if onefile_dir
-            else Path(sys.executable).resolve().parent
-        )
+        app_path = Path(onefile_dir).resolve() if onefile_dir else Path(sys.executable).resolve().parent
         resource_path = Path(nuitka_binary_dir).resolve()
     elif is_frozen:
         app_path = Path(sys.executable).resolve().parent
@@ -74,11 +70,7 @@ def get_runtime_info() -> RuntimeInfo:
     # 外部工具（如插件开发工具箱）通过该环境变量将数据目录重定向到沙箱位置，
     # 使开发版启动器与正式安装完全隔离。
     env_data_path = os.environ.get("ECL_DATA_PATH")
-    data_path = (
-        Path(env_data_path).expanduser().resolve()
-        if env_data_path
-        else app_path / "ECL_data"
-    )
+    data_path = Path(env_data_path).expanduser().resolve() if env_data_path else app_path / "ECL_data"
     return {
         "is_frozen": is_frozen,
         "app_path": app_path,

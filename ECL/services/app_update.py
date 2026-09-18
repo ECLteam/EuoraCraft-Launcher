@@ -124,9 +124,7 @@ def _is_platform_asset(name: str, platform: str) -> bool:
     if any(token in keywords for token in tokens):
         return True
     # 跨平台资产通常带架构但不带系统词，仅当无任何系统特征时视为通用包。
-    platform_keywords = (
-        UpdateApplier.windows_keywords + UpdateApplier.linux_keywords + UpdateApplier.darwin_keywords
-    )
+    platform_keywords = UpdateApplier.windows_keywords + UpdateApplier.linux_keywords + UpdateApplier.darwin_keywords
     return not any(token in platform_keywords for token in tokens)
 
 
@@ -275,9 +273,7 @@ class UpdateApplier:
                 continue
             if not _is_platform_asset(name, self._platform):
                 continue
-            candidates.append(
-                UpdateAsset(name=name, url=url, size=int(item.get("size") or 0))
-            )
+            candidates.append(UpdateAsset(name=name, url=url, size=int(item.get("size") or 0)))
         if not candidates:
             return None
         executable = [
@@ -369,7 +365,9 @@ class UpdateApplier:
         except Exception as exc:
             temporary.unlink(missing_ok=True)
             self.logger.warning("安装包下载失败: %s", exc)
-            raise AppUpdateError("请升级包下载失败，请检查网络后重试", error_code="UPDATE_DOWNLOAD_FAILED", phase="download") from exc
+            raise AppUpdateError(
+                "请升级包下载失败，请检查网络后重试", error_code="UPDATE_DOWNLOAD_FAILED", phase="download"
+            ) from exc
         self._emit_progress(asset, received, phase="complete")
         self.logger.info("安装包下载完成：%s（%.2f MB）", asset.name, received / (1024 * 1024))
         if asset.size > 0 and received != asset.size:
@@ -438,7 +436,9 @@ class UpdateApplier:
                 with zipfile.ZipFile(downloaded) as archive:
                     archive.extractall(extract_dir)
             except (zipfile.BadZipFile, OSError) as exc:
-                raise AppUpdateError("请升级包格式异常，无法应用", error_code="UPDATE_PACKAGE_INVALID", phase="verify") from exc
+                raise AppUpdateError(
+                    "请升级包格式异常，无法应用", error_code="UPDATE_PACKAGE_INVALID", phase="verify"
+                ) from exc
             return _find_exe_inside(extract_dir)
         return downloaded
 
@@ -490,7 +490,9 @@ class UpdateApplier:
         """
         stage_root = staged.backup.parent
         stage_root.mkdir(parents=True, exist_ok=True)
-        bootstrap_path = bootstrap_path or stage_root / ("apply_update.cmd" if self._platform == "win32" else "apply_update.sh")
+        bootstrap_path = bootstrap_path or stage_root / (
+            "apply_update.cmd" if self._platform == "win32" else "apply_update.sh"
+        )
         _, content = self.bootstrap_script(staged, pid if pid is not None else os.getpid())
         bootstrap_path.write_text(content, encoding="utf-8")
         self._run_detached(bootstrap_path)
@@ -505,7 +507,14 @@ class UpdateApplier:
         else:
             flags = 0
             command = ["/bin/sh", str(script)]
-        subprocess.Popen(command, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        subprocess.Popen(
+            command,
+            close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
 
     def clear_pending(self) -> bool:
         """
@@ -568,36 +577,39 @@ def clear_stale_pending_update(data_path: Path | str) -> bool:
 def _win_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pending: str) -> str:
     # 生成 Windows 单文件引导脚本：等待进程退出后备份、替换并重启。
     # 任何一步失败都必须保证旧启动器可回滚，绝不允许出现"旧版已删、新版未就位"的状态。
-    return "\r\n".join(
-        [
-            "@echo off",
-            "setlocal",
-            "rem 等待启动器进程退出，避免文件占用导致替换失败",
-            ":wait",
-            f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul',
-            "if %errorlevel%==0 (",
-            "  timeout /t 1 /nobreak >nul",
-            "  goto wait",
-            ")",
-            "rem 先把旧程序移入备份；若移动失败（旧程序仍在原位）则放弃本次更新",
-            f'move /y "{target}" "{backup}" >nul 2>&1',
-            f'if exist "{target}" goto abort',
-            "rem 放入新程序；失败则立刻从备份回滚旧程序",
-            f'move /y "{new_binary}" "{target}" >nul 2>&1',
-            f'if not exist "{target}" goto restore',
-            f'start "" "{target}"',
-            f'del /f /q "{backup}" >nul 2>&1',
-            f'del /f /q "{pending}" >nul 2>&1',
-            "exit /b 0",
-            ":restore",
-            f'move /y "{backup}" "{target}" >nul 2>&1',
-            f'del /f /q "{pending}" >nul 2>&1',
-            "exit /b 1",
-            ":abort",
-            f'del /f /q "{pending}" >nul 2>&1',
-            "exit /b 1",
-        ]
-    ) + "\r\n"
+    return (
+        "\r\n".join(
+            [
+                "@echo off",
+                "setlocal",
+                "rem 等待启动器进程退出，避免文件占用导致替换失败",
+                ":wait",
+                f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul',
+                "if %errorlevel%==0 (",
+                "  timeout /t 1 /nobreak >nul",
+                "  goto wait",
+                ")",
+                "rem 先把旧程序移入备份；若移动失败（旧程序仍在原位）则放弃本次更新",
+                f'move /y "{target}" "{backup}" >nul 2>&1',
+                f'if exist "{target}" goto abort',
+                "rem 放入新程序；失败则立刻从备份回滚旧程序",
+                f'move /y "{new_binary}" "{target}" >nul 2>&1',
+                f'if not exist "{target}" goto restore',
+                f'start "" "{target}"',
+                f'del /f /q "{backup}" >nul 2>&1',
+                f'del /f /q "{pending}" >nul 2>&1',
+                "exit /b 0",
+                ":restore",
+                f'move /y "{backup}" "{target}" >nul 2>&1',
+                f'del /f /q "{pending}" >nul 2>&1',
+                "exit /b 1",
+                ":abort",
+                f'del /f /q "{pending}" >nul 2>&1',
+                "exit /b 1",
+            ]
+        )
+        + "\r\n"
+    )
 
 
 def _posix_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pending: str) -> str:
@@ -606,24 +618,27 @@ def _posix_bootstrap(*, pid: int, target: str, backup: str, new_binary: str, pen
     import shlex
 
     t, b, n, p = (shlex.quote(value) for value in (target, backup, new_binary, pending))
-    return "\n".join(
-        [
-            "#!/bin/sh",
-            "cleanup_abort() {",
-            f"  rm -f {p}",
-            "  exit 1",
-            "}",
-            f"while kill -0 {pid} 2>/dev/null; do sleep 1; done",
-            f"mv {t} {b} || cleanup_abort",
-            f"if ! mv {n} {t}; then",
-            f"  mv {b} {t}",
-            f"  rm -f {p}",
-            "  exit 1",
-            "fi",
-            f'"{t}" "$@" &',
-            f"rm -f {b} {p}",
-        ]
-    ) + "\n"
+    return (
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "cleanup_abort() {",
+                f"  rm -f {p}",
+                "  exit 1",
+                "}",
+                f"while kill -0 {pid} 2>/dev/null; do sleep 1; done",
+                f"mv {t} {b} || cleanup_abort",
+                f"if ! mv {n} {t}; then",
+                f"  mv {b} {t}",
+                f"  rm -f {p}",
+                "  exit 1",
+                "fi",
+                f'"{t}" "$@" &',
+                f"rm -f {b} {p}",
+            ]
+        )
+        + "\n"
+    )
 
 
 __all__ = [

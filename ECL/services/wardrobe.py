@@ -36,6 +36,7 @@ logger = logging.getLogger("EuoraCraft-Launcher.Wardrobe")
 WardrobeKind = Literal["skin", "cape"]
 SkinModel = Literal["classic", "slim"]
 
+
 class WardrobeItem(TypedDict):
     id: str
     kind: WardrobeKind
@@ -133,9 +134,7 @@ class WardrobeStore:
                 item["favorite"] = bool(item.get("favorite", False))
             return items
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            backup = self.metadata_path.with_name(
-                f"wardrobe.corrupt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.json"
-            )
+            backup = self.metadata_path.with_name(f"wardrobe.corrupt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.json")
             try:
                 self.metadata_path.replace(backup)
             except OSError:

@@ -293,6 +293,7 @@ class AccountHandlers(_FrontendState):
             bool(body.get("pinned")),
         )
         return {"success": True, "data": result}
+
     @_ipc_handler("ACCOUNT_OPERATION_FAILED")
     async def accounts_refresh_profile(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -457,7 +458,9 @@ class AccountHandlers(_FrontendState):
         if self._webview is None:
             raise WardrobeError("窗口尚未就绪", "WEBVIEW_NOT_READY")
         item, texture = await to_thread.run_sync(self.wardrobe.read_texture, request.item_id)
-        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[:self.safe_filename_max_chars] or "skin"
+        safe_name = (
+            re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[: self.safe_filename_max_chars] or "skin"
+        )
         picked = await to_thread.run_sync(
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),

@@ -206,7 +206,9 @@ class ModCoordinator(_GameState):
         isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
         return self.resolve_instance(game_path, version_id, isolated).data_path
 
-    def list_instance_mods(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> list[dict[str, Any]]:
+    def list_instance_mods(
+        self, game_path: Any, version_id: Any, version_isolation: Any = None
+    ) -> list[dict[str, Any]]:
         return self._list_mods_at(self._instance_mod_root(game_path, version_id, version_isolation))
 
     def toggle_instance_mod(
@@ -224,9 +226,7 @@ class ModCoordinator(_GameState):
         source.replace(target)
         return not enabled
 
-    def add_instance_mod(
-        self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = None
-    ) -> str:
+    def add_instance_mod(self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = None) -> str:
         if not isinstance(source_path, (str, Path)) or not str(source_path).strip():
             raise GameServiceError("未选择模组文件", "INVALID_MOD_SOURCE")
         source = Path(source_path).expanduser().resolve(strict=False)

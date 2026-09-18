@@ -193,7 +193,9 @@ class InstanceCompatibilityReader:
                 metadata.fields["icon"] = {"type": "external", "value": str(local_icon), "source": "hmcl"}
             elif icon_name in self._HMCL_ICON_MAP:
                 icon_value = self._HMCL_ICON_MAP[icon_name]
-                icon_type = "loader" if icon_value in {"forge", "neoforge", "fabric", "quilt", "optifine"} else "builtin"
+                icon_type = (
+                    "loader" if icon_value in {"forge", "neoforge", "fabric", "quilt", "optifine"} else "builtin"
+                )
                 metadata.fields["icon"] = {"type": icon_type, "value": icon_value, "source": "hmcl"}
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             metadata.warnings.append(f"HMCL 配置读取失败: {exc}")

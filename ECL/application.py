@@ -267,7 +267,15 @@ class ApplicationContext:
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭后台服务")
             # 开发者通道先于插件关闭，避免通道继续处理请求时依赖已被释放。
-            resources: tuple[Any, ...] = (self.dev_channel, self.plugins, self.processes, self.game, self.connector, self.accounts, self.http)
+            resources: tuple[Any, ...] = (
+                self.dev_channel,
+                self.plugins,
+                self.processes,
+                self.game,
+                self.connector,
+                self.accounts,
+                self.http,
+            )
             for resource in resources:
                 if resource is None:
                     continue
@@ -375,10 +383,11 @@ def create_application(
             accounts,
             data_path=state.data_path,
             resource_path=state.resource_path,
-            curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY") or BuildEnvironment.curseforge_api_key or None,
+            curseforge_api_key=environment.get_value("CURSEFORGE_API_KEY")
+            or BuildEnvironment.curseforge_api_key
+            or None,
             event_bus=events,
             isolation_policy_provider=lambda: (config.get_config("game") or {}).get("instance_isolation_policy"),
-
             instances_manager=shared_instances,
         )
         created.append(game)

@@ -62,16 +62,18 @@ class ScreenshotCoordinator:
             except (OSError, UnidentifiedImageError):
                 continue
             modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
-            results.append({
-                "id": path.name,
-                "name": path.name,
-                "path": str(path),
-                "width": width,
-                "height": height,
-                "size": path.stat().st_size,
-                "modifiedAt": modified.isoformat(),
-                "dateGroup": modified.date().isoformat(),
-            })
+            results.append(
+                {
+                    "id": path.name,
+                    "name": path.name,
+                    "path": str(path),
+                    "width": width,
+                    "height": height,
+                    "size": path.stat().st_size,
+                    "modifiedAt": modified.isoformat(),
+                    "dateGroup": modified.date().isoformat(),
+                }
+            )
         return sorted(results, key=lambda item: item["modifiedAt"], reverse=True)
 
     def screenshot_thumbnail(
@@ -125,7 +127,9 @@ class ScreenshotCoordinator:
             temp.unlink(missing_ok=True)
         return {"path": str(destination)}
 
-    def copy_screenshot(self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False) -> None:
+    def copy_screenshot(
+        self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False
+    ) -> None:
         """
         在 Windows 上把截图以 CF_DIB 格式写入系统剪贴板。
         """
@@ -190,7 +194,9 @@ class ScreenshotCoordinator:
             if old != destination:
                 old.unlink(missing_ok=True)
         atomic_write_bytes(destination, source.read_bytes())
-        return self.patch_instance_profile(target.game_path, target.version_id, {"cover": {"type": "local", "value": destination.name}})
+        return self.patch_instance_profile(
+            target.game_path, target.version_id, {"cover": {"type": "local", "value": destination.name}}
+        )
 
     def set_launcher_background_candidate(
         self, game_path: Any, version_id: Any, screenshot_id: Any, version_isolation: Any = False

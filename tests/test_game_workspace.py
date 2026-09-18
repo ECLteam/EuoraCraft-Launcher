@@ -130,7 +130,9 @@ def test_world_patch_preserves_unknown_nbt_and_creates_backup(tmp_path: Path) ->
 def test_instance_profile_cover_field_is_preserved(tmp_path: Path) -> None:
     profile = tmp_path / "versions" / "test" / ".ecl" / "instance.json"
     profile.parent.mkdir(parents=True)
-    profile.write_text(json.dumps({"schemaVersion": 1, "cover": {"type": "local", "value": "cover.png"}}), encoding="utf-8")
+    profile.write_text(
+        json.dumps({"schemaVersion": 1, "cover": {"type": "local", "value": "cover.png"}}), encoding="utf-8"
+    )
 
     from ECL.services.game.instance_profiles import InstanceProfileStore
     from ECL.services.game.version_stats import VersionStatsStore
@@ -172,22 +174,23 @@ def test_world_patch_expanded_fields_updates_nbt(tmp_path: Path) -> None:
     assert str(loaded["Data"]["EclUnknownField"]) == "keep-me"
 
 
-@pytest.mark.parametrize("field,value,code", [
-    ("gameMode", 7, "INVALID_WORLD_GAMEMODE"),
-    ("seed", "not-an-int", "INVALID_WORLD_SEED"),
-    ("seed", True, "INVALID_WORLD_SEED"),
-    ("spawn", {"x": 99999999, "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
-    ("spawn", {"x": "a", "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
-])
+@pytest.mark.parametrize(
+    "field,value,code",
+    [
+        ("gameMode", 7, "INVALID_WORLD_GAMEMODE"),
+        ("seed", "not-an-int", "INVALID_WORLD_SEED"),
+        ("seed", True, "INVALID_WORLD_SEED"),
+        ("spawn", {"x": 99999999, "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
+        ("spawn", {"x": "a", "y": 0, "z": 0}, "INVALID_WORLD_SPAWN"),
+    ],
+)
 def test_world_patch_rejects_invalid_values(tmp_path: Path, field: str, value, code: str) -> None:
     version = tmp_path / "versions" / "test"
     _write_level_dat(version / "saves" / "world")
     harness = _WorldHarness(tmp_path / "app-data")
 
     with pytest.raises(GameServiceError) as raised:
-        harness.patch_world(
-            tmp_path, "test", "world", {field: value}, version_isolation=True
-        )
+        harness.patch_world(tmp_path, "test", "world", {field: value}, version_isolation=True)
     assert raised.value.error_code == code
 
 
@@ -240,12 +243,15 @@ def test_options_patch_replaces_and_appends_keeping_unknown(tmp_path: Path) -> N
     assert lines.index("renderDistance:24") < lines.index("gamma:1.2")
 
 
-@pytest.mark.parametrize("patch,code", [
-    ({"gamemode": 1}, "UNSUPPORTED_GAME_OPTION"),
-    ({"fullscreen": 1}, "INVALID_GAME_OPTION"),
-    ({"renderDistance": 99}, "INVALID_GAME_OPTION"),
-    ({"fov": "abc"}, "INVALID_GAME_OPTION"),
-])
+@pytest.mark.parametrize(
+    "patch,code",
+    [
+        ({"gamemode": 1}, "UNSUPPORTED_GAME_OPTION"),
+        ({"fullscreen": 1}, "INVALID_GAME_OPTION"),
+        ({"renderDistance": 99}, "INVALID_GAME_OPTION"),
+        ({"fov": "abc"}, "INVALID_GAME_OPTION"),
+    ],
+)
 def test_options_patch_rejects_invalid_keys_and_values(tmp_path: Path, patch: dict, code: str) -> None:
     harness = _options_harness(tmp_path)
     with pytest.raises(GameServiceError) as raised:

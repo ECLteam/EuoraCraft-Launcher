@@ -50,7 +50,10 @@ class InstanceOptionsCoordinator:
     def _spec(key: str) -> dict[str, Any] | None:
         if key in InstanceOptionsCoordinator.option_specs:
             return InstanceOptionsCoordinator.option_specs[key]
-        if key.startswith("soundCategory_") and key.removeprefix("soundCategory_") in InstanceOptionsCoordinator.sound_categories:
+        if (
+            key.startswith("soundCategory_")
+            and key.removeprefix("soundCategory_") in InstanceOptionsCoordinator.sound_categories
+        ):
             return {"type": "float", "min": 0.0, "max": 1.0}
         return None
 
@@ -76,9 +79,7 @@ class InstanceOptionsCoordinator:
         except ValueError:
             return None
 
-    def read_options(
-        self, game_path: Any, version_id: Any, version_isolation: Any = False
-    ) -> dict[str, Any]:
+    def read_options(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> dict[str, Any]:
         """
         读取实例 options.txt，仅返回可结构化编辑的常用键及其取值约束。
 

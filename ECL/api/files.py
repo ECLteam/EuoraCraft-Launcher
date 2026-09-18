@@ -83,7 +83,11 @@ class FileHandlers(_FrontendState):
         FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
         FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
         FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.mrpack", ["mrpack"]),
-        FileSavePurpose.SCREENSHOT: ("另存 Minecraft 截图", "screenshot.png", ["png", "jpg", "jpeg", "webp", "gif", "bmp"]),
+        FileSavePurpose.SCREENSHOT: (
+            "另存 Minecraft 截图",
+            "screenshot.png",
+            ["png", "jpg", "jpeg", "webp", "gif", "bmp"],
+        ),
         FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
         FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
     }
@@ -106,7 +110,12 @@ class FileHandlers(_FrontendState):
             candidate = cache_dir / f"{digest}{extension}"
             try:
                 stat = candidate.stat()
-                if not candidate.is_file() or candidate.is_symlink() or stat.st_size <= 0 or stat.st_size > ImagePolicy.max_remote_image_bytes:
+                if (
+                    not candidate.is_file()
+                    or candidate.is_symlink()
+                    or stat.st_size <= 0
+                    or stat.st_size > ImagePolicy.max_remote_image_bytes
+                ):
                     continue
                 return candidate.read_bytes(), extension, time() - stat.st_mtime <= self.remote_image_cache_ttl_seconds
             except OSError:
@@ -124,7 +133,11 @@ class FileHandlers(_FrontendState):
         entries: list[tuple[Path, int, float]] = []
         for candidate in cache_dir.iterdir():
             try:
-                if candidate.is_symlink() or not candidate.is_file() or candidate.suffix.lower() not in ImagePolicy.mime_by_extension:
+                if (
+                    candidate.is_symlink()
+                    or not candidate.is_file()
+                    or candidate.suffix.lower() not in ImagePolicy.mime_by_extension
+                ):
                     continue
                 stat = candidate.stat()
                 entries.append((candidate, stat.st_size, stat.st_mtime))
@@ -436,7 +449,9 @@ class FileHandlers(_FrontendState):
             if not target.is_dir():
                 self.logger.warning("目录不存在或不是文件夹: %s", target)
                 return []
-            return sorted(str(p) for p in target.iterdir() if p.is_file() and p.suffix.lower() in ImagePolicy.mime_by_extension)
+            return sorted(
+                str(p) for p in target.iterdir() if p.is_file() and p.suffix.lower() in ImagePolicy.mime_by_extension
+            )
 
         files = await to_thread.run_sync(_list)
         self.logger.info("目录图片文件数量: %d", len(files))
@@ -553,7 +568,9 @@ class FileHandlers(_FrontendState):
         def pick_files():
             dialog = DialogExt.file(self._webview)
             if request.purpose == FileSelectionPurpose.RESOURCE_FILES:
-                return dialog.blocking_pick_files(add_filter=("资源文件", ["jar", "zip", "disabled", "schem", "litematic"]))
+                return dialog.blocking_pick_files(
+                    add_filter=("资源文件", ["jar", "zip", "disabled", "schem", "litematic"])
+                )
             return dialog.blocking_pick_files(set_title="选择文件")
 
         selected = await to_thread.run_sync(pick_files)

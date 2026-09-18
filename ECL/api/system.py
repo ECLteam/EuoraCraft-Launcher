@@ -69,7 +69,11 @@ class SystemHandlers(_FrontendState):
         :return: 已确认移除的错误数量
         """
         error_ids = body.get("error_ids")
-        if not isinstance(error_ids, list) or not error_ids or any(not isinstance(item, str) or not item for item in error_ids):
+        if (
+            not isinstance(error_ids, list)
+            or not error_ids
+            or any(not isinstance(item, str) or not item for item in error_ids)
+        ):
             return {"success": False, "message": "错误编号列表无效", "errorCode": "INVALID_REQUEST"}
         removed = 0
         with self._frontend_event_lock:
@@ -158,7 +162,11 @@ class SystemHandlers(_FrontendState):
         不影响启动器正常使用。
         """
         if body:
-            return {"success": False, "message": "launcher_preload_connector 不接受参数", "errorCode": "INVALID_REQUEST"}
+            return {
+                "success": False,
+                "message": "launcher_preload_connector 不接受参数",
+                "errorCode": "INVALID_REQUEST",
+            }
         await to_thread.run_sync(self.connector.fetch_nodes)
         return success()
 

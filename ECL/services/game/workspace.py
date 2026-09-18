@@ -151,7 +151,9 @@ class WorkspaceCoordinator:
     提供实例工作台通用目录、复制、导入导出、校验和删除操作。
     """
 
-    def resolve_instance(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> ResolvedInstanceTarget:
+    def resolve_instance(
+        self, game_path: Any, version_id: Any, version_isolation: Any = False
+    ) -> ResolvedInstanceTarget:
         return resolve_instance_target(game_path, version_id, version_isolation)
 
     def quick_launch_arguments(
@@ -170,7 +172,7 @@ class WorkspaceCoordinator:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             raise GameServiceError("无法读取版本能力清单", "VERSION_JSON_INVALID") from exc
-        game_arguments = ((manifest.get("arguments") or {}).get("game") or [])
+        game_arguments = (manifest.get("arguments") or {}).get("game") or []
         kind = quick_target.get("type")
         if kind == "world":
             world_id = str(quick_target.get("world_id") or "")
@@ -224,7 +226,10 @@ class WorkspaceCoordinator:
         target = self.resolve_instance(game_path, version_id)
         game_key = str(target.game_path).casefold()
         for instance in self.list_instances():
-            if str(instance.get("gamePath") or "").casefold() == game_key and instance.get("versionId") == target.version_id:
+            if (
+                str(instance.get("gamePath") or "").casefold() == game_key
+                and instance.get("versionId") == target.version_id
+            ):
                 raise GameServiceError("游戏正在运行，无法删除实例", "INSTANCE_IS_RUNNING")
         delete_path(target.instance_path)
         self.events.emit("game:instances_changed", {"reason": "instance_deleted", "versionId": target.version_id})
@@ -313,7 +318,11 @@ class WorkspaceCoordinator:
         try:
             manifest = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, ValueError) as exc:
-            return {"issues": [{"kind": "invalid", "path": str(json_path), "message": str(exc)}], "downloadBytes": 0, "canRepair": False}
+            return {
+                "issues": [{"kind": "invalid", "path": str(json_path), "message": str(exc)}],
+                "downloadBytes": 0,
+                "canRepair": False,
+            }
         jar_id = str(manifest.get("jar") or manifest.get("id") or target.version_id)
         jar_path = target.game_path / "versions" / jar_id / f"{jar_id}.jar"
         if not jar_path.is_file():

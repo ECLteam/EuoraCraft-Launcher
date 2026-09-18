@@ -76,6 +76,7 @@ def test_fetch_nodes_reuses_memory_cache() -> None:
     assert first.fetch_nodes() == ["tcp://node.example:11010"]
     assert first_http.calls == 1
 
+
 def test_fetch_nodes_force_refreshes_memory_cache() -> None:
     http = _NodeHttpClient([{"url": "tcp://first.example:11010"}])
     service = ConnectorService(http_client=http)
@@ -217,9 +218,7 @@ def test_current_players_skips_closed_client_loop() -> None:
     )
 
     players = service._current_players()
-    assert players == [
-        {"name": "Alice", "vendor": "test", "iconBase64": None, "kind": "guest", "machineId": "m1"}
-    ]
+    assert players == [{"name": "Alice", "vendor": "test", "iconBase64": None, "kind": "guest", "machineId": "m1"}]
 
 
 def test_stop_async_thread_client_handles_closed_loop() -> None:

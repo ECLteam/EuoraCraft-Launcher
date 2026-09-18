@@ -208,7 +208,9 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
     title = "启动器发生内部错误"
     raw_message = str(exc).strip() or type(exc).__name__
     state.logger.exception("%s 发生未预期异常，错误编号: %s", operation, error_id)
-    state.events.emit("launcher:error", {"error_id": error_id, "title": title, "message": message, "detail": raw_message})
+    state.events.emit(
+        "launcher:error", {"error_id": error_id, "title": title, "message": message, "detail": raw_message}
+    )
     return failure(
         message,
         "INTERNAL_ERROR",
@@ -225,7 +227,9 @@ def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
     return failure("操作超时，请检查网络后重试", "OPERATION_TIMEOUT")
 
 
-async def _guarded_call(state: Any, operation: str, fallback_code: str, awaitable: Any, timeout: float | None = None) -> Any:
+async def _guarded_call(
+    state: Any, operation: str, fallback_code: str, awaitable: Any, timeout: float | None = None
+) -> Any:
     # 统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
     try:
         if timeout is not None:
@@ -253,6 +257,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
     :param timeout: 可选的总操作超时秒数，超时后取消任务
     :return: 捕获所有异常并返回 ``ApiResponse`` 的异步处理器
     """
+
     @functools.wraps(handler)
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
         return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
@@ -474,7 +479,11 @@ class _FrontendState:
         if operation == "plugin_call_command":
             command = body.get("command")
             allowed_commands = metadata.get("allowedCommands") or []
-            if not isinstance(command, str) or not command.startswith(f"{plugin}:") or command.split(":", 1)[1] not in allowed_commands:
+            if (
+                not isinstance(command, str)
+                or not command.startswith(f"{plugin}:")
+                or command.split(":", 1)[1] not in allowed_commands
+            ):
                 return failure("插件命令未在窗口 schema 中授权", "WINDOW_COMMAND_DENIED")
             return None
         return failure("插件窗口无权调用该宿主命令", "WINDOW_COMMAND_DENIED")
@@ -779,6 +788,7 @@ class _FrontendState:
         if window_type == "main" and not self._main_window_event_bound:
             on_window_event = getattr(webview_window, "on_window_event", None)
             if callable(on_window_event):
+
                 def handle_main_window_event(*args: Any) -> None:
                     event = args[-1] if args else None
                     event_name = type(event).__name__.lower()
@@ -838,7 +848,9 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
-        if (not self.accounts.microsoft_login_config().get("available")) and (self.is_dev_mode_no_client_id_tips is False):
+        if (not self.accounts.microsoft_login_config().get("available")) and (
+            self.is_dev_mode_no_client_id_tips is False
+        ):
             self.is_dev_mode_no_client_id_tips = True
             self.emit_popup_to_frontend(
                 {

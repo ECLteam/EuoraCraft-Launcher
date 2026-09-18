@@ -180,6 +180,7 @@ def test_clear_stale_pending_update_removes_marker_and_backup(tmp_path) -> None:
 def test_clear_stale_pending_update_returns_false_without_marker(tmp_path) -> None:
     assert clear_stale_pending_update(tmp_path / "data") is False
 
+
 def test_verify_digest_rejects_tampered_package(tmp_path) -> None:
     import hashlib
 
@@ -234,7 +235,9 @@ def test_verify_digest_accepts_matching_package(tmp_path) -> None:
     applier.http = FakeHttp()
     release = _release("EuoraCraft-Launcher.exe", "EuoraCraft-Launcher.exe.sha256")
 
-    staged, _ = applier.stage(release, downloaded=binary, target=target, stage_dir=tmp_path / "data" / "updates" / "1.4.2")
+    staged, _ = applier.stage(
+        release, downloaded=binary, target=target, stage_dir=tmp_path / "data" / "updates" / "1.4.2"
+    )
     assert staged.version == "1.4.2"
 
 
@@ -252,5 +255,5 @@ def test_bootstrap_script_rolls_back_on_failed_replace(tmp_path) -> None:
     # 替换失败时必须出现从备份回滚的分支，且不允许无条件删除备份
     assert "goto restore" in content
     assert content.index("goto restore") < content.index("del /f /q")
-    restore_line = [line for line in content.splitlines() if line.startswith(':restore') or ':restore' in line]
+    restore_line = [line for line in content.splitlines() if line.startswith(":restore") or ":restore" in line]
     assert restore_line

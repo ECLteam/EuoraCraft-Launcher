@@ -118,6 +118,7 @@ class GameOperationManager:
         operation.status = "running"
         operation.message = "正在执行"
         self._emit(operation)
+
         def update(percent: float, message: str, _details: dict[str, Any]) -> None:
             operation.percent = percent
             operation.message = message
@@ -131,7 +132,9 @@ class GameOperationManager:
             operation.message = "操作已取消" if operation.cancel_event.is_set() else str(exc)
             operation.error = str(exc)
             operation.error_code = getattr(exc, "error_code", "GAME_OPERATION_FAILED")
-            self._logger.warning("游戏长任务失败: id=%s, kind=%s, error=%s", operation.operation_id, operation.kind, exc)
+            self._logger.warning(
+                "游戏长任务失败: id=%s, kind=%s, error=%s", operation.operation_id, operation.kind, exc
+            )
         else:
             operation.status = "completed"
             operation.percent = 100.0

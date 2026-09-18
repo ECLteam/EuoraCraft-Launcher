@@ -12,6 +12,7 @@
 
 """内置主题标识。前端根据 ui.theme.theme_id 应用皮肤，无需后端服务。"""
 
+
 class ThemeCatalog:
     """
     集中管理启动器内置主题的稳定标识。

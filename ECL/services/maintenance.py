@@ -197,9 +197,7 @@ def apply_pending_debug_maintenance(data_path: Path | str) -> list[MaintenanceRe
             root,
             {
                 "actions": actions,
-                "archived_targets": {
-                    result.action: list(result.archived_targets) for result in results
-                },
+                "archived_targets": {result.action: list(result.archived_targets) for result in results},
                 "finished_at": datetime.now(UTC).isoformat(),
                 "status": "completed",
                 "task_id": task_id,

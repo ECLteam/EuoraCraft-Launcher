@@ -313,9 +313,7 @@ class AccountManager:
             plugin_accounts = state.get("plugin_accounts", {})
             if isinstance(plugin_accounts, dict):
                 self._plugin_accounts = {
-                    str(account_id): info
-                    for account_id, info in plugin_accounts.items()
-                    if isinstance(info, dict)
+                    str(account_id): info for account_id, info in plugin_accounts.items() if isinstance(info, dict)
                 }
             self.logger.debug(
                 "已读取账户聚合状态: offline=%d, plugin=%d, current_selected=%s",
@@ -464,8 +462,7 @@ class AccountManager:
         返回可供离线账户选择的默认皮肤列表。
         """
         return [
-            {"id": skin_id, "name": name, "skinUrl": url}
-            for skin_id, (name, url) in self._default_skin_map().items()
+            {"id": skin_id, "name": name, "skinUrl": url} for skin_id, (name, url) in self._default_skin_map().items()
         ]
 
     def _default_skin_map(self) -> dict[str, tuple[str, str]]:
@@ -563,9 +560,7 @@ class AccountManager:
         authlib_accounts = [
             self._authlib_account(account_id, info) for account_id, info in self.authlib_manager.list_accounts().items()
         ]
-        plugin_accounts = [
-            self._plugin_account(account_id, info) for account_id, info in self._plugin_accounts.items()
-        ]
+        plugin_accounts = [self._plugin_account(account_id, info) for account_id, info in self._plugin_accounts.items()]
         accounts = offline_accounts + microsoft_accounts + authlib_accounts + plugin_accounts
         for account in accounts:
             account["isCurrent"] = account["id"] == self._current_account_id
@@ -583,7 +578,6 @@ class AccountManager:
             self._current_account_id = accounts[0]["id"] if accounts else None
             if accounts or self.state_path.exists():
                 self._save_state()
-
 
     def _apply_account_prefs(self, account: dict[str, Any]) -> None:
         # 在账户数据中注入收藏/置顶标记。

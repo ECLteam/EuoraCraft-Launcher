@@ -48,12 +48,10 @@ def test_plugin_window_is_limited_to_declared_settings_and_commands():
         }
     )
     window = FakeWindow("plugin.demo.panel")
-    assert state.authorize_window_command(
-        "plugin_update_setting", {"plugin_name": "demo", "key": "color"}, window
-    ) is None
-    assert state.authorize_window_command(
-        "plugin_call_command", {"command": "demo:refresh"}, window
-    ) is None
+    assert (
+        state.authorize_window_command("plugin_update_setting", {"plugin_name": "demo", "key": "color"}, window) is None
+    )
+    assert state.authorize_window_command("plugin_call_command", {"command": "demo:refresh"}, window) is None
     denied = state.authorize_window_command(
         "plugin_update_setting", {"plugin_name": "demo", "key": "host_path"}, window
     )
