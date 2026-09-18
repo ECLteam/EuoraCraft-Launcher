@@ -83,7 +83,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 | 领域 | 位置 | 技术栈 | 测试框架 |
 |------|------|--------|----------|
-| 后端核心 | `ECL/` | Python 3.11+ | pytest |
+| 后端核心 | `ECL/` | Python 3 | pytest |
 | 后端 API | `ECL/api/` | pytauri IPC | pytest |
 | 游戏核心 | `ECL/game/` (子模块) | Python | pytest |
 | 前端 | `frontend/src/` (子模块) | Vue 3 + TS | vitest |
