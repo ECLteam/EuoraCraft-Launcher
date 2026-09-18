@@ -17,17 +17,23 @@ import base64
 import gzip
 import hashlib
 import json
-from collections.abc import Mapping
+import re
+import secrets
+import sys
+import time
+from array import array
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Compound, IntArray, List, load
+from ECL.utils.nbt import Compound, IntArray, List, load, load_limited
 
 from .base import GameServiceError
 from .resources import ResourceCatalogPolicy
-from .workspace import resolve_relative_id
+from .workspace import ResolvedInstanceTarget, resolve_relative_id
 
 
 class SchematicPalette:
@@ -166,6 +172,10 @@ def _block_color(name: str) -> tuple[int, int, int]:
     return SchematicPalette.unknown_color
 
 
+def _is_air_block(name: str) -> bool:
+    return name.rsplit(":", 1)[-1] in {"air", "cave_air", "void_air"}
+
+
 def _normalize(index: int, size: int, axis: int) -> int:
     # 将待降采样坐标映射回目标轴长内的采样坐标（对应步长对齐）。
     if size <= 1:
@@ -245,15 +255,18 @@ class LitematicaRegion:
     def _decode_indices(self, storage: IntArray) -> list[int]:
         # 依据 litematic BlockStates 的紧凑位数组解码每个方块对应的调色板索引。
         bits = self.mask_bits
-        per_word = 64 // bits
         mask = (1 << bits) - 1
         total = self.size[0] * self.size[1] * self.size[2]
         result: list[int] = []
         for position_index in range(total):
-            word_index = position_index // per_word
-            offset = (position_index % per_word) * bits
-            word = storage[word_index] if word_index < len(storage) else 0
-            result.append((word >> offset) & mask)
+            bit_index = position_index * bits
+            word_index, offset = divmod(bit_index, 64)
+            word = (storage[word_index] & ((1 << 64) - 1)) if word_index < len(storage) else 0
+            value = word >> offset
+            if offset + bits > 64:
+                next_word = (storage[word_index + 1] & ((1 << 64) - 1)) if word_index + 1 < len(storage) else 0
+                value |= next_word << (64 - offset)
+            result.append(value & mask)
         return result
 
 
@@ -296,6 +309,49 @@ def _decode_schematic(root: Compound, size_tag, blocks_tag) -> dict[str, Any]:
     return {"size": size, "indices": indices, "palette": color_map}
 
 
+@dataclass(frozen=True, slots=True)
+class _PackedRegion:
+    name: str
+    size: tuple[int, int, int]
+    position: tuple[int, int, int]
+    palette: list[dict[str, Any]]
+    storage: Sequence[int]
+    mask_bits: int | None = None
+
+    def palette_index(self, offset: int) -> int:
+        if self.mask_bits is None:
+            return int(self.storage[offset]) if offset < len(self.storage) else 0
+        bit_index = offset * self.mask_bits
+        word_index, shift = divmod(bit_index, 64)
+        if word_index >= len(self.storage):
+            return 0
+        word = int(self.storage[word_index]) & ((1 << 64) - 1)
+        value = word >> shift
+        if shift + self.mask_bits > 64 and word_index + 1 < len(self.storage):
+            value |= (int(self.storage[word_index + 1]) & ((1 << 64) - 1)) << (64 - shift)
+        return value & ((1 << self.mask_bits) - 1)
+
+
+@dataclass(slots=True)
+class SchematicSession:
+    """
+    保存一次原理图预览的只读分块快照。
+
+    原始 NBT 在快照生成后立即释放；会话字典由游戏服务的共享锁保护，
+    关闭弹窗、文件变化、过期或服务关闭时释放分块字节。
+    """
+
+    source_path: Path
+    source_mtime_ns: int
+    source_size: int
+    created_at: float
+    schematic_type: str
+    size: tuple[int, int, int]
+    palette: list[dict[str, Any]]
+    material_counts: dict[str, int]
+    chunks: dict[tuple[int, int, int], bytes]
+
+
 class SchematicCoordinator:
     """
     解析原理图文件为适合 3D 预览的体素模型数据。
@@ -306,9 +362,14 @@ class SchematicCoordinator:
 
     max_voxels = 262144
     max_axis = 1024
+    stream_chunk_size = 16
+    stream_max_voxels = 16_000_000
+    stream_max_nbt_bytes = 64 * 1024 * 1024
+    stream_max_chunks = 8192
+    stream_session_seconds = 600
     max_asset_blocks = 512
     max_asset_bytes = 24 * 1024 * 1024
-    asset_cache_version = 3
+    asset_cache_version = 4
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
@@ -360,6 +421,293 @@ class SchematicCoordinator:
             }
         raise GameServiceError("无法识别的原理图格式", "SCHEMATIC_INVALID")
 
+    def schematic_session_open(
+        self,
+        game_path: Any,
+        version_id: Any,
+        resource_id: Any,
+        version_isolation: Any = False,
+    ) -> dict[str, Any]:
+        """
+        创建不降采样的原理图分块预览会话。
+
+        解析和分块仅执行一次；返回轻量元数据，体素数据由后续分块调用读取。
+        文件超出安全预算时明确失败，不返回不完整建筑。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 当前实例版本标识
+        :param resource_id: 实例原理图目录中的相对文件名
+        :param version_isolation: 实例隔离状态
+        :return: 会话标识、尺寸、色板、方块统计及非空区块坐标
+        :raises GameServiceError: 文件不存在、格式无效或超过安全预算时抛出
+        """
+        source_path = self._schematic_root(game_path, version_id, resource_id, version_isolation)
+        if not source_path.is_file():
+            raise GameServiceError("原理图文件不存在", "SCHEMATIC_NOT_FOUND")
+        try:
+            root = load_limited(source_path, self.stream_max_nbt_bytes)
+        except ValueError as exc:
+            if "安全上限" in str(exc):
+                raise GameServiceError("原理图解压后过大，无法安全预览", "SCHEMATIC_TOO_LARGE") from exc
+            raise GameServiceError("原理图解析失败或格式不受支持", "SCHEMATIC_INVALID") from exc
+        except (OSError, gzip.BadGzipFile, EOFError) as exc:
+            raise GameServiceError("原理图解析失败或格式不受支持", "SCHEMATIC_INVALID") from exc
+        source_stat = source_path.stat()
+        session = self._build_schematic_session(source_path, source_stat.st_mtime_ns, source_stat.st_size, root)
+        session_id = secrets.token_hex(16)
+        with self._lock:
+            cutoff = time.monotonic() - self.stream_session_seconds
+            expired = [key for key, value in self._schematic_sessions.items() if value.created_at < cutoff]
+            for key in expired:
+                self._schematic_sessions.pop(key, None)
+            while len(self._schematic_sessions) >= 2:
+                oldest = min(self._schematic_sessions, key=lambda key: self._schematic_sessions[key].created_at)
+                self._schematic_sessions.pop(oldest)
+            self._schematic_sessions[session_id] = session
+        return {
+            "sessionId": session_id,
+            "type": session.schematic_type,
+            "size": list(session.size),
+            "chunkSize": self.stream_chunk_size,
+            "palette": session.palette,
+            "materialCounts": session.material_counts,
+            "chunks": [list(coord) for coord in sorted(session.chunks)],
+        }
+
+    def schematic_session_chunks(self, session_id: str, coords: list[tuple[int, int, int]]) -> dict[str, Any]:
+        """
+        批量读取预览会话中的非空体素区块。
+
+        返回固定 16³ 个小端无符号色板索引的 Base64 字节，避免巨大 JSON 整数数组。
+
+        :param session_id: 打开预览时得到的会话标识
+        :param coords: 本次请求的区块坐标，最多 24 个
+        :return: 与请求顺序一致的区块字节集合
+        :raises GameServiceError: 会话失效、文件变化或请求越界时抛出
+        """
+        if len(coords) > 24 or any(len(coord) != 3 or any(axis < 0 for axis in coord) for coord in coords):
+            raise GameServiceError("原理图区块请求无效", "SCHEMATIC_CHUNK_INVALID")
+        with self._lock:
+            session = self._schematic_sessions.get(session_id)
+            if session is None:
+                raise GameServiceError("原理图预览会话已过期，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            if time.monotonic() - session.created_at > self.stream_session_seconds:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图预览会话已过期，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            try:
+                source_stat = session.source_path.stat()
+            except OSError as exc:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图文件已变化，请重新打开", "SCHEMATIC_SESSION_EXPIRED") from exc
+            if source_stat.st_mtime_ns != session.source_mtime_ns or source_stat.st_size != session.source_size:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图文件已变化，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            session.created_at = time.monotonic()
+            chunks = session.chunks
+            if any(coord not in chunks for coord in coords):
+                raise GameServiceError("原理图区块坐标不存在", "SCHEMATIC_CHUNK_INVALID")
+            return {
+                "chunks": [
+                    {"coord": list(coord), "indices": base64.b64encode(chunks[coord]).decode("ascii")}
+                    for coord in coords
+                ]
+            }
+
+    def schematic_session_close(self, session_id: str) -> dict[str, bool]:
+        """
+        释放一次原理图预览的分块缓存。
+
+        重复关闭安全返回 false，不影响其他弹窗或游戏资源。
+
+        :param session_id: 打开预览时得到的会话标识
+        :return: 是否实际释放了会话
+        """
+        with self._lock:
+            return {"closed": self._schematic_sessions.pop(session_id, None) is not None}
+
+    def _packed_regions(self, root: Compound) -> tuple[str, list[_PackedRegion]]:
+        """
+        保留原始 NBT 的紧凑索引存储，避免把所有体素展开成 Python 整数列表。
+
+        只解析区域尺寸和色板；实际索引在分块扫描时按位置读取。
+        """
+        regions: list[_PackedRegion] = []
+        if "Regions" in root:
+            for name, region in (root.get("Regions") or Compound()).items():
+                if not isinstance(region, Mapping):
+                    continue
+                raw_size = _read_litematica_vector(region.get("Size"), "Size")
+                raw_position = _read_litematica_vector(region.get("Position"), "Position")
+                if any(axis == 0 for axis in raw_size):
+                    raise GameServiceError("原理图区域尺寸不能为零", "SCHEMATIC_INVALID")
+                size = tuple(abs(axis) for axis in raw_size)
+                position = tuple(
+                    origin if axis > 0 else origin + axis + 1
+                    for origin, axis in zip(raw_position, raw_size, strict=True)
+                )
+                palette = [_block_palette_entry(item) for item in (region.get("BlockStatePalette") or List())]
+                mask_bits = max(4, (max(1, len(palette)) - 1).bit_length())
+                storage = region.get("BlockStates") or IntArray()
+                regions.append(_PackedRegion(str(name), size, position, palette, storage, mask_bits))
+            return "litematic", regions
+        if "Palette" in root or "Blocks" in root:
+            size_tag = root.get("Size")
+            blocks_tag = root.get("Blocks")
+            if not isinstance(size_tag, Sequence) or len(size_tag) != 3 or not isinstance(blocks_tag, Sequence):
+                raise GameServiceError("原理图缺少尺寸或方块数据", "SCHEMATIC_INVALID")
+            size = tuple(int(axis) for axis in size_tag)
+            palette_tag = root.get("Palette") or Compound()
+            if not isinstance(palette_tag, Mapping) or len(palette_tag) > 65535:
+                raise GameServiceError("原理图方块色板无效", "SCHEMATIC_INVALID")
+            palette = [_block_palette_entry({"Name": "minecraft:air"}) for _ in range(len(palette_tag) + 1)]
+            for name, value in palette_tag.items():
+                palette_index = int(value)
+                if palette_index < 0 or palette_index >= len(palette):
+                    raise GameServiceError("原理图方块色板无效", "SCHEMATIC_INVALID")
+                palette[palette_index] = _block_palette_entry({"Name": str(name)})
+            regions.append(_PackedRegion("schem", size, (0, 0, 0), palette, blocks_tag))
+            return "schem", regions
+        raise GameServiceError("无法识别的原理图格式", "SCHEMATIC_INVALID")
+
+    def _build_schematic_session(
+        self, source_path: Path, source_mtime_ns: int, source_size: int, root: Compound
+    ) -> SchematicSession:
+        """
+        将紧凑 NBT 索引写入固定大小的非空区块，并保留准确材料统计。
+
+        全部区域以真实坐标合并；后出现的非空气块覆盖同坐标旧块。
+        """
+        schematic_type, regions = self._packed_regions(root)
+        if not regions:
+            raise GameServiceError("原理图中没有可解析的区域", "SCHEMATIC_EMPTY")
+        min_x = min(region.position[0] for region in regions)
+        min_y = min(region.position[1] for region in regions)
+        min_z = min(region.position[2] for region in regions)
+        max_x = max(region.position[0] + region.size[0] for region in regions)
+        max_y = max(region.position[1] + region.size[1] for region in regions)
+        max_z = max(region.position[2] + region.size[2] for region in regions)
+        size = (max_x - min_x, max_y - min_y, max_z - min_z)
+        self._validate_stream_regions(regions, size)
+        palette: list[dict[str, Any]] = [_block_palette_entry({"Name": "minecraft:air"})]
+        palette_ids: dict[tuple[str, tuple[tuple[str, str], ...]], int] = {}
+        counts: list[int] = [0]
+        chunks: dict[tuple[int, int, int], array] = {}
+        for region in regions:
+            local_ids = self._session_palette_ids(region, palette, palette_ids, counts)
+            self._fill_session_region(region, local_ids, (min_x, min_y, min_z), chunks, counts)
+        material_counts: dict[str, int] = {}
+        for entry, count in zip(palette, counts, strict=True):
+            if count:
+                name = str(entry["name"])
+                material_counts[name] = material_counts.get(name, 0) + count
+        if sys.byteorder != "little":
+            for chunk in chunks.values():
+                chunk.byteswap()
+        return SchematicSession(
+            source_path,
+            source_mtime_ns,
+            source_size,
+            time.monotonic(),
+            schematic_type,
+            size,
+            palette,
+            material_counts,
+            {coord: chunk.tobytes() for coord, chunk in chunks.items()},
+        )
+
+    def _validate_stream_regions(self, regions: list[_PackedRegion], size: tuple[int, int, int]) -> None:
+        """
+        在扫描体素前验证尺寸、存储完整性和整体安全预算。
+
+        数据不完整与超预算区分错误码，避免伪装为部分成功。
+        """
+        total_cells = 0
+        if any(axis > 8192 for axis in size):
+            raise GameServiceError("原理图区域跨度过大", "SCHEMATIC_TOO_LARGE")
+        for region in regions:
+            width, height, depth = region.size
+            if min(width, height, depth) <= 0:
+                raise GameServiceError("原理图区域尺寸非法", "SCHEMATIC_INVALID")
+            cells = width * height * depth
+            total_cells += cells
+            if total_cells > self.stream_max_voxels:
+                raise GameServiceError("原理图超过 1600 万体素预览上限", "SCHEMATIC_TOO_LARGE")
+            required = (cells * region.mask_bits + 63) // 64 if region.mask_bits else cells
+            if len(region.storage) < required:
+                raise GameServiceError("原理图方块数据不完整", "SCHEMATIC_INVALID")
+
+    @staticmethod
+    def _session_palette_ids(
+        region: _PackedRegion,
+        palette: list[dict[str, Any]],
+        palette_ids: dict[tuple[str, tuple[tuple[str, str], ...]], int],
+        counts: list[int],
+    ) -> list[int]:
+        """
+        将区域局部色板映射到跨区域共享的色板索引。
+
+        相同方块状态在多个区域复用一个索引，保留原始块 ID 和属性。
+        """
+        local_ids = [0] * len(region.palette)
+        for local_index, entry in enumerate(region.palette):
+            name = str(entry["name"])
+            if _is_air_block(name):
+                continue
+            properties = entry["properties"]
+            key = (name, tuple(sorted(properties.items())))
+            palette_id = palette_ids.get(key)
+            if palette_id is None:
+                palette_id = len(palette)
+                if palette_id > 65535:
+                    raise GameServiceError("原理图方块状态过多", "SCHEMATIC_TOO_LARGE")
+                palette_ids[key] = palette_id
+                palette.append(entry)
+                counts.append(0)
+            local_ids[local_index] = palette_id
+        return local_ids
+
+    def _fill_session_region(
+        self,
+        region: _PackedRegion,
+        local_ids: list[int],
+        world_minimum: tuple[int, int, int],
+        chunks: dict[tuple[int, int, int], array],
+        counts: list[int],
+    ) -> None:
+        """
+        将区域非空气块写入固定大小区块。
+
+        后写区域覆盖同坐标时扣除旧块统计，保证材料数量准确。
+        """
+        width, height, depth = region.size
+        origin_x, origin_y, origin_z = region.position
+        min_x, min_y, min_z = world_minimum
+        side = self.stream_chunk_size
+        for offset in range(width * height * depth):
+            local_index = region.palette_index(offset)
+            if local_index >= len(local_ids):
+                continue
+            palette_id = local_ids[local_index]
+            if palette_id == 0:
+                continue
+            x = origin_x + offset % width - min_x
+            row = offset // width
+            z = origin_z + row % depth - min_z
+            y = origin_y + row // depth - min_y
+            coord = (x // side, y // side, z // side)
+            chunk = chunks.get(coord)
+            if chunk is None:
+                if len(chunks) >= self.stream_max_chunks:
+                    raise GameServiceError("原理图区块过多，无法安全预览", "SCHEMATIC_TOO_LARGE")
+                chunk = array("H", [0]) * (side**3)
+                chunks[coord] = chunk
+            chunk_index = ((y % side) * side + z % side) * side + x % side
+            previous = chunk[chunk_index]
+            if previous:
+                counts[previous] -= 1
+            chunk[chunk_index] = palette_id
+            counts[palette_id] += 1
+
     def schematic_assets(
         self, game_path: Any, version_id: Any, blocks: list[str], version_isolation: Any = False
     ) -> dict[str, Any]:
@@ -386,14 +734,118 @@ class SchematicCoordinator:
         except (OSError, ValueError):
             cached = None
         if isinstance(cached, dict):
-            return cached
-        bundle = self._extract_assets(jar_path, requested)
+            bundle = cached
+        else:
+            bundle = self._extract_assets(jar_path, requested)
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(cache_path, json.dumps(bundle, ensure_ascii=False, separators=(",", ":")))
+            except OSError:
+                self.logger.warning("原理图资源缓存写入失败，将在下次预览重新提取")
+        return {**bundle, "blockNames": self._read_block_names(target, jar_path, requested)}
+
+    def _read_block_names(self, target: ResolvedInstanceTarget, jar_path: Path, blocks: list[str]) -> dict[str, str]:
+        """
+        从当前游戏语言资源读取方块名称，缺项回退客户端英文语言文件。
+
+        仅接受资产索引给出的 SHA-1 对象路径，不读取资源包或自定义覆盖文件。
+        """
+        locale = self._game_locale(target.data_path / "options.txt")
+        translations: dict[str, str] = {}
         try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(cache_path, json.dumps(bundle, ensure_ascii=False, separators=(",", ":")))
-        except OSError:
-            self.logger.warning("原理图资源缓存写入失败，将在下次预览重新提取")
-        return bundle
+            with ZipFile(jar_path) as archive:
+                english = self._read_json_asset(archive, "minecraft", "lang/en_us.json")
+                if english:
+                    translations.update({key: value for key, value in english.items() if isinstance(value, str)})
+        except (BadZipFile, OSError):
+            pass
+        if locale != "en_us":
+            translations.update(self._indexed_language(target.game_path, target.version_id, locale))
+        names: dict[str, str] = {}
+        for block in blocks:
+            namespace, name = block.split(":", 1)
+            label = translations.get(f"block.{namespace}.{name}")
+            if isinstance(label, str) and 0 < len(label) <= 256:
+                names[block] = label
+        return names
+
+    @staticmethod
+    def _game_locale(options_path: Path) -> str:
+        """
+        从实例 options.txt 读取游戏语言设置。
+
+        文件缺失或值不合法时回退中文，且绝不读取任意路径作为语言资源。
+        """
+        try:
+            if options_path.stat().st_size > 1024 * 1024:
+                return "zh_cn"
+            for line in options_path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("lang:"):
+                    candidate = line[5:].strip().lower()
+                    return candidate if re.fullmatch(r"[a-z]{2,3}_[a-z]{2,3}", candidate) else "zh_cn"
+        except (OSError, UnicodeDecodeError):
+            pass
+        return "zh_cn"
+
+    def _indexed_language(self, game_path: Path, version_id: str, locale: str) -> dict[str, str]:
+        """
+        按当前游戏资源索引读取指定语言的 Minecraft 资产对象。
+
+        仅信任格式正确的 SHA-1 哈希；损坏或缺失的本地资源回退英文。
+        """
+        asset_index_id = self._asset_index_id(game_path, version_id)
+        if not asset_index_id:
+            return {}
+        index_path = game_path / "assets" / "indexes" / f"{asset_index_id}.json"
+        try:
+            if index_path.stat().st_size > 8 * 1024 * 1024:
+                return {}
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            asset_hash = index["objects"][f"minecraft/lang/{locale}.json"]["hash"]
+            if not isinstance(asset_hash, str) or not re.fullmatch(r"[0-9a-f]{40}", asset_hash):
+                return {}
+            language_path = game_path / "assets" / "objects" / asset_hash[:2] / asset_hash
+            if language_path.stat().st_size > 4 * 1024 * 1024:
+                return {}
+            language = json.loads(language_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError, TypeError):
+            return {}
+        return (
+            {key: value for key, value in language.items() if isinstance(value, str)}
+            if isinstance(language, dict)
+            else {}
+        )
+
+    @staticmethod
+    def _asset_index_id(game_path: Path, version_id: str) -> str | None:
+        """
+        沿版本继承链查找受限格式的游戏资源索引标识。
+
+        版本名与索引 ID 均限制为无路径分隔符的片段。
+        """
+        current = version_id
+        visited: set[str] = set()
+        for _ in range(16):
+            if current in visited or not re.fullmatch(r"[a-zA-Z0-9._-]{1,255}", current):
+                break
+            visited.add(current)
+            version_path = game_path / "versions" / current / f"{current}.json"
+            try:
+                payload = json.loads(version_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            asset_index = payload.get("assetIndex")
+            if isinstance(asset_index, dict):
+                index_id = asset_index.get("id")
+                if isinstance(index_id, str) and re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", index_id):
+                    return index_id
+            parent = payload.get("inheritsFrom")
+            if not isinstance(parent, str):
+                break
+            current = parent
+        return None
 
     def _normalize_asset_blocks(self, blocks: list[str]) -> list[str]:
         """
@@ -493,6 +945,8 @@ class SchematicCoordinator:
                     models[model] = payload
                     pending_models.update(self._json_references(payload, "parent", namespace))
                     pending_textures.update(self._json_references(payload, "texture", namespace))
+                for block in blocks:
+                    pending_textures.update(self._special_texture_ids(block))
                 for texture in pending_textures:
                     namespace, name = texture.split(":", 1)
                     try:
@@ -515,6 +969,44 @@ class SchematicCoordinator:
             "animated": sorted(animated),
             "missingBlocks": sorted(missing),
         }
+
+    @staticmethod
+    def _special_texture_ids(block: str) -> set[str]:
+        """
+        补齐特殊方块渲染器直接引用、无法从模型继承链发现的纹理。
+
+        仅生成固定的原版资源路径；资源不存在时由常规缺失纹理回退。
+        """
+        namespace, name = block.split(":", 1)
+        if namespace != "minecraft":
+            return set()
+        if name in {"water", "lava"}:
+            return {f"minecraft:block/{name}_still", f"minecraft:block/{name}_flow"}
+        chest_types = {
+            "chest": "normal",
+            "trapped_chest": "trapped",
+            "ender_chest": "ender",
+            "copper_chest": "copper",
+            "exposed_copper_chest": "copper_exposed",
+            "weathered_copper_chest": "copper_weathered",
+            "oxidized_copper_chest": "copper_oxidized",
+        }
+        normalized_chest = name.removeprefix("waxed_")
+        if normalized_chest in chest_types:
+            return {f"minecraft:entity/chest/{chest_types[normalized_chest]}"}
+        for suffix in ("_wall_hanging_sign", "_hanging_sign", "_wall_sign", "_sign"):
+            if name.endswith(suffix):
+                wood = name.removesuffix(suffix)
+                return {f"minecraft:entity/signs/{wood}", f"minecraft:entity/signs/hanging/{wood}"}
+        if name.endswith("_shulker_box"):
+            color = name.removesuffix("_shulker_box")
+            return {f"minecraft:entity/shulker/shulker_{color}"}
+        if name.endswith("_bed"):
+            return {f"minecraft:entity/bed/{name.removesuffix('_bed')}"}
+        if name.endswith("_banner"):
+            color = name.removesuffix("_wall_banner").removesuffix("_banner")
+            return {f"minecraft:entity/banner/{color}"}
+        return set()
 
     @staticmethod
     def _read_json_asset(archive: ZipFile, namespace: str, path: str) -> dict[str, Any] | None:

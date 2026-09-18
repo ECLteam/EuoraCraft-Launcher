@@ -48,6 +48,7 @@ from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
     from .crash_analysis import CrashAnalyzer
+    from .schematics import SchematicSession
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
 DownloaderFactory = Callable[..., Downloader]
@@ -146,9 +147,7 @@ class _GameState:
             if data_path
             else (Path(gettempdir()) / "EuoraCraft-Launcher").resolve(strict=False)
         )
-        self._mcmod = McmodTranslator(
-            Path(resource_path) / "resources" / "mcmod_data.json" if resource_path else None
-        )
+        self._mcmod = McmodTranslator(Path(resource_path) / "resources" / "mcmod_data.json" if resource_path else None)
         self._curseforge_api_key = curseforge_api_key
         self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
@@ -172,6 +171,7 @@ class _GameState:
         self._game_operations = GameOperationManager(self._data_path, self.events)
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
+        self._schematic_sessions: dict[str, SchematicSession] = {}
         from .crash_analysis import CrashAnalyzer
 
         self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path, extensions=self.crash_extensions)
@@ -328,6 +328,7 @@ class _GameState:
             self._active_downloads.clear()
             self._install_tasks.clear()
             self._contexts.clear()
+            self._schematic_sessions.clear()
         self.logger.debug(
             "正在关闭游戏服务: downloads=%d, install_tasks=%d, core_contexts=%d",
             len(downloads),

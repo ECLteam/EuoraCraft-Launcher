@@ -33,6 +33,7 @@
 #   - class File — 根 NBT 文档，提供 save 与 load 入口。
 #       - save(path, gzipped=…) -> None
 #   - load(path) -> File — 从文件读取 NBT 文档，自动识别 gzip 压缩。
+#   - load_limited(path, max_bytes) -> File — 在解压体积上限内读取 NBT 文档。
 # ============================================================
 
 """极简 NBT 读写实现，替代 nbtlib 以去除 numpy 依赖。
@@ -215,6 +216,42 @@ def load(path: Path | str) -> File:
     data = Path(path).read_bytes()
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
+    return _parse_document(data)
+
+
+def load_limited(path: Path | str, max_bytes: int) -> File:
+    """
+    在字节上限内读取并解析 NBT 文档，避免压缩原理图耗尽内存。
+
+    gzip 内容按上限流式读取；超过限制立即报错，不会构建完整解压结果。
+
+    :param path: 待读取的 NBT 文件
+    :param max_bytes: 允许的最大未压缩字节数，必须大于零
+    :return: 解析后的 NBT 根文档
+    :raises ValueError: 输入过大、上限无效或 NBT 内容损坏时抛出
+    """
+    if max_bytes <= 0:
+        raise ValueError("NBT 字节上限必须大于零")
+    source_path = Path(path)
+    with source_path.open("rb") as source:
+        is_gzip = source.read(2) == b"\x1f\x8b"
+        source.seek(0)
+        if is_gzip:
+            with gzip.GzipFile(fileobj=source) as compressed:
+                data = compressed.read(max_bytes + 1)
+        else:
+            data = source.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("NBT 文件超过预览安全上限")
+    return _parse_document(data)
+
+
+def _parse_document(data: bytes) -> File:
+    """
+    解析已验证大小的 NBT 字节。
+
+    普通与限额入口共用此解析路径，保持标签语义一致。
+    """
     buffer = io.BytesIO(data)
     root_id = struct.unpack(">b", buffer.read(1))[0]
     _read_string(buffer)

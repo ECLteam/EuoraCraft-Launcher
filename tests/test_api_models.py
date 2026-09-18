@@ -86,9 +86,7 @@ def test_launch_request_accepts_memory_lock_and_priority_options() -> None:
 
 def test_launch_request_rejects_invalid_process_priority() -> None:
     with pytest.raises(ValidationError):
-        LaunchRequest.model_validate(
-            {"version_id": "1.21.1", "game_path": ".minecraft", "process_priority": "urgent"}
-        )
+        LaunchRequest.model_validate({"version_id": "1.21.1", "game_path": ".minecraft", "process_priority": "urgent"})
 
 
 def test_normalize_process_priority_falls_back_to_normal() -> None:
@@ -106,10 +104,10 @@ async def test_schematic_preview_accepts_frontend_payload_without_enabled() -> N
     calls = []
     handler.game = SimpleNamespace(
         resolve_version_isolation=lambda _game_path, _version_id: True,
-        schematic_preview=lambda game_path, version_id, resource_id, version_isolation: calls.append(
-            (game_path, version_id, resource_id, version_isolation)
-        )
-        or {"type": "schem", "size": [1, 1, 1], "regions": []},
+        schematic_preview=lambda game_path, version_id, resource_id, version_isolation: (
+            calls.append((game_path, version_id, resource_id, version_isolation))
+            or {"type": "schem", "size": [1, 1, 1], "regions": []}
+        ),
     )
 
     response = await handler.game_schematic_preview(
@@ -127,6 +125,37 @@ async def test_schematic_preview_accepts_frontend_payload_without_enabled() -> N
         SchematicPreviewRequest.model_validate(
             {"game_path": ".minecraft", "version_id": "1.21.1", "resource_type": "schematic"}
         )
+
+
+@pytest.mark.asyncio
+async def test_schematic_session_commands_validate_and_route_payloads() -> None:
+    handler = object.__new__(WorkspaceHandlers)
+    calls: list[tuple[object, ...]] = []
+    handler.game = SimpleNamespace(
+        resolve_version_isolation=lambda _game_path, _version_id: True,
+        schematic_session_open=lambda game_path, version_id, resource_id, isolation: (
+            calls.append(("open", game_path, version_id, resource_id, isolation)) or {"sessionId": "a" * 32}
+        ),
+        schematic_session_chunks=lambda session_id, coords: (
+            calls.append(("chunks", session_id, coords)) or {"chunks": []}
+        ),
+        schematic_session_close=lambda session_id: calls.append(("close", session_id)) or {"closed": True},
+    )
+    opened = await handler.game_schematic_session_open(
+        {
+            "game_path": ".minecraft",
+            "version_id": "1.21.1",
+            "resource_type": "schematic",
+            "resource_id": "build.schem",
+        }
+    )
+    chunks = await handler.game_schematic_session_chunks({"session_id": "a" * 32, "coords": [[1, 0, 2]]})
+    closed = await handler.game_schematic_session_close({"session_id": "a" * 32})
+
+    assert opened["success"] and chunks["success"] and closed["success"]
+    assert calls[0][2:] == ("1.21.1", "build.schem", True)
+    assert calls[1] == ("chunks", "a" * 32, [(1, 0, 2)])
+    assert calls[2] == ("close", "a" * 32)
 
 
 def test_request_schema_contains_every_consolidated_typed_command() -> None:
@@ -202,8 +231,10 @@ async def test_version_stats_ipc_validates_and_forwards_target() -> None:
     handler = object.__new__(GameHandlers)
     calls = []
     handler.game = SimpleNamespace(
-        get_version_stats=lambda game_path, version_id: calls.append((game_path, version_id))
-        or {"launchCount": 1, "lastRunDurationSeconds": 2, "totalRunDurationSeconds": 3}
+        get_version_stats=lambda game_path, version_id: (
+            calls.append((game_path, version_id))
+            or {"launchCount": 1, "lastRunDurationSeconds": 2, "totalRunDurationSeconds": 3}
+        )
     )
 
     response = await handler.game_version_stats({"game_path": ".minecraft", "version_id": "1.21.1"})

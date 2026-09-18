@@ -18,8 +18,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+from array import array
 from pathlib import Path
+from threading import RLock
 from zipfile import ZipFile
 
 import pytest
@@ -27,12 +31,14 @@ import pytest
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.schematics import SchematicCoordinator, _block_color
 from ECL.services.game.workspace import WorkspaceCoordinator
-from ECL.utils.nbt import ByteArray, Compound, File, Int, IntArray, List, LongArray, String
+from ECL.utils.nbt import ByteArray, Compound, File, Int, IntArray, List, LongArray, String, load_limited
 
 
 class _SchematicHarness(SchematicCoordinator, WorkspaceCoordinator):
     def __init__(self, data_path: Path) -> None:
         self._data_path = data_path
+        self._lock = RLock()
+        self._schematic_sessions = {}
 
     def list_instances(self) -> list[dict[str, object]]:
         return []
@@ -229,3 +235,130 @@ def test_downsample_caps_voxel_count(tmp_path: Path) -> None:
     sampled = harness._downsample_region(huge)
     assert sampled["size"][0] <= 64
     assert len(sampled["indices"]) <= 262144
+
+
+def test_stream_session_preserves_large_litematic_without_sampling(tmp_path: Path) -> None:
+    _write_litematic(_schematic_root(tmp_path) / "large.litematic", width=65, height=65, length=65)
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    opened = harness.schematic_session_open(tmp_path, "iso", "large.litematic", True)
+
+    assert opened["size"] == [65, 65, 65]
+    assert opened["materialCounts"] == {"minecraft:dirt": 1, "minecraft:stone": 1}
+    assert opened["chunks"] == [[0, 0, 0]]
+    batch = harness.schematic_session_chunks(opened["sessionId"], [(0, 0, 0)])
+    decoded = array("H")
+    decoded.frombytes(base64.b64decode(batch["chunks"][0]["indices"]))
+    assert decoded[0] == 1
+    assert decoded[1] == 2
+    assert harness.schematic_session_close(opened["sessionId"]) == {"closed": True}
+    assert harness.schematic_session_close(opened["sessionId"]) == {"closed": False}
+
+
+def test_litematic_palette_indices_cross_long_word_boundary(tmp_path: Path) -> None:
+    schematic_path = _schematic_root(tmp_path) / "packed.litematic"
+    palette = List([Compound({"Name": String("minecraft:air")})])
+    palette.extend(Compound({"Name": String(f"minecraft:block_{index}")}) for index in range(1, 32))
+    region = Compound(
+        {
+            "Size": Compound({"x": Int(14), "y": Int(1), "z": Int(1)}),
+            "Position": Compound({"x": Int(0), "y": Int(0), "z": Int(0)}),
+            "BlockStatePalette": palette,
+            "BlockStates": LongArray([0xF000000000000000 - (1 << 64), 11]),
+        }
+    )
+    File({"Regions": Compound({"main": region})}, gzipped=True).save(schematic_path, gzipped=True)
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    legacy = harness.schematic_preview(tmp_path, "iso", "packed.litematic", True)
+    streamed = harness.schematic_session_open(tmp_path, "iso", "packed.litematic", True)
+
+    assert legacy["regions"][0]["indices"][12:14] == [31, 5]
+    assert streamed["materialCounts"] == {"minecraft:block_31": 1, "minecraft:block_5": 1}
+
+
+def test_stream_session_reads_schem_properties_and_chunk_boundary(tmp_path: Path) -> None:
+    schematic_path = _schematic_root(tmp_path) / "boundary.schem"
+    File(
+        {
+            "Size": IntArray([17, 1, 1]),
+            "Palette": Compound({"minecraft:air": Int(0), "minecraft:piston[extended=false,facing=north]": Int(1)}),
+            "Blocks": ByteArray(bytes([0] * 15 + [1, 1])),
+        },
+        gzipped=True,
+    ).save(schematic_path, gzipped=True)
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    opened = harness.schematic_session_open(tmp_path, "iso", "boundary.schem", True)
+
+    assert opened["chunks"] == [[0, 0, 0], [1, 0, 0]]
+    assert opened["materialCounts"] == {"minecraft:piston": 2}
+    assert opened["palette"][1]["properties"] == {"extended": "false", "facing": "north"}
+    batch = harness.schematic_session_chunks(opened["sessionId"], [(0, 0, 0), (1, 0, 0)])
+    first = array("H")
+    second = array("H")
+    first.frombytes(base64.b64decode(batch["chunks"][0]["indices"]))
+    second.frombytes(base64.b64decode(batch["chunks"][1]["indices"]))
+    assert first[15] == second[0] == 1
+
+
+def test_stream_session_rejects_limit_and_changed_file(tmp_path: Path) -> None:
+    schematic_path = _schematic_root(tmp_path) / "build.schem"
+    _write_schem(schematic_path)
+    harness = _SchematicHarness(tmp_path / "app-data")
+    harness.stream_max_voxels = 3
+    with pytest.raises(GameServiceError) as raised:
+        harness.schematic_session_open(tmp_path, "iso", "build.schem", True)
+    assert raised.value.error_code == "SCHEMATIC_TOO_LARGE"
+    harness.stream_max_voxels = 16_000_000
+    opened = harness.schematic_session_open(tmp_path, "iso", "build.schem", True)
+    schematic_path.write_bytes(schematic_path.read_bytes() + b"changed")
+    with pytest.raises(GameServiceError) as stale:
+        harness.schematic_session_chunks(opened["sessionId"], [(0, 0, 0)])
+    assert stale.value.error_code == "SCHEMATIC_SESSION_EXPIRED"
+
+
+def test_limited_nbt_reader_rejects_gzip_expansion(tmp_path: Path) -> None:
+    schematic_path = _schematic_root(tmp_path) / "build.schem"
+    _write_schem(schematic_path)
+    with pytest.raises(ValueError, match="安全上限"):
+        load_limited(schematic_path, 10)
+
+
+def test_schematic_assets_reads_game_language_and_falls_back_to_english(tmp_path: Path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "demo"
+    version_path.mkdir(parents=True)
+    (version_path / "options.txt").write_text("lang:zh_cn\n", encoding="utf-8")
+    (version_path / "demo.json").write_text(json.dumps({"assetIndex": {"id": "demo-assets"}}), encoding="utf-8")
+    with ZipFile(version_path / "demo.jar", "w") as archive:
+        archive.writestr(
+            "assets/minecraft/lang/en_us.json",
+            json.dumps({"block.minecraft.stone": "Stone", "block.minecraft.dirt": "Dirt"}),
+        )
+    language = json.dumps({"block.minecraft.stone": "石头"}, ensure_ascii=False).encode("utf-8")
+    digest = hashlib.sha1(language).hexdigest()
+    object_path = game_path / "assets" / "objects" / digest[:2] / digest
+    object_path.parent.mkdir(parents=True)
+    object_path.write_bytes(language)
+    index_path = game_path / "assets" / "indexes" / "demo-assets.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text(json.dumps({"objects": {"minecraft/lang/zh_cn.json": {"hash": digest}}}), encoding="utf-8")
+    harness = _SchematicHarness(tmp_path / "app-data")
+
+    bundle = harness.schematic_assets(game_path, "demo", ["minecraft:stone", "minecraft:dirt", "example:unknown"], True)
+
+    assert bundle["blockNames"] == {"minecraft:stone": "石头", "minecraft:dirt": "Dirt"}
+
+
+def test_special_model_textures_include_fluids_and_block_entities() -> None:
+    assert SchematicCoordinator._special_texture_ids("minecraft:water") == {
+        "minecraft:block/water_still",
+        "minecraft:block/water_flow",
+    }
+    assert SchematicCoordinator._special_texture_ids("minecraft:chest") == {"minecraft:entity/chest/normal"}
+    assert SchematicCoordinator._special_texture_ids("minecraft:oak_wall_sign") == {
+        "minecraft:entity/signs/oak",
+        "minecraft:entity/signs/hanging/oak",
+    }
+    assert SchematicCoordinator._special_texture_ids("example:water") == set()

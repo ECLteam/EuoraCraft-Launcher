@@ -90,6 +90,8 @@ from ECL.api.models import (
     ResourceUpdateRequest,
     SchematicAssetsRequest,
     SchematicPreviewRequest,
+    SchematicSessionChunksRequest,
+    SchematicSessionCloseRequest,
     ScreenshotRequest,
     ScreenshotSaveRequest,
     ScreenshotThumbnailRequest,
@@ -142,7 +144,9 @@ class WorkspaceHandlers(_FrontendState):
         return await self._validated_call(
             InstanceTarget,
             body,
-            lambda request: self.game.list_instance_mods(request.game_path, request.version_id, request.version_isolation),
+            lambda request: self.game.list_instance_mods(
+                request.game_path, request.version_id, request.version_isolation
+            ),
         )
 
     @_ipc_handler("INSTANCE_MODS_TOGGLE_FAILED")
@@ -204,7 +208,9 @@ class WorkspaceHandlers(_FrontendState):
         return await self._validated_call(
             InstancePackImportRequest,
             body,
-            lambda request: self.game.import_instance_pack(request.game_path, request.source_path, request.new_version_id),
+            lambda request: self.game.import_instance_pack(
+                request.game_path, request.source_path, request.new_version_id
+            ),
         )
 
     @_ipc_handler("INSTANCE_EXPORT_FAILED")
@@ -243,7 +249,9 @@ class WorkspaceHandlers(_FrontendState):
 
     @_ipc_handler("OPERATION_QUERY_FAILED")
     async def game_operation_get(self, body: dict[str, Any]) -> ApiResponse:
-        return await self._validated_call(OperationRequest, body, lambda request: self.game.operation_get(request.operation_id))
+        return await self._validated_call(
+            OperationRequest, body, lambda request: self.game.operation_get(request.operation_id)
+        )
 
     @_ipc_handler("OPERATION_CANCEL_FAILED")
     async def game_operation_cancel(self, body: dict[str, Any]) -> ApiResponse:
@@ -405,9 +413,7 @@ class WorkspaceHandlers(_FrontendState):
         return await self._validated_call(
             InstanceTarget,
             body,
-            lambda request: self.game.read_options(
-                request.game_path, request.version_id, request.version_isolation
-            ),
+            lambda request: self.game.read_options(request.game_path, request.version_id, request.version_isolation),
         )
 
     @_ipc_handler("GAME_OPTIONS_FAILED")
@@ -425,7 +431,9 @@ class WorkspaceHandlers(_FrontendState):
         return await self._validated_call(
             InstanceTarget,
             body,
-            lambda request: self.game.list_screenshots(request.game_path, request.version_id, request.version_isolation),
+            lambda request: self.game.list_screenshots(
+                request.game_path, request.version_id, request.version_isolation
+            ),
         )
 
     @_ipc_handler("SCREENSHOT_FAILED")
@@ -709,6 +717,32 @@ class WorkspaceHandlers(_FrontendState):
             lambda request: self.game.schematic_assets(
                 request.game_path, request.version_id, request.blocks, request.version_isolation
             ),
+        )
+
+    @_ipc_handler("SCHEMATIC_PREVIEW_FAILED")
+    async def game_schematic_session_open(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            SchematicPreviewRequest,
+            body,
+            lambda request: self.game.schematic_session_open(
+                request.game_path, request.version_id, request.resource_id, request.version_isolation
+            ),
+        )
+
+    @_ipc_handler("SCHEMATIC_PREVIEW_FAILED")
+    async def game_schematic_session_chunks(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            SchematicSessionChunksRequest,
+            body,
+            lambda request: self.game.schematic_session_chunks(request.session_id, request.coords),
+        )
+
+    @_ipc_handler("SCHEMATIC_PREVIEW_FAILED")
+    async def game_schematic_session_close(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            SchematicSessionCloseRequest,
+            body,
+            lambda request: self.game.schematic_session_close(request.session_id),
         )
 
 

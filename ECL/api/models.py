@@ -85,6 +85,8 @@
 #   - class ResourceToggleRequest
 #   - class SchematicPreviewRequest
 #   - class SchematicAssetsRequest
+#   - class SchematicSessionChunksRequest
+#   - class SchematicSessionCloseRequest
 #   - class ResourceDeleteRequest
 #   - class ResourceManifestExportRequest
 #   - class ResourceSearchRequest
@@ -591,6 +593,27 @@ class SchematicPreviewRequest(ResourceQuery):
 
 class SchematicAssetsRequest(InstanceTarget):
     blocks: list[str] = Field(min_length=1, max_length=512)
+
+
+class SchematicSessionChunksRequest(RequestModel):
+    """
+    校验一次原理图分块读取的会话和区块坐标。
+
+    单次最多读取 24 个区块，避免 IPC 响应过大。
+    """
+
+    session_id: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
+    coords: list[tuple[int, int, int]] = Field(min_length=1, max_length=24)
+
+
+class SchematicSessionCloseRequest(RequestModel):
+    """
+    校验关闭原理图预览会话的标识。
+
+    仅允许由打开接口生成的十六进制会话标识。
+    """
+
+    session_id: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
 
 
 class ResourceDeleteRequest(ResourceQuery):
