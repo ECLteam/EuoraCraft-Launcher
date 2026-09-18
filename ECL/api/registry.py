@@ -137,6 +137,7 @@ class IpcCommandRegistry:
         "game_resource_update",
         "game_schematic_preview",
         "game_schematic_assets",
+        "game_schematic_material_manifest_export",
         "game_schematic_session_open",
         "game_schematic_session_chunks",
         "game_schematic_session_close",

@@ -9,13 +9,17 @@
 #   - class LitematicaRegion
 #   - class SchematicCoordinator — 解析原理图文件为适合 3D 预览的体素模型数据。
 #       - schematic_preview(game_path, version_id, resource_id, version_isolation=…) -> dict[str, Any] — 读取并解析指定原理图，返回体素模型数据供前端渲染。
+#       - schematic_assets(game_path, version_id, blocks, version_isolation=…, locale=…) -> dict[str, Any] — 读取方块资源与当前启动器语言名称。
+#       - export_schematic_material_manifest(...) -> dict[str, str] — 导出当前原理图会话的材料审计清单。
 # ============================================================
 
 from __future__ import annotations
 
 import base64
+import csv
 import gzip
 import hashlib
+import io
 import json
 import re
 import secrets
@@ -709,7 +713,7 @@ class SchematicCoordinator:
             counts[palette_id] += 1
 
     def schematic_assets(
-        self, game_path: Any, version_id: Any, blocks: list[str], version_isolation: Any = False
+        self, game_path: Any, version_id: Any, blocks: list[str], version_isolation: Any = False, locale: str = "zh-CN"
     ) -> dict[str, Any]:
         """
         从用户本机游戏 Jar 按需读取原理图涉及的原版方块资源。
@@ -742,15 +746,19 @@ class SchematicCoordinator:
                 atomic_write_text(cache_path, json.dumps(bundle, ensure_ascii=False, separators=(",", ":")))
             except OSError:
                 self.logger.warning("原理图资源缓存写入失败，将在下次预览重新提取")
-        return {**bundle, "blockNames": self._read_block_names(target, jar_path, requested)}
+        return {**bundle, "blockNames": self._read_block_names(target, jar_path, requested, locale)}
 
-    def _read_block_names(self, target: ResolvedInstanceTarget, jar_path: Path, blocks: list[str]) -> dict[str, str]:
+    def _read_block_names(
+        self, target: ResolvedInstanceTarget, jar_path: Path, blocks: list[str], launcher_locale: str
+    ) -> dict[str, str]:
         """
-        从当前游戏语言资源读取方块名称，缺项回退客户端英文语言文件。
+        按启动器界面语言读取方块名称，缺项回退客户端英文语言文件。
 
-        仅接受资产索引给出的 SHA-1 对象路径，不读取资源包或自定义覆盖文件。
+        现代 Minecraft 通常只在 Jar 内保留英文语言文件，其它语言由资产索引提供；
+        因此先读取 Jar 英文，再用目标语言资产覆盖。仅接受索引给出的 SHA-1 对象路径，
+        不读取资源包或自定义覆盖文件。
         """
-        locale = self._game_locale(target.data_path / "options.txt")
+        locale = self._minecraft_locale(launcher_locale)
         translations: dict[str, str] = {}
         try:
             with ZipFile(jar_path) as archive:
@@ -770,22 +778,97 @@ class SchematicCoordinator:
         return names
 
     @staticmethod
-    def _game_locale(options_path: Path) -> str:
+    def _minecraft_locale(launcher_locale: str) -> str:
         """
-        从实例 options.txt 读取游戏语言设置。
+        将受支持的启动器语言映射为 Minecraft 语言资源标识。
 
-        文件缺失或值不合法时回退中文，且绝不读取任意路径作为语言资源。
+        IPC 模型已限制输入范围；此处仍以英文作为未知值回退，避免将未验证的文本
+        拼接到资产索引路径中。
         """
-        try:
-            if options_path.stat().st_size > 1024 * 1024:
-                return "zh_cn"
-            for line in options_path.read_text(encoding="utf-8").splitlines():
-                if line.startswith("lang:"):
-                    candidate = line[5:].strip().lower()
-                    return candidate if re.fullmatch(r"[a-z]{2,3}_[a-z]{2,3}", candidate) else "zh_cn"
-        except (OSError, UnicodeDecodeError):
-            pass
-        return "zh_cn"
+        locale_by_launcher = {
+            "zh-CN": "zh_cn",
+            "zh-TW": "zh_tw",
+            "en-US": "en_us",
+            "ja-JP": "ja_jp",
+            "ru-RU": "ru_ru",
+            "de-DE": "de_de",
+        }
+        return locale_by_launcher.get(launcher_locale, "en_us")
+
+    def export_schematic_material_manifest(
+        self,
+        game_path: Any,
+        version_id: Any,
+        session_id: str,
+        output_path: Any,
+        output_format: str,
+        locale: str = "zh-CN",
+        missing_blocks: list[str] | None = None,
+        version_isolation: Any = False,
+    ) -> dict[str, str]:
+        """
+        导出当前原理图预览会话的材料审计清单。
+
+        导出前再次校验会话和源文件状态，避免文件变动后写出过期统计。方块名称
+        始终跟随启动器语言；纹理状态由刚完成的资源提取结果传入，仅用于审计标记。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 当前实例版本标识
+        :param session_id: 已打开的原理图会话标识
+        :param output_path: 用户在系统对话框中选定的输出文件
+        :param output_format: json 或 csv
+        :param locale: 启动器当前界面语言
+        :param missing_blocks: 没有可用纹理的方块标识
+        :param version_isolation: 实例隔离状态
+        :return: 实际写入的绝对路径
+        :raises GameServiceError: 会话失效、资源缺失或格式不支持时抛出
+        """
+        with self._lock:
+            session = self._schematic_sessions.get(session_id)
+            if session is None:
+                raise GameServiceError("原理图预览会话已过期，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            if time.monotonic() - session.created_at > self.stream_session_seconds:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图预览会话已过期，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            try:
+                source_stat = session.source_path.stat()
+            except OSError as exc:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图文件已变化，请重新打开", "SCHEMATIC_SESSION_EXPIRED") from exc
+            if source_stat.st_mtime_ns != session.source_mtime_ns or source_stat.st_size != session.source_size:
+                self._schematic_sessions.pop(session_id, None)
+                raise GameServiceError("原理图文件已变化，请重新打开", "SCHEMATIC_SESSION_EXPIRED")
+            session.created_at = time.monotonic()
+            material_counts = dict(session.material_counts)
+        blocks = sorted(material_counts)
+        target = self.resolve_instance(game_path, version_id, version_isolation)
+        jar_path = self._resolve_asset_jar(target.game_path, target.version_id)
+        names = self._read_block_names(target, jar_path, blocks, locale)
+        missing = set(self._normalize_asset_blocks(missing_blocks)) if missing_blocks else set()
+        materials = [
+            {
+                "id": block,
+                "name": names.get(block, block),
+                "count": material_counts[block],
+                "hasTexture": block not in missing,
+                "hasTranslation": block in names,
+            }
+            for block in blocks
+        ]
+        output = Path(str(output_path)).expanduser().resolve(strict=False)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if output_format == "json":
+            content = json.dumps({"schemaVersion": 1, "materials": materials}, ensure_ascii=False, indent=2)
+        elif output_format == "csv":
+            stream = io.StringIO(newline="")
+            writer = csv.DictWriter(stream, fieldnames=["id", "name", "count", "hasTexture", "hasTranslation"])
+            writer.writeheader()
+            writer.writerows(materials)
+            content = stream.getvalue()
+        else:
+            raise GameServiceError("材料清单仅支持 JSON 或 CSV", "INVALID_MANIFEST_FORMAT")
+        atomic_write_text(output, content)
+        return {"path": str(output)}
 
     def _indexed_language(self, game_path: Path, version_id: str, locale: str) -> dict[str, str]:
         """

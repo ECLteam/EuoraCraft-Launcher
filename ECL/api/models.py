@@ -85,6 +85,7 @@
 #   - class ResourceToggleRequest
 #   - class SchematicPreviewRequest
 #   - class SchematicAssetsRequest
+#   - class SchematicMaterialManifestRequest
 #   - class SchematicSessionChunksRequest
 #   - class SchematicSessionCloseRequest
 #   - class ResourceDeleteRequest
@@ -194,6 +195,7 @@ class FileSavePurpose(StrEnum):
     WORLD_EXPORT = "world-export"
     INSTANCE_EXPORT = "instance-export"
     RESOURCE_MANIFEST = "resource-manifest"
+    SCHEMATIC_MATERIAL_MANIFEST = "schematic-material-manifest"
     SCREENSHOT = "screenshot"
     MOD_FILE = "mod-file"
 
@@ -593,6 +595,21 @@ class SchematicPreviewRequest(ResourceQuery):
 
 class SchematicAssetsRequest(InstanceTarget):
     blocks: list[str] = Field(min_length=1, max_length=512)
+    locale: Literal["zh-CN", "zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"] = "zh-CN"
+
+
+class SchematicMaterialManifestRequest(InstanceTarget):
+    """
+    校验原理图材料审计清单的导出请求。
+
+    输出路径由系统保存对话框选择；会话标识只能引用当前进程内的短期预览快照。
+    """
+
+    session_id: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
+    output_path: Path
+    output_format: Literal["json", "csv"]
+    locale: Literal["zh-CN", "zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"] = "zh-CN"
+    missing_blocks: list[str] = Field(default_factory=list, max_length=512)
 
 
 class SchematicSessionChunksRequest(RequestModel):

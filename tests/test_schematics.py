@@ -325,11 +325,11 @@ def test_limited_nbt_reader_rejects_gzip_expansion(tmp_path: Path) -> None:
         load_limited(schematic_path, 10)
 
 
-def test_schematic_assets_reads_game_language_and_falls_back_to_english(tmp_path: Path) -> None:
+def test_schematic_assets_follows_launcher_language_and_falls_back_to_english(tmp_path: Path) -> None:
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "demo"
     version_path.mkdir(parents=True)
-    (version_path / "options.txt").write_text("lang:zh_cn\n", encoding="utf-8")
+    (version_path / "options.txt").write_text("lang:en_us\n", encoding="utf-8")
     (version_path / "demo.json").write_text(json.dumps({"assetIndex": {"id": "demo-assets"}}), encoding="utf-8")
     with ZipFile(version_path / "demo.jar", "w") as archive:
         archive.writestr(
@@ -346,9 +346,71 @@ def test_schematic_assets_reads_game_language_and_falls_back_to_english(tmp_path
     index_path.write_text(json.dumps({"objects": {"minecraft/lang/zh_cn.json": {"hash": digest}}}), encoding="utf-8")
     harness = _SchematicHarness(tmp_path / "app-data")
 
-    bundle = harness.schematic_assets(game_path, "demo", ["minecraft:stone", "minecraft:dirt", "example:unknown"], True)
+    bundle = harness.schematic_assets(
+        game_path,
+        "demo",
+        ["minecraft:stone", "minecraft:dirt", "example:unknown"],
+        True,
+        "zh-CN",
+    )
 
     assert bundle["blockNames"] == {"minecraft:stone": "石头", "minecraft:dirt": "Dirt"}
+    english = harness.schematic_assets(game_path, "demo", ["minecraft:stone"], True, "en-US")
+    assert english["blockNames"] == {"minecraft:stone": "Stone"}
+
+
+def test_schematic_material_manifest_exports_localized_json_and_csv(tmp_path: Path) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "demo"
+    schematic_root = version_path / "schematics"
+    schematic_root.mkdir(parents=True)
+    _write_litematic(schematic_root / "build.litematic")
+    (version_path / "demo.json").write_text(json.dumps({"assetIndex": {"id": "demo-assets"}}), encoding="utf-8")
+    with ZipFile(version_path / "demo.jar", "w") as archive:
+        archive.writestr(
+            "assets/minecraft/lang/en_us.json",
+            json.dumps({"block.minecraft.stone": "Stone", "block.minecraft.dirt": "Dirt"}),
+        )
+    language = json.dumps({"block.minecraft.stone": "石头"}, ensure_ascii=False).encode("utf-8")
+    digest = hashlib.sha1(language).hexdigest()
+    object_path = game_path / "assets" / "objects" / digest[:2] / digest
+    object_path.parent.mkdir(parents=True)
+    object_path.write_bytes(language)
+    index_path = game_path / "assets" / "indexes" / "demo-assets.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text(json.dumps({"objects": {"minecraft/lang/zh_cn.json": {"hash": digest}}}), encoding="utf-8")
+    harness = _SchematicHarness(tmp_path / "app-data")
+    opened = harness.schematic_session_open(game_path, "demo", "build.litematic", True)
+
+    json_path = tmp_path / "materials.json"
+    csv_path = tmp_path / "materials.csv"
+    assert harness.export_schematic_material_manifest(
+        game_path,
+        "demo",
+        opened["sessionId"],
+        json_path,
+        "json",
+        "zh-CN",
+        ["minecraft:dirt"],
+        True,
+    ) == {"path": str(json_path)}
+    assert harness.export_schematic_material_manifest(
+        game_path,
+        "demo",
+        opened["sessionId"],
+        csv_path,
+        "csv",
+        "zh-CN",
+        ["minecraft:dirt"],
+        True,
+    ) == {"path": str(csv_path)}
+
+    document = json.loads(json_path.read_text(encoding="utf-8"))
+    assert document["materials"] == [
+        {"id": "minecraft:dirt", "name": "Dirt", "count": 1, "hasTexture": False, "hasTranslation": True},
+        {"id": "minecraft:stone", "name": "石头", "count": 1, "hasTexture": True, "hasTranslation": True},
+    ]
+    assert "minecraft:dirt,Dirt,1,False,True" in csv_path.read_text(encoding="utf-8")
 
 
 def test_special_model_textures_include_fluids_and_block_entities() -> None:

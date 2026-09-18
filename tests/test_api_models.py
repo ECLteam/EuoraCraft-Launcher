@@ -12,6 +12,7 @@
 #   - test_launch_request_rejects_invalid_process_priority() -> None
 #   - test_normalize_process_priority_falls_back_to_normal() -> None
 #   - test_schematic_preview_accepts_frontend_payload_without_enabled() -> None
+#   - test_schematic_material_manifest_validates_and_routes_payload() -> None
 #   - test_request_schema_contains_every_consolidated_typed_command() -> None
 #   - test_invalid_ipc_payload_uses_stable_error_code() -> None
 #   - test_version_stats_ipc_validates_and_forwards_target() -> None
@@ -19,6 +20,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +32,7 @@ from ECL.api.models import (
     InstallRequest,
     LaunchRequest,
     LoaderCatalogRequest,
+    SchematicMaterialManifestRequest,
     SchematicPreviewRequest,
     SettingsQuery,
     WardrobeImportRequest,
@@ -156,6 +159,43 @@ async def test_schematic_session_commands_validate_and_route_payloads() -> None:
     assert calls[0][2:] == ("1.21.1", "build.schem", True)
     assert calls[1] == ("chunks", "a" * 32, [(1, 0, 2)])
     assert calls[2] == ("close", "a" * 32)
+
+
+@pytest.mark.asyncio
+async def test_schematic_material_manifest_validates_and_routes_payload() -> None:
+    handler = object.__new__(WorkspaceHandlers)
+    calls: list[tuple[object, ...]] = []
+    handler.game = SimpleNamespace(
+        resolve_version_isolation=lambda _game_path, _version_id: True,
+        export_schematic_material_manifest=lambda *args: calls.append(args) or {"path": "C:/materials.json"},
+    )
+    body = {
+        "game_path": ".minecraft",
+        "version_id": "1.21.1",
+        "session_id": "a" * 32,
+        "output_path": "C:/materials.json",
+        "output_format": "json",
+        "locale": "ja-JP",
+        "missing_blocks": ["minecraft:torch"],
+    }
+
+    response = await handler.game_schematic_material_manifest_export(body)
+
+    assert response == {"success": True, "data": {"path": "C:/materials.json"}}
+    assert calls == [
+        (
+            Path(".minecraft"),
+            "1.21.1",
+            "a" * 32,
+            Path("C:/materials.json"),
+            "json",
+            "ja-JP",
+            ["minecraft:torch"],
+            True,
+        )
+    ]
+    with pytest.raises(ValidationError):
+        SchematicMaterialManifestRequest.model_validate({**body, "locale": "fr-FR"})
 
 
 def test_request_schema_contains_every_consolidated_typed_command() -> None:

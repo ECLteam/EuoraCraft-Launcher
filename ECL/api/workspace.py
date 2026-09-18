@@ -58,6 +58,11 @@
 #       - game_resource_update_check(body) -> ApiResponse
 #       - game_resource_update(body) -> ApiResponse
 #       - game_schematic_preview(body) -> ApiResponse
+#       - game_schematic_assets(body) -> ApiResponse
+#       - game_schematic_material_manifest_export(body) -> ApiResponse
+#       - game_schematic_session_open(body) -> ApiResponse
+#       - game_schematic_session_chunks(body) -> ApiResponse
+#       - game_schematic_session_close(body) -> ApiResponse
 # ============================================================
 
 from __future__ import annotations
@@ -89,6 +94,7 @@ from ECL.api.models import (
     ResourceUpdateCheckRequest,
     ResourceUpdateRequest,
     SchematicAssetsRequest,
+    SchematicMaterialManifestRequest,
     SchematicPreviewRequest,
     SchematicSessionChunksRequest,
     SchematicSessionCloseRequest,
@@ -715,7 +721,24 @@ class WorkspaceHandlers(_FrontendState):
             SchematicAssetsRequest,
             body,
             lambda request: self.game.schematic_assets(
-                request.game_path, request.version_id, request.blocks, request.version_isolation
+                request.game_path, request.version_id, request.blocks, request.version_isolation, request.locale
+            ),
+        )
+
+    @_ipc_handler("SCHEMATIC_MANIFEST_FAILED")
+    async def game_schematic_material_manifest_export(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            SchematicMaterialManifestRequest,
+            body,
+            lambda request: self.game.export_schematic_material_manifest(
+                request.game_path,
+                request.version_id,
+                request.session_id,
+                request.output_path,
+                request.output_format,
+                request.locale,
+                request.missing_blocks,
+                request.version_isolation,
             ),
         )
 

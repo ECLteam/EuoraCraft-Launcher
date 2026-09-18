@@ -89,6 +89,11 @@ class FileHandlers(_FrontendState):
             ["png", "jpg", "jpeg", "webp", "gif", "bmp"],
         ),
         FileSavePurpose.RESOURCE_MANIFEST: ("导出资源清单", "resources.json", ["json", "csv"]),
+        FileSavePurpose.SCHEMATIC_MATERIAL_MANIFEST: (
+            "导出原理图材料清单",
+            "schematic-materials.json",
+            ["json", "csv"],
+        ),
         FileSavePurpose.MOD_FILE: ("另存模组文件", "mod.jar", ["jar", "zip"]),
     }
 
@@ -612,6 +617,7 @@ class FileHandlers(_FrontendState):
         # 对未显式豁免的用途，按该用途的主扩展名补齐后缀（如 instance-export -> .eclmodpack）
         no_suffix_force = {
             FileSavePurpose.RESOURCE_MANIFEST,
+            FileSavePurpose.SCHEMATIC_MATERIAL_MANIFEST,
             FileSavePurpose.SCREENSHOT,
             FileSavePurpose.MOD_FILE,
         }
