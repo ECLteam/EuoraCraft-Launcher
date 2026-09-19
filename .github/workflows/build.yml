@@ -13,6 +13,7 @@ jobs:
     name: Validate Release Tag
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     steps:
       - uses: actions/checkout@v7
@@ -21,6 +22,7 @@ jobs:
 
       - shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           REF_TYPE: ${{ github.ref_type }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
@@ -61,6 +63,24 @@ jobs:
             exit 1
           fi
 
+          require_successful_main_workflow() {
+            local workflow_file="$1"
+            local workflow_name="$2"
+            local successful_runs
+            successful_runs="$(
+              gh api \
+                "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&branch=main&event=push&status=completed" \
+                --jq '[.workflow_runs[] | select(.conclusion == "success")] | length'
+            )"
+            if [ "$successful_runs" = "0" ]; then
+              echo "beta 标签对应提交尚未通过主分支工作流：$workflow_name" >&2
+              exit 1
+            fi
+          }
+
+          require_successful_main_workflow "backend-tests.yml" "Backend Tests"
+          require_successful_main_workflow "build.yml" "Build"
+
   build-frontend:
     name: Build Frontend
     needs: validate-release-tag
@@ -85,6 +105,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check frontend quality
+        run: pnpm check
 
       - name: Build frontend
         run: pnpm build
