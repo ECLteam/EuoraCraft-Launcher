@@ -571,7 +571,8 @@ class FileHandlers(_FrontendState):
         background = ui_config.get("background") if isinstance(ui_config, dict) else None
         if not isinstance(background, dict) or background.get("media_type") != "video":
             return {"success": False, "message": "当前未配置背景视频", "errorCode": "BACKGROUND_VIDEO_NOT_CONFIGURED"}
-        raw_path = background.get("path")
+        video = background.get("video")
+        raw_path = video.get("path") if isinstance(video, dict) else background.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             return {"success": False, "message": "背景视频路径无效", "errorCode": "BACKGROUND_VIDEO_PATH_INVALID"}
         if self.background_media is None:
