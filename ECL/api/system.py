@@ -115,13 +115,12 @@ class SystemHandlers(_FrontendState):
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        launcher_config = self._get_effective_config().get("launcher") or {}
         return {
             "success": True,
             "data": {
-                "version": launcher_config.get("version", ""),
-                "version_type": launcher_config.get("version_type", "release"),
-                "debug": bool(launcher_config.get("debug", False)),
+                "version": self.launcher.launcher_version or "",
+                "version_type": self.launcher.launcher_version_type or "release",
+                "debug": bool(self.launcher.debug),
             },
         }
 

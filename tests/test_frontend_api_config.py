@@ -46,8 +46,8 @@
 #       - unminimize() -> None
 #       - set_focus() -> None
 #       - run_on_main_thread(handler) -> None
-#   - test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None
-#   - test_launcher_info_matches_effective_launcher_config(tmp_path) -> None
+#   - test_launcher_config_excludes_runtime_metadata(tmp_path) -> None
+#   - test_launcher_info_uses_runtime_metadata(tmp_path) -> None
 #   - test_info_card_delegates_to_registered_service(tmp_path) -> None
 #   - test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None
 #   - test_java_scan_delegates_to_game_service(tmp_path) -> None
@@ -393,7 +393,7 @@ def _build_api(tmp_path) -> FrontendApi:
     return FrontendApi(context)
 
 
-def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
+def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(api.settings_get({"sections": ["launcher"]}))
@@ -410,12 +410,10 @@ def test_launcher_config_uses_effective_runtime_debug(tmp_path) -> None:
         "request_timeout": 15,
         "request_retries": 2,
         "dev_channel": False,
-        "version": "1.4.2-alpha.3+20260906",
-        "version_type": "alpha",
     }
 
 
-def test_launcher_info_matches_effective_launcher_config(tmp_path) -> None:
+def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     api = _build_api(tmp_path)
 
     result = asyncio.run(api.launcher_info({}))
