@@ -431,7 +431,7 @@ class FileHandlers(_FrontendState):
         data_url, mime, base64_len = await to_thread.run_sync(
             _read_image_data_url, file_path, stat.st_mtime_ns, stat.st_size
         )
-        self.logger.info("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, base64_len)
+        self.logger.debug("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, base64_len)
         return {
             "success": True,
             "data": {"dataUrl": data_url},

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -43,3 +44,24 @@ async def test_background_video_open_prefers_nested_video_path() -> None:
 
     assert result == {"success": True, "data": {"url": "http://127.0.0.1:9527/background/token"}}
     assert opened_paths == ["C:/saved-background.mp4"]
+
+
+@pytest.mark.anyio
+async def test_image_read_success_is_debug_logged(tmp_path, caplog) -> None:
+    """
+    成功读取图片只记录调试日志，避免列表重渲染污染常规运行日志。
+
+    文件不存在等异常路径仍由处理器保留警告级别日志，不能因降低成功日志而隐藏故障。
+    """
+    image_path = tmp_path / "logo.png"
+    image_path.write_bytes(b"png")
+    handler = object.__new__(FileHandlers)
+    handler.logger = logging.getLogger("test.image_read")
+
+    with caplog.at_level(logging.DEBUG, logger="test.image_read"):
+        result = await handler.image_read_file({"path": str(image_path)})
+
+    assert result["success"] is True
+    records = [record for record in caplog.records if "图片读取成功" in record.message]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
