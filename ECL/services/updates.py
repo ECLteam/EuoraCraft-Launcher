@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：版本更新比较与 GitHub Releases 拉取。
+# 文件作用：版本更新比较、GitHub Releases 拉取与单次启动更新检测。
 #
 # 公开接口：
 #   - parse_version(version) -> tuple[tuple[int, ...], tuple[int, int] | None] | None — 解析 SemVer 版本为可比较结构，忽略构建元数据。
@@ -12,15 +12,19 @@
 #   - class UpdateChecker — 按当前版本通道检查 GitHub Releases 是否有新版本。
 #       - check() -> UpdateCheckResult
 #       - latest_release() -> dict[str, Any] | None — 返回当前通道匹配到的最高版本 Release 对象，供自动更新提取安装包。
+#   - class StartupUpdateService — 在后端进程生命周期内异步执行一次更新检测并缓存结果。
 # ============================================================
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from threading import Event, RLock, Thread, current_thread
 from typing import Any
 
 import httpx
 
+from ECL.events import EventBus
 from ECL.utils import get_logger, get_with_retries
 
 
@@ -258,4 +262,109 @@ class UpdateChecker:
         return best_tag, best_release
 
 
-__all__ = ["UpdateCheckResult", "UpdateChecker", "compare_versions", "parse_version"]
+class StartupUpdateService:
+    """
+    在后端进程生命周期内异步执行一次更新检测并缓存结果。
+
+    服务由应用装配根启动，而非由 WebView 刷新触发。检测完成后通过事件总线发送
+    ``update:check_completed``；前端较晚就绪时可从 ``result`` 读取同一份缓存结果。
+
+    :param http_client: 共享的启动器通道 HTTP 客户端
+    :param event_bus: 应用事件总线，用于通知检测完成
+    :param current_version: 当前启动器版本号
+    :param version_type: 当前版本类型
+    :param checker_factory: 可选的检测器工厂，仅用于替换网络边界或测试
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.Client,
+        event_bus: EventBus,
+        *,
+        current_version: str,
+        version_type: str,
+        checker_factory: Callable[[], UpdateChecker] | None = None,
+    ) -> None:
+        self.logger = get_logger("StartupUpdateService")
+        self.events = event_bus
+        self._current_version = current_version
+        self._version_type = version_type
+        self._checker_factory = checker_factory or (
+            lambda: UpdateChecker(
+                http_client,
+                current_version=current_version,
+                version_type=version_type,
+            )
+        )
+        self._lock = RLock()
+        self._stopped = Event()
+        self._started = False
+        self._result: UpdateCheckResult | None = None
+        self._thread: Thread | None = None
+
+    def start(self) -> bool:
+        """
+        启动一次后台检测。
+
+        重复调用不会创建新的网络请求，保证前端重载或重复就绪事件不重复消耗
+        GitHub API 配额。
+
+        :return: 首次成功启动时为 True；已启动或已关闭时为 False
+        """
+
+        with self._lock:
+            if self._started or self._stopped.is_set():
+                return False
+            self._started = True
+            self._thread = Thread(target=self._run, name="ECL-UpdateCheck", daemon=True)
+            self._thread.start()
+            return True
+
+    def result(self) -> dict[str, Any] | None:
+        """
+        返回最近一次启动检测的可序列化结果。
+
+        :return: 检测尚未完成时返回 None；完成后返回独立字典，调用方可安全修改
+        """
+
+        with self._lock:
+            return asdict(self._result) if self._result is not None else None
+
+    def close(self) -> None:
+        """
+        标记服务已关闭，阻止尚未完成的任务继续向已销毁的前端发送事件。
+
+        线程使用守护模式，并只进行极短的收尾等待，避免网络请求阻塞启动器关闭；共享
+        HTTP 客户端随后由应用上下文统一释放。
+        """
+
+        self._stopped.set()
+        thread = self._thread
+        if thread is not None and thread is not current_thread():
+            thread.join(timeout=0.1)
+
+    def _run(self) -> None:
+        """
+        执行检测并在进程仍存活时发布结果。
+
+        检测器自身会把网络失败转换为 ``error`` 结果；这里额外兜底，避免替换检测器时
+        的意外异常让前端永远等不到完成状态。
+        """
+
+        try:
+            result = self._checker_factory().check()
+        except Exception as exc:
+            self.logger.exception("启动更新检测发生未处理异常")
+            result = UpdateCheckResult(
+                status="error",
+                current_version=self._current_version,
+                channel="beta" if self._version_type in {"beta", "rc"} else self._version_type or "release",
+                message=str(exc) or "更新检测失败",
+            )
+        with self._lock:
+            self._result = result
+        if not self._stopped.is_set():
+            self.events.emit("update:check_completed", asdict(result))
+
+
+__all__ = ["StartupUpdateService", "UpdateCheckResult", "UpdateChecker", "compare_versions", "parse_version"]

@@ -356,6 +356,7 @@ class _FrontendState:
         self.plugins = context.plugins
         self.processes = context.processes
         self.background_media = getattr(context, "background_media", None)
+        self.startup_update = getattr(context, "startup_update", None)
         self.app_path: Path = self.launcher.app_path
         self.data_path: Path = self.launcher.data_path
         self._webview: WebviewWindow | None = None
@@ -868,5 +869,9 @@ class _FrontendState:
                     "cacheable": True,
                 }
             )
+        if self.startup_update is not None:
+            startup_update_result = self.startup_update.result()
+            if startup_update_result is not None:
+                self.emit_to_frontend("update:check_completed", startup_update_result)
         self.logger.info("前端加载完成")
         return {"success": True}

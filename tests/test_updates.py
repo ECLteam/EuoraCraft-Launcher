@@ -23,10 +23,13 @@
 #   - test_invalid_json_returns_friendly_message() -> None
 # ============================================================
 
+from threading import Event
+
 import httpx
 import pytest
 
-from ECL.services.updates import UpdateChecker, compare_versions, parse_version
+from ECL.events import EventBus
+from ECL.services.updates import StartupUpdateService, UpdateChecker, UpdateCheckResult, compare_versions, parse_version
 
 
 def _response(status_code: int = 200, *, json: object = None) -> httpx.Response:
@@ -280,3 +283,55 @@ def test_invalid_json_returns_friendly_message() -> None:
 
     assert result.status == "error"
     assert result.message == "更新服务器数据解析失败，请稍后重试"
+
+
+def test_startup_update_service_checks_once_and_caches_frontend_result() -> None:
+    """
+    启动更新服务只发起一次检测，并把结果缓存后广播给前端事件桥。
+
+    重复 ``start`` 模拟前端多次刷新或重复就绪，不能再次调用检测器。
+    """
+
+    calls: list[str] = []
+    completed = Event()
+    received: list[dict[str, object]] = []
+    events = EventBus()
+    events.subscribe(
+        "update:check_completed",
+        lambda payload: (received.append(payload), completed.set()),
+    )
+
+    class FakeChecker:
+        def check(self) -> UpdateCheckResult:
+            calls.append("check")
+            return UpdateCheckResult(
+                status="update_available",
+                current_version="1.0.0",
+                channel="release",
+                latest_version="1.1.0",
+            )
+
+    service = StartupUpdateService(
+        http_client=None,  # type: ignore[arg-type]  # 测试使用 checker_factory 隔离 HTTP 边界。
+        event_bus=events,
+        current_version="1.0.0",
+        version_type="release",
+        checker_factory=FakeChecker,
+    )
+
+    assert service.start() is True
+    assert service.start() is False
+    assert completed.wait(timeout=1)
+    assert calls == ["check"]
+    assert received == [
+        {
+            "status": "update_available",
+            "current_version": "1.0.0",
+            "channel": "release",
+            "latest_version": "1.1.0",
+            "latest_url": None,
+            "latest_notes": None,
+            "message": None,
+        }
+    ]
+    assert service.result() == received[0]

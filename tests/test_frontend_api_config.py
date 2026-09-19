@@ -893,6 +893,32 @@ def test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> Non
     assert plugin_result["data"] == [{"name": "example", "status": "enabled"}]
 
 
+def test_frontend_ready_replays_cached_startup_update_result(tmp_path) -> None:
+    """
+    前端晚于后端更新检测就绪时，仍能收到已缓存的同一份检测结果。
+
+    该回放只传递缓存，不会触发新的更新网络请求。
+    """
+
+    api = _build_api(tmp_path)
+    payload = {
+        "status": "update_available",
+        "current_version": "1.0.0",
+        "channel": "release",
+        "latest_version": "1.1.0",
+        "latest_url": None,
+        "latest_notes": None,
+        "message": None,
+    }
+    api.startup_update = SimpleNamespace(result=lambda: payload)
+    emitted: list[tuple[str, object]] = []
+    api.emit_to_frontend = lambda event, data, **_kwargs: emitted.append((event, data))
+
+    asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+
+    assert ("update:check_completed", payload) in emitted
+
+
 def test_adapter_main_window_is_visible_without_native_shadow() -> None:
     adapter = object.__new__(Adapter)
     adapter.config = {"launcher": {"debug": False}, "tauri": {}}

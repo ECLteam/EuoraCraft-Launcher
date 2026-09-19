@@ -41,6 +41,7 @@ from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
 from ECL.services.processes import ProcessService
+from ECL.services.updates import StartupUpdateService
 from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
 
@@ -254,6 +255,7 @@ class ApplicationContext:
     plugins: PluginManager
     processes: ProcessService
     background_media: BackgroundMediaService | None = None
+    startup_update: StartupUpdateService | None = None
     dev_channel: DevChannelService | None = None  # 按需启动的开发者通道，未开启时为 None
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
@@ -277,6 +279,7 @@ class ApplicationContext:
                 self.connector,
                 self.accounts,
                 self.background_media,
+                self.startup_update,
                 self.http,
             )
             for resource in resources:
@@ -353,6 +356,14 @@ def create_application(
 
         background_media = BackgroundMediaService()
         created.append(background_media)
+
+        startup_update = StartupUpdateService(
+            http,
+            events,
+            current_version=state.launcher_version,
+            version_type=state.launcher_version_type,
+        )
+        created.append(startup_update)
 
         logger.info("正在初始化账户服务")
         accounts = AccountManager(
@@ -479,6 +490,7 @@ def create_application(
         plugins=plugins,
         processes=processes,
         background_media=background_media,
+        startup_update=startup_update,
         dev_channel=dev_channel,
     )
 
@@ -509,6 +521,7 @@ def create_application(
         logger.debug("运行配置已刷新: debug=%s", state.debug)
 
     events.subscribe("config:updated", update_runtime_config)
+    startup_update.start()
     logger.info("后端服务初始化完成")
     return context
 

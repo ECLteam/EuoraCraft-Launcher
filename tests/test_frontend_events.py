@@ -92,9 +92,11 @@ def test_bridge_passthrough_events_keep_name_and_payload() -> None:
     bus, received, _ = _collect_events()
     bus.emit("game:install_progress", {"done": 1, "total": 2})
     bus.emit("process:instances_changed", [{"id": "p1"}])
+    bus.emit("update:check_completed", {"status": "up_to_date"})
     assert received == [
         ("game:install_progress", {"done": 1, "total": 2}),
         ("process:instances_changed", [{"id": "p1"}]),
+        ("update:check_completed", {"status": "up_to_date"}),
     ]
 
 
