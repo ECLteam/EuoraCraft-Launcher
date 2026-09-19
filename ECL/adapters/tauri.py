@@ -81,8 +81,8 @@ class Adapter:
                         "title": tauri_config.get("title", "EuoraCraft Launcher"),
                         "width": tauri_config.get("width", 900),
                         "height": tauri_config.get("height", 600),
-                        "minWidth": 966,  # 补偿 Tauri 窗口在最小宽度下额外产生的空白像素
-                        "minHeight": 609,
+                        "minWidth": 960,  # 真神奇，这玩意会在启用窗口边缘阴影的情况下多出几个px
+                        "minHeight": 600,
                         "visible": True,
                     }
                 ]

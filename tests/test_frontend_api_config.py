@@ -926,6 +926,8 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
 
     assert window_config["visible"] is True
     assert window_config["shadow"] is False
+    assert window_config["minWidth"] == 960
+    assert window_config["minHeight"] == 600
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
