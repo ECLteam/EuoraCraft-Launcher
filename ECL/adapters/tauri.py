@@ -69,9 +69,6 @@ class Adapter:
     def _build_config(self) -> dict[str, Any]:
         # 根据配置拼装传给 Tauri 的应用配置结构。
         tauri_config = self.config.get("tauri", {})
-        launcher_config = self.config.get("launcher") or {}
-        # 开发模式下窗口默认可见，便于调试；生产环境初始隐藏，等待前端加载完成后再显示
-        dev_mode = bool(launcher_config.get("debug", False))
         return {
             "version": self.launcher_version,
             "build": {"frontendDist": tauri_config.get("frontenddist", "frontend/dist")},
@@ -80,12 +77,13 @@ class Adapter:
                     {
                         "decorations": False,
                         "transparent": True,
+                        "shadow": False,
                         "title": tauri_config.get("title", "EuoraCraft Launcher"),
                         "width": tauri_config.get("width", 900),
                         "height": tauri_config.get("height", 600),
                         "minWidth": 966,  # 补偿 Tauri 窗口在最小宽度下额外产生的空白像素
                         "minHeight": 609,
-                        "visible": dev_mode,  # 开发模式可见；生产初始隐藏，前端加载完成后可见
+                        "visible": True,
                     }
                 ]
             },

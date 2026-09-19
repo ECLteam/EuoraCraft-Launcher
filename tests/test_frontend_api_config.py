@@ -69,6 +69,7 @@
 #   - test_authlib_profile_selection_is_forwarded_to_account_manager(tmp_path) -> None
 #   - test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None
 #   - test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None
+#   - test_adapter_main_window_is_visible_without_native_shadow() -> None
 #   - test_focus_window_restores_and_focuses_webview(tmp_path) -> None
 #   - test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None
 #   - test_microsoft_authorization_event_focuses_before_forwarding(tmp_path, monkeypatch) -> None
@@ -887,9 +888,20 @@ def test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> Non
     plugin_result = asyncio.run(api.plugin_list({}))
 
     assert ready_result["success"] is True
-    assert webview_window.visible is True
+    assert webview_window.visible is False
     assert api.plugins.frontend_ready_count == 1
     assert plugin_result["data"] == [{"name": "example", "status": "enabled"}]
+
+
+def test_adapter_main_window_is_visible_without_native_shadow() -> None:
+    adapter = object.__new__(Adapter)
+    adapter.config = {"launcher": {"debug": False}, "tauri": {}}
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert window_config["visible"] is True
+    assert window_config["shadow"] is False
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:

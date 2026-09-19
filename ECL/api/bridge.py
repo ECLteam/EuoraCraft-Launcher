@@ -805,11 +805,12 @@ class _FrontendState:
 
                 on_window_event(handle_main_window_event)
                 self._main_window_event_bound = True
-        webview_window.show()
-        if window_type not in {"main", "unregistered"}:
-            with suppress(OSError, RuntimeError):
-                webview_window.unminimize()
-                webview_window.set_focus()
+        if label != "main":
+            webview_window.show()
+            if window_type not in {"main", "unregistered"}:
+                with suppress(OSError, RuntimeError):
+                    webview_window.unminimize()
+                    webview_window.set_focus()
         if self._webview is webview_window:
             self._flush_pending_frontend_events()
         if not self._plugins_frontend_ready and window_type == "main":
