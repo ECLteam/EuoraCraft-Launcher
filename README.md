@@ -61,7 +61,8 @@
 
 欢迎提交 Issue 和 Pull Request！
 
-本项目使用 semantic-release 管理版本，请遵循 Conventional Commits 规范。
+提交信息遵循 Conventional Commits 规范。发行版本由 Git 标签触发，beta 标签格式、推送顺序与验收要求见
+[发布流程](docs/release-process.md)。
 
 ```bash
 # 开发环境

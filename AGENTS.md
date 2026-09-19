@@ -125,3 +125,11 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 - 禁止使用单行 docstring；项目架构测试会检查已声明 docstring 的多行格式。
 - 每个缺陷修复必须新增能在修复前失败、修复后通过的测试。
 - 平台相关功能至少覆盖 Windows 与 POSIX 分支；主仓库改动涉及子模块集成时，除子模块自身测试外还必须通过主仓库集成测试。
+
+## 4. Beta 发布规程
+
+- Beta 标签固定为 `vMAJOR.MINOR.PATCH-beta.N+YYYYMMDD`：`N` 从 1 起递增，同一基础版本不得复用；日期使用 Asia/Shanghai 的实际发布日。升级基础版本后，`N` 重置为 1。
+- 发布前必须完成：前端子模块先推送、主仓库带子模块指针的 `main` 后推送、工作区干净、对应主分支 CI 全部通过。标签必须为带注释标签，并且只指向远端 `main` 当前提交。
+- 远端 beta 标签不可删除、移动或覆盖。源码或发布配置修复后必须使用下一枚 beta 标签；仅 CI 基础设施故障可在不改动标签的前提下重跑同一工作流。
+- 推送标签会触发构建并创建 GitHub prerelease。只有所有平台产物上传完成且 Release 页面可下载后，beta 才算发布完成。
+- 完整命令、验收清单和失败处理见 `docs/release-process.md`；本节是所有自动化协作者必须遵循的强制摘要。
