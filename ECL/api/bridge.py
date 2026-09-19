@@ -355,6 +355,7 @@ class _FrontendState:
         self.game = context.game
         self.plugins = context.plugins
         self.processes = context.processes
+        self.background_media = getattr(context, "background_media", None)
         self.app_path: Path = self.launcher.app_path
         self.data_path: Path = self.launcher.data_path
         self._webview: WebviewWindow | None = None

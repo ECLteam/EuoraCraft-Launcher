@@ -16,9 +16,11 @@
 #       - image_save_as(body) -> dict[str, Any] — 保存背景图片。
 #       - image_read_file(body) -> dict[str, Any] — 读取图片（带 LRU 缓存）。
 #       - image_list_files(body) -> dict[str, Any] — 获取图片列表。
+#       - background_video_open(body) -> dict[str, Any] — 为当前已保存背景视频取得受控流地址。
 #       - select_directory(body) -> dict[str, Any] — 选择目录。
 #       - select_java(body) -> dict[str, Any] — 选择 Java。
 #       - select_image(body) -> dict[str, Any] — 按使用场景选择图片；皮肤和披风只允许 PNG。
+#       - select_background_video(body) -> dict[str, Any] — 选择本地 MP4 或 WebM 背景视频。
 #       - select_file(body) -> dict[str, Any] — 选择文件。
 #       - select_files(body) -> dict[str, Any] — 按实例工作台用途选择多个本地文件。
 #       - select_save_file(body) -> dict[str, Any] — 按导出用途打开系统 ZIP 文件保存对话框。
@@ -539,6 +541,46 @@ class FileHandlers(_FrontendState):
         path = await self._pick_path(False, title, extensions)
         self.logger.info("图片选择结果: %s", path)
         return {"success": True, "data": {"path": path, "base64": ""}}
+
+    @_ipc_handler("SELECT_BACKGROUND_VIDEO_ERROR")
+    async def select_background_video(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        打开本地背景视频选择器。
+
+        :param body: 保留的 IPC 请求体；当前不需要额外参数
+        :return: 用户选择的 MP4/WebM 绝对路径，取消时返回空路径
+        """
+
+        path = await self._pick_path(False, "选择背景视频", ["mp4", "webm"])
+        self.logger.info("背景视频选择结果: %s", path)
+        return {"success": True, "data": {"path": path}}
+
+    @_ipc_handler("BACKGROUND_VIDEO_OPEN_ERROR")
+    async def background_video_open(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        为配置中的背景视频签发仅限当前进程使用的本地流 URL。
+
+        前端不能通过该接口传入任意路径；服务只读取已经原子保存到 ``ui.background``
+        中、且声明为视频类型的路径。
+
+        :param body: 保留的 IPC 请求体；当前不需要额外参数
+        :return: 受随机令牌保护的视频 URL
+        """
+
+        ui_config = self.config.get_config("ui") or {}
+        background = ui_config.get("background") if isinstance(ui_config, dict) else None
+        if not isinstance(background, dict) or background.get("media_type") != "video":
+            return {"success": False, "message": "当前未配置背景视频", "errorCode": "BACKGROUND_VIDEO_NOT_CONFIGURED"}
+        raw_path = background.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return {"success": False, "message": "背景视频路径无效", "errorCode": "BACKGROUND_VIDEO_PATH_INVALID"}
+        if self.background_media is None:
+            return {"success": False, "message": "背景视频服务未就绪", "errorCode": "BACKGROUND_VIDEO_UNAVAILABLE"}
+        try:
+            url = await to_thread.run_sync(self.background_media.open, raw_path)
+        except (OSError, ValueError) as exc:
+            return {"success": False, "message": str(exc), "errorCode": "BACKGROUND_VIDEO_UNAVAILABLE"}
+        return {"success": True, "data": {"url": url}}
 
     @_ipc_handler("SELECT_FILE_ERROR")
     async def select_file(self, body: dict[str, Any]) -> dict[str, Any]:

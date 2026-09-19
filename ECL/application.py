@@ -36,6 +36,7 @@ from ECL.events import EventBus
 from ECL.game import InstancesManager
 from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
+from ECL.services.background_media import BackgroundMediaService
 from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
@@ -252,6 +253,7 @@ class ApplicationContext:
     connector: ConnectorService
     plugins: PluginManager
     processes: ProcessService
+    background_media: BackgroundMediaService | None = None
     dev_channel: DevChannelService | None = None  # 按需启动的开发者通道，未开启时为 None
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
@@ -274,6 +276,7 @@ class ApplicationContext:
                 self.game,
                 self.connector,
                 self.accounts,
+                self.background_media,
                 self.http,
             )
             for resource in resources:
@@ -347,6 +350,9 @@ def create_application(
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建")
+
+        background_media = BackgroundMediaService()
+        created.append(background_media)
 
         logger.info("正在初始化账户服务")
         accounts = AccountManager(
@@ -472,6 +478,7 @@ def create_application(
         connector=connector,
         plugins=plugins,
         processes=processes,
+        background_media=background_media,
         dev_channel=dev_channel,
     )
 
