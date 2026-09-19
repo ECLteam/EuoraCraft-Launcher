@@ -9,12 +9,9 @@
 #   - test_ui_defaults_start_collapsed_with_full_background_brightness() -> None
 #   - test_launcher_network_defaults_are_bounded() -> None
 #   - test_game_defaults_use_full_instance_isolation() -> None
-#   - test_loading_config_removes_legacy_launcher_metadata(tmp_path) -> None
 # ============================================================
 
-import json
-
-from ECL.utils.config import ConfigStore, default_config
+from ECL.utils.config import default_config
 
 
 def test_ui_defaults_start_collapsed_with_full_background_brightness() -> None:
@@ -44,28 +41,3 @@ def test_game_defaults_use_full_instance_isolation() -> None:
     assert game_config["prefer_high_performance_gpu"] is False
     assert game_config["use_java_exe"] is False
     assert game_config["disable_crash_analysis"] is False
-
-
-def test_loading_config_removes_legacy_launcher_metadata(tmp_path) -> None:
-    setting_path = tmp_path / "setting.json"
-    setting_path.write_text(
-        json.dumps(
-            {
-                "launcher": {
-                    "debug": False,
-                    "version": "1.4.2-alpha.3+20260906",
-                    "version_type": "alpha",
-                },
-                "game": {
-                    "minecraft_paths": [{"name": "默认路径", "path": str(tmp_path / ".minecraft")}],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    loaded = ConfigStore(tmp_path).get_config()
-    persisted = json.loads(setting_path.read_text(encoding="utf-8"))
-
-    assert loaded["launcher"] == {"debug": False}
-    assert persisted["launcher"] == {"debug": False}

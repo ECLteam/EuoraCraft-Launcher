@@ -151,27 +151,6 @@ class ConfigStore:
             game_config["last_manage_path"] = str(minecraft_path)
         return True
 
-    @staticmethod
-    def _strip_legacy_launcher_metadata(config_data: dict[str, Any]) -> bool:
-        """
-        清除早期版本错误持久化的启动器构建元数据。
-
-        版本号和发布通道由运行时构建信息提供，不属于用户设置。读取旧配置时
-        立即迁移，避免前端读写设置后继续保留这两个过期字段。
-
-        :param config_data: 待迁移的完整配置对象
-        :return: 是否移除了旧字段
-        """
-        launcher_config = config_data.get("launcher")
-        if not isinstance(launcher_config, dict):
-            return False
-        removed = False
-        for key in ("version", "version_type"):
-            if key in launcher_config:
-                launcher_config.pop(key)
-                removed = True
-        return removed
-
     def _initialize_file(self) -> None:
         # 创建数据目录，并在首次启动时写入默认配置。
         self.data_path.mkdir(parents=True, exist_ok=True)
@@ -197,8 +176,6 @@ class ConfigStore:
             if not isinstance(loaded, dict):
                 raise ValueError("配置文件根节点必须是对象")
             needs_write = self._ensure_default_minecraft_path(loaded)
-            if self._strip_legacy_launcher_metadata(loaded):
-                needs_write = True
             if needs_write:
                 self._write_config(loaded)
             return loaded
