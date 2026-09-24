@@ -29,11 +29,13 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit, urlunsplit
 
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
@@ -78,6 +80,16 @@ class _Session:
         self.event_unsubscribers: dict[str, Callable[[], None]] = {}  # 事件名到退订函数的映射
         self.frontend_subscribed: set[str] = set()  # 已订阅的前端事件名集合
         self.frontend_unsubscribers: dict[str, list[Callable[[], None]]] = {}  # 前端事件名到退订函数列表
+        self.preview_nonces: set[str] = set()  # 当前连接创建的预览会话，断开后立即失效
+
+
+@dataclass(frozen=True, slots=True)
+class _PreviewSession:
+    """保存一次受控预览会话的来源、随机数与过期时间。"""
+
+    nonce: str
+    parent_origin: str
+    expires_at: float
 
 
 class _ChannelLogHandler(logging.Handler):
@@ -115,6 +127,8 @@ class DevChannelService:
     max_payload_bytes = 1_048_576
     discovery_filename = "dev_channel.json"
     log_history_limit = 500
+    preview_session_limit = 8
+    preview_session_ttl_seconds = 300
     event_prefix_whitelist = ("plugin:", "game:", "launcher:", "process:", "config:", "accounts:")
 
     def __init__(
@@ -156,6 +170,7 @@ class DevChannelService:
         self._log_history: deque[dict[str, Any]] = deque(maxlen=self.log_history_limit)  # 最近日志缓存
         self._sessions: set[_Session] = set()  # 已通过鉴权的连接会话
         self._pending_sends: set[asyncio.Task[None]] = set()  # 进行中的通知发送任务，防止任务被提前回收
+        self._preview_sessions: dict[str, _PreviewSession] = {}  # nonce 到受控 iframe 会话的映射
         self._closed = False  # 服务是否已关闭（用于幂等）
         self._methods: dict[str, Callable[[_Session, dict[str, Any]], Any]] = {
             "launcher.info": self._method_launcher_info,
@@ -174,6 +189,8 @@ class DevChannelService:
             "frontend.invoke": self._method_frontend_invoke,
             "frontend.subscribe": self._method_frontend_subscribe,
             "frontend.unsubscribe": self._method_frontend_unsubscribe,
+            "preview.session.create": self._method_preview_session_create,
+            "preview.session.close": self._method_preview_session_close,
         }
         self._frontend_handlers: dict[str, Callable[..., Any]] = {}  # 启动器前端命令表，装入后供预览调用
 
@@ -328,6 +345,9 @@ class DevChannelService:
         session.frontend_unsubscribers.clear()
         session.frontend_subscribed.clear()
         session.log_subscribed = False
+        for nonce in session.preview_nonces:
+            self._preview_sessions.pop(nonce, None)
+        session.preview_nonces.clear()
 
     async def _handle(self, websocket: ServerConnection) -> None:
         # 完成鉴权后循环处理请求信封，断开时统一退订。
@@ -369,7 +389,8 @@ class DevChannelService:
             return None
         base = self._frontend_dist.resolve()
         index = base / "index.html"
-        rel = unquote(request_path).split("?", 1)[0].lstrip("/")
+        parsed_request = urlsplit(request_path)
+        rel = unquote(parsed_request.path).lstrip("/")
         if not rel:
             rel = "index.html"
         target = (base / rel).resolve()
@@ -380,29 +401,71 @@ class DevChannelService:
         if target.is_file():
             if target == index:
                 # 入口页需注入连接信息；路径为 / 或 /index.html 时都命中此处。
-                return HTTPStatus.OK.value, self._injected_index(), "text/html; charset=utf-8"
+                return (
+                    HTTPStatus.OK.value,
+                    self._injected_index(self._preview_session(parsed_request.query)),
+                    "text/html; charset=utf-8",
+                )
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             return HTTPStatus.OK.value, target.read_bytes(), content_type
         # 带扩展名的缺包资源返回 404，无扩展名路径按页面路由回退到入口。
         if Path(rel).suffix:
             return HTTPStatus.NOT_FOUND.value, b"not found", "text/plain; charset=utf-8"
         if index.is_file():
-            return HTTPStatus.OK.value, self._injected_index(), "text/html; charset=utf-8"
+            return (
+                HTTPStatus.OK.value,
+                self._injected_index(self._preview_session(parsed_request.query)),
+                "text/html; charset=utf-8",
+            )
         return None
 
-    def _injected_index(self) -> bytes:
+    def _injected_index(self, preview_session: _PreviewSession | None = None) -> bytes:
         # 在内嵌前端入口注入 Dev Channel 连接信息，使嵌入页面无需宿主转发即可连回启动器。
-        if self._index_template is not None:
+        if preview_session is None and self._index_template is not None:
             return self._index_template
         assert self._frontend_dist is not None
         html = (self._frontend_dist / "index.html").read_bytes().decode("utf-8", errors="replace")
         script = f'<script>window.__ECL_DEV_WS__={{port:{self._port},token:"{self._token}"}};</script>'
+        if preview_session is not None:
+            preview_config = json.dumps(
+                {"nonce": preview_session.nonce, "parentOrigin": preview_session.parent_origin}, ensure_ascii=False
+            )
+            script += (
+                "<script>window.__ECL_PREVIEW_SESSION__="
+                f"{preview_config};(function(){{const session=window.__ECL_PREVIEW_SESSION__;"
+                "if(!session||window.parent===window)return;"
+                "const send=(type,data)=>window.parent.postMessage({channel:'ecl-preview',type,nonce:session.nonce,data:data||{}},session.parentOrigin);"
+                "window.addEventListener('message',event=>{const message=event.data;if(event.origin!==session.parentOrigin||event.source!==window.parent||!message||message.channel!=='ecl-preview'||message.nonce!==session.nonce||message.type!=='connect')return;send('connected',{path:window.location.pathname});});"
+                "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>send('ready'));else send('ready');"
+                "}})();</script>"
+            )
         if "</head>" in html:
             html = html.replace("</head>", script + "</head>", 1)
         else:
             html += script
-        self._index_template = html.encode("utf-8")
-        return self._index_template
+        rendered = html.encode("utf-8")
+        if preview_session is None:
+            self._index_template = rendered
+        return rendered
+
+    def _preview_session(self, query: str) -> _PreviewSession | None:
+        """
+        从 iframe 请求查询参数解析仍有效的预览会话。
+
+        过期、格式异常或已关闭的 nonce 都不注入桥接脚本，普通前端托管请求继续保持
+        原有行为；这样链接泄露后也不能无限期获得父窗口通信权限。
+        """
+
+        nonce = parse_qs(query).get("eclPreviewSession", [""])[0]
+        if not isinstance(nonce, str):
+            return None
+        session = self._preview_sessions.get(nonce)
+        if session is None:
+            return None
+        if session.expires_at <= monotonic():
+            self._preview_sessions.pop(nonce, None)
+            return None
+        return session
 
     async def _authenticate(self, websocket: ServerConnection) -> bool:
         # 等待首条鉴权消息并校验令牌，失败时回复错误信封并断开。
@@ -570,6 +633,89 @@ class DevChannelService:
             session.frontend_subscribed.discard(event)
             unsubscribed.append(event)
         return {"unsubscribed": unsubscribed}
+
+    def _method_preview_session_create(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        为一个工作台 iframe 创建短生命周期、来源绑定的预览会话。
+
+        开发工具已通过 Dev Channel token 鉴权，但 iframe 仍必须携带独立 nonce 并只向
+        请求方声明的本地工作台来源发送受限消息。会话随 websocket 断开、显式关闭或
+        超时失效，返回值不包含令牌、DOM、账户或插件运行数据。
+
+        :param session: 已鉴权的 Dev Channel 会话
+        :param params: 必须包含 parentOrigin 的预览会话参数
+        :return: nonce、过期时间和带会话参数的启动器前端 URL
+        :raises DevChannelError: 前端未托管、来源非法或会话数量已达上限时抛出
+        """
+
+        if self.frontend_url is None:
+            raise DevChannelError("NOT_READY", "启动器前端预览尚未就绪")
+        parent_origin = self._preview_parent_origin(params)
+        self._purge_preview_sessions()
+        if len(self._preview_sessions) >= self.preview_session_limit:
+            raise DevChannelError("NOT_READY", "预览会话数量已达上限")
+        nonce = secrets.token_urlsafe(24)
+        preview_session = _PreviewSession(
+            nonce=nonce,
+            parent_origin=parent_origin,
+            expires_at=monotonic() + self.preview_session_ttl_seconds,
+        )
+        self._preview_sessions[nonce] = preview_session
+        session.preview_nonces.add(nonce)
+        parsed_url = urlsplit(self.frontend_url)
+        preview_url = urlunsplit(
+            (parsed_url.scheme, parsed_url.netloc, parsed_url.path, urlencode({"eclPreviewSession": nonce}), "")
+        )
+        return {
+            "nonce": nonce,
+            "url": preview_url,
+            "expiresInSeconds": self.preview_session_ttl_seconds,
+        }
+
+    def _method_preview_session_close(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        显式关闭当前连接创建的预览会话。
+
+        :param session: 已鉴权的 Dev Channel 会话
+        :param params: 必须包含本连接创建的 nonce
+        :return: 已关闭的 nonce
+        :raises DevChannelError: nonce 缺失或不属于当前连接时抛出
+        """
+
+        nonce = self._require_param_str(params, "nonce")
+        if nonce not in session.preview_nonces:
+            raise DevChannelError("INVALID_PARAMS", "预览会话不存在或不属于当前连接")
+        session.preview_nonces.discard(nonce)
+        self._preview_sessions.pop(nonce, None)
+        return {"nonce": nonce}
+
+    @staticmethod
+    def _preview_parent_origin(params: dict[str, Any]) -> str:
+        """
+        校验工作台父页面来源，只接受本机 HTTP(S) 或 tauri://localhost。
+
+        :param params: preview.session.create 的参数对象
+        :return: 无路径、查询和片段的标准化来源
+        :raises DevChannelError: 来源不是安全的本地开发工具 origin 时抛出
+        """
+
+        origin = DevChannelService._require_param_str(params, "parentOrigin")
+        parsed = urlsplit(origin)
+        has_path = parsed.path not in {"", "/"} or bool(parsed.query) or bool(parsed.fragment)
+        loopback_hosts = {"127.0.0.1", "localhost", "tauri.localhost"}
+        is_local_http = parsed.scheme in {"http", "https"} and parsed.hostname in loopback_hosts
+        is_tauri = parsed.scheme == "tauri" and parsed.netloc == "localhost"
+        if has_path or not (is_local_http or is_tauri):
+            raise DevChannelError("INVALID_PARAMS", "parentOrigin 必须是本机工作台来源")
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+    def _purge_preview_sessions(self) -> None:
+        """清除过期会话，避免不再使用的 nonce 占用有限预览槽位。"""
+
+        now = monotonic()
+        expired_nonces = [nonce for nonce, item in self._preview_sessions.items() if item.expires_at <= now]
+        for nonce in expired_nonces:
+            self._preview_sessions.pop(nonce, None)
 
     def _method_launcher_info(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 返回启动器基本信息，供工具箱展示当前接入的运行实例。

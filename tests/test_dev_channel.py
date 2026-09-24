@@ -37,6 +37,9 @@
 #   - test_frontend_serving_blocks_traversal(tmp_path) -> None
 #   - test_frontend_serving_disabled_without_dist(tmp_path) -> None
 #   - test_launcher_info_reports_frontend_url(tmp_path) -> None
+#   - test_preview_session_injects_origin_bound_bridge(tmp_path) -> None
+#   - test_preview_session_rejects_nonlocal_parent_origin(tmp_path) -> None
+#   - test_preview_session_close_removes_bridge_injection(tmp_path) -> None
 # ============================================================
 
 """验证开发者通道服务的鉴权、方法分发、日志与事件订阅能力。"""
@@ -568,6 +571,82 @@ async def test_launcher_info_reports_frontend_url(tmp_path) -> None:
         try:
             reply = await _request(websocket, 22, "launcher.info")
             assert reply["data"]["frontendUrl"] == f"http://127.0.0.1:{service.port}/"
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
+
+
+async def test_preview_session_injects_origin_bound_bridge(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            reply = await _request(
+                websocket,
+                23,
+                "preview.session.create",
+                {"parentOrigin": "http://tauri.localhost"},
+            )
+            assert reply["ok"] is True
+            preview = reply["data"]
+            assert preview["url"].startswith(f"http://127.0.0.1:{service.port}/?eclPreviewSession=")
+            assert preview["expiresInSeconds"] == service.preview_session_ttl_seconds
+
+            with httpx.Client(trust_env=False) as client:
+                response = client.get(preview["url"])
+            assert response.status_code == 200
+            assert "window.__ECL_PREVIEW_SESSION__" in response.text
+            assert preview["nonce"] in response.text
+            assert '"parentOrigin": "http://tauri.localhost"' in response.text
+            assert "channel:'ecl-preview'" in response.text
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
+
+
+async def test_preview_session_rejects_nonlocal_parent_origin(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            reply = await _request(
+                websocket,
+                24,
+                "preview.session.create",
+                {"parentOrigin": "https://example.com"},
+            )
+            assert reply["ok"] is False
+            assert reply["error"]["code"] == "INVALID_PARAMS"
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
+
+
+async def test_preview_session_close_removes_bridge_injection(tmp_path) -> None:
+    service = _make_service(tmp_path, frontend_dist=_make_frontend_dist(tmp_path))
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            created = await _request(
+                websocket,
+                25,
+                "preview.session.create",
+                {"parentOrigin": "http://tauri.localhost"},
+            )
+            nonce = created["data"]["nonce"]
+            closed = await _request(websocket, 26, "preview.session.close", {"nonce": nonce})
+            assert closed["data"] == {"nonce": nonce}
+
+            with httpx.Client(trust_env=False) as client:
+                response = client.get(created["data"]["url"])
+            assert response.status_code == 200
+            assert "window.__ECL_PREVIEW_SESSION__" not in response.text
         finally:
             await websocket.close()
     finally:
