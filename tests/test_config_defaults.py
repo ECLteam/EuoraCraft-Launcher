@@ -21,6 +21,11 @@ def test_ui_defaults_start_collapsed_with_full_background_brightness() -> None:
     assert ui_config["theme"]["primary_color"] == "#5B6FF5"
     assert ui_config["theme"]["background_opacity"] == 1.0
     assert ui_config["background"]["opacity"] == 1.0
+    appearance = ui_config["theme"]["appearance"]
+    assert appearance["font_family"] == ""
+    assert appearance["sidebar_font_family"] == ""
+    assert appearance["terminal_font_family"] == ""
+    assert appearance["log_font_family"] == ""
 
 
 def test_launcher_network_defaults_are_bounded() -> None:
