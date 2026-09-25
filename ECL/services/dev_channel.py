@@ -85,7 +85,9 @@ class _Session:
 
 @dataclass(frozen=True, slots=True)
 class _PreviewSession:
-    """保存一次受控预览会话的来源、随机数与过期时间。"""
+    """
+    保存一次受控预览会话的来源、随机数与过期时间。
+    """
 
     nonce: str
     parent_origin: str
@@ -710,7 +712,9 @@ class DevChannelService:
         return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
     def _purge_preview_sessions(self) -> None:
-        """清除过期会话，避免不再使用的 nonce 占用有限预览槽位。"""
+        """
+        清除过期会话，避免不再使用的 nonce 占用有限预览槽位。
+        """
 
         now = monotonic()
         expired_nonces = [nonce for nonce, item in self._preview_sessions.items() if item.expires_at <= now]
