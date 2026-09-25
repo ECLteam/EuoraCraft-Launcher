@@ -32,48 +32,52 @@
 
 ## 介绍
 
-**EuoraCraft Launcher**(ECL) 是一款现代化的 Minecraft 第三方启动器，采用 **Python + Tauri (pytauri)** 构建，前端使用 **Vue 3 + TypeScript**。只需编写少量代码即可通过插件系统扩展启动器功能，满足个性化需求。
+**EuoraCraft Launcher**（ECL）是一款现代化、可扩展的 Minecraft 第三方启动器。它面向希望管理多个游戏实例、账户与社区资源的玩家，并提供联机和插件扩展能力。
 
 ---
 
-## 特性
+## 站点与支持
+
+| 入口 | 地址 |
+|:---|:---|
+| 主站 | [eclteam.top](https://www.eclteam.top) |
+| 文档站 | [docs.eclteam.top](https://docs.eclteam.top) |
+| 下载最新版本 | [GitHub Releases](https://github.com/ECLTeam/EuoraCraft-Launcher/releases) |
+| 问题反馈与建议 | [GitHub Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) |
+
+首次使用、常见问题和功能说明请参阅文档站；正式版本请从 GitHub Releases 获取。
+
+---
+
+## 功能概览
 
 | 特性 | 说明 |
 |:----|:-----|
-| 插件系统 | 后端插件、主题、联机扩展、认证、崩溃分析等扩展点，使用声明式权限模型控制插件能力 |
-| 现代化 UI | Vue 3 + Naive UI + Tailwind CSS，支持亮暗主题、自定义外观和主题设计器 |
-| 多账户支持 | 微软账户登录 + Yggdrasil 认证 + 离线模式与皮肤衣柜 |
-| 实例管理 | 多版本实例隔离，独立配置，模组/资源包/世界/服务器/截图管理 |
-| 联机大厅 | 内置 EasyTier 虚拟网络与联机房间管理，支持插件扩展联机协议 |
-| 国际化 | 内置 vue-i18n，支持多语言 |
-| 版本发布 | 基于 GitHub Releases 发布安装包，由用户从 Release 页面手动下载更新 |
-| 安全可靠 | 插件在宿主进程内执行，通过声明式权限限制访问范围，GPL-3.0 开源协议 |
+| 多账户与皮肤 | 支持 Microsoft、Yggdrasil 和离线账户，并提供皮肤与披风管理 |
+| 实例与内容管理 | 隔离管理多个 Minecraft 实例及其版本、模组、资源包、存档、服务器和截图 |
+| 社区资源 | 支持浏览、下载和管理第三方社区资源；使用前请确认资源来源与许可证 |
+| 联机功能 | 基于 EasyTier 提供联机房间与虚拟网络能力，并支持联机协议扩展 |
+| 插件扩展 | 提供插件生命周期、路由、账户认证、启动钩子、崩溃分析和联机扩展等能力，并使用声明式权限控制插件访问范围 |
+| 更新与诊断 | 提供更新检查、受支持渠道下的自动更新，以及本地崩溃报告与日志工具 |
+| 本地优先 | ECLTeam 不运营用于收集、存储或分析用户数据的远程服务器；启动器数据由用户保存在本地设备上 |
 
 ---
 
-## 合作 / 相关社区项目
+## 合作项目
 
-- [Qomicex.Tauri（QML）](https://github.com/Qomicex-Public/Qomicex.Tauri/) — QML 维护的 Tauri 第三方 Minecraft 启动器，与 EuoraCraft Launcher 共用联机节点，并兼容 SCF 拓展协议实现互相联机。
+- [Qomicex.Tauri（QML）](https://github.com/Qomicex-Public/Qomicex.Tauri/) — 由 QML 社区维护的 Tauri 第三方 Minecraft 启动器项目。
+
+---
+
+## 第三方服务与资源
+
+使用 Microsoft/Mojang 登录、游戏下载、社区资源、镜像源或联机服务时，您的设备会直接与相应第三方服务通信。相关内容与服务由各自提供方负责，请遵守其条款、隐私政策和许可证。
 
 ---
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
-
-提交信息遵循 Conventional Commits 规范。发行版本由 Git 标签触发，beta 标签格式、推送顺序与验收要求见
-[发布流程](docs/release-process.md)。
-
-```bash
-# 开发环境
-pip install -e ".[dev]"
-
-# 代码检查
-ruff check ECL
-
-# 运行测试
-pytest
-```
+欢迎通过 [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) 提交问题、功能建议或安全反馈，也欢迎提交 Pull Request。涉及使用与功能的问题，请优先查阅[文档站](https://docs.eclteam.top)。
 
 ---
 
@@ -81,6 +85,7 @@ pytest
 
 - [pytauri](https://github.com/pytauri/pytauri) — Python + Tauri 桌面框架
 - [Naive UI](https://github.com/tusen-ai/naive-ui) — Vue 3 组件库
+- [EasyTier](https://easytier.cn/) — 虚拟网络与联机能力
 - 所有贡献者和社区支持者
 
 ---
