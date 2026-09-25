@@ -69,15 +69,18 @@ class Adapter:
     def _build_config(self) -> dict[str, Any]:
         # 根据配置拼装传给 Tauri 的应用配置结构。
         tauri_config = self.config.get("tauri", {})
+        ui_config = self.config.get("ui")
+        theme_config = ui_config.get("theme") if isinstance(ui_config, dict) else None
+        is_native_chrome = isinstance(theme_config, dict) and theme_config.get("window_chrome") == "native"
         return {
             "version": self.launcher_version,
             "build": {"frontendDist": tauri_config.get("frontenddist", "frontend/dist")},
             "app": {
                 "windows": [
                     {
-                        "decorations": False,
-                        "transparent": True,
-                        "shadow": False,
+                        "decorations": is_native_chrome,
+                        "transparent": not is_native_chrome,
+                        "shadow": is_native_chrome,
                         "title": tauri_config.get("title", "EuoraCraft Launcher"),
                         "width": tauri_config.get("width", 900),
                         "height": tauri_config.get("height", 600),

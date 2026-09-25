@@ -70,6 +70,7 @@
 #   - test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None
 #   - test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None
 #   - test_adapter_main_window_is_visible_without_native_shadow() -> None
+#   - test_adapter_main_window_chrome_follows_ui_setting(window_chrome, is_native) -> None
 #   - test_focus_window_restores_and_focuses_webview(tmp_path) -> None
 #   - test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None
 #   - test_microsoft_authorization_event_focuses_before_forwarding(tmp_path, monkeypatch) -> None
@@ -98,6 +99,8 @@ from importlib import import_module
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+
+import pytest
 
 pytauri_module = ModuleType("pytauri")
 pytauri_module.__path__ = []  # type: ignore[attr-defined]
@@ -925,9 +928,27 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
     window_config = adapter._build_config()["app"]["windows"][0]
 
     assert window_config["visible"] is True
+    assert window_config["decorations"] is False
+    assert window_config["transparent"] is True
     assert window_config["shadow"] is False
     assert window_config["minWidth"] == 960
     assert window_config["minHeight"] == 600
+
+
+@pytest.mark.parametrize(
+    ("window_chrome", "is_native"),
+    [("custom", False), ("native", True), ("unsupported", False), (None, False)],
+)
+def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None, is_native: bool) -> None:
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": window_chrome}}}
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert window_config["decorations"] is is_native
+    assert window_config["transparent"] is not is_native
+    assert window_config["shadow"] is is_native
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:

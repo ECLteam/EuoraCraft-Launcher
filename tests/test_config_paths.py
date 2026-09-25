@@ -26,11 +26,13 @@ def test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path)
     assert config["game"]["minecraft_paths"] == [{"name": "默认路径", "path": str(minecraft_path)}]
     assert config["game"]["last_install_path"] == str(minecraft_path)
     assert config["game"]["last_manage_path"] == str(minecraft_path)
+    assert config["ui"]["theme"]["window_chrome"] == "custom"
     assert minecraft_path.is_dir()
     assert minecraft_path.is_absolute()
 
     saved_config = json.loads((data_path / "setting.json").read_text(encoding="utf-8"))
     assert saved_config["game"]["minecraft_paths"] == [{"name": "默认路径", "path": str(minecraft_path)}]
+    assert saved_config["ui"]["theme"]["window_chrome"] == "custom"
 
 
 def test_existing_empty_game_paths_are_initialized(tmp_path) -> None:
