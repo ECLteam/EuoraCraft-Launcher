@@ -10,6 +10,9 @@
 #       - run() -> None — 启动 Tauri 前端。
 # ============================================================
 
+from __future__ import annotations
+
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +43,7 @@ class Adapter:
         self.events = context.events
         self.resource_path: Path = launcher.resource_path  # 前端等只读资源目录
         self.config: dict[str, Any] = launcher.config  # 配置
+        self._active_window_chrome = "custom"
         self.launcher_version: str = launcher.launcher_version  # 启动器版本
         self.frontend_api_instance = FrontendApi(context)
 
@@ -51,6 +55,7 @@ class Adapter:
         self._register_commands()
         self._register_events()
         tauri_config = self._build_config()
+        self.context.state.active_window_chrome = self._active_window_chrome
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
             self.logger.debug("正在创建 Tauri 窗口")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
@@ -67,11 +72,26 @@ class Adapter:
         self.logger.info("前端已退出")
 
     def _build_config(self) -> dict[str, Any]:
-        # 根据配置拼装传给 Tauri 的应用配置结构。
+        """
+        根据启动配置生成主窗口参数，并记录本次运行的有效窗口模式。
+
+        系统边缘模式仅在 Windows 生效；其他平台按纯自绘创建窗口，避免改变
+        原有的插件窗口及跨平台外观。
+
+        :return: 传给 Tauri 的应用配置
+        """
         tauri_config = self.config.get("tauri", {})
         ui_config = self.config.get("ui")
         theme_config = ui_config.get("theme") if isinstance(ui_config, dict) else None
-        is_native_chrome = isinstance(theme_config, dict) and theme_config.get("window_chrome") == "native"
+        preferred_chrome = theme_config.get("window_chrome") if isinstance(theme_config, dict) else None
+        if preferred_chrome == "native":
+            self._active_window_chrome = "native"
+        elif preferred_chrome == "system_shadow" and sys.platform == "win32":
+            self._active_window_chrome = "system_shadow"
+        else:
+            self._active_window_chrome = "custom"
+        is_native_chrome = self._active_window_chrome == "native"
+        has_system_edge = self._active_window_chrome in {"system_shadow", "native"}
         return {
             "version": self.launcher_version,
             "build": {"frontendDist": tauri_config.get("frontenddist", "frontend/dist")},
@@ -79,8 +99,8 @@ class Adapter:
                 "windows": [
                     {
                         "decorations": is_native_chrome,
-                        "transparent": not is_native_chrome,
-                        "shadow": is_native_chrome,
+                        "transparent": not has_system_edge,
+                        "shadow": has_system_edge,
                         "title": tauri_config.get("title", "EuoraCraft Launcher"),
                         "width": tauri_config.get("width", 900),
                         "height": tauri_config.get("height", 600),

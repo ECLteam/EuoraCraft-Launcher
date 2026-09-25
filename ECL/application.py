@@ -221,6 +221,7 @@ class ApplicationState:
     :param resource_path: 打包资源或源码资源所在目录
     :param data_path: 后端持久化数据目录
     :param is_frozen: 当前是否运行于打包后的可执行文件
+    :param active_window_chrome: 主窗口创建时固定的有效窗口模式
     """
 
     app_path: Path
@@ -231,6 +232,7 @@ class ApplicationState:
     launcher_version_type: str = __version_type__
     debug: bool = False
     config: dict[str, Any] = field(default_factory=dict)
+    active_window_chrome: str = "custom"
 
 
 @dataclass(frozen=True)

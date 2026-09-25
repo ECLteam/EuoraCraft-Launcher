@@ -27,6 +27,9 @@
 #       - debug_devtools_open(body) -> dict[str, Any] — 打开 WebView 开发者工具（F12 调试窗口）。
 # ============================================================
 
+from __future__ import annotations
+
+import sys
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -111,9 +114,12 @@ class SystemHandlers(_FrontendState):
 
     async def launcher_info(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        获取启动器信息。
+        获取启动器信息及本次运行的主窗口模式。
+
+        窗口模式是创建窗口时固定的快照，设置页保存新偏好后不会提前改变它。
 
         :param body: 经过边界校验的 IPC 请求数据
+        :return: 版本、调试状态及主窗口模式信息
         """
         return {
             "success": True,
@@ -121,6 +127,8 @@ class SystemHandlers(_FrontendState):
                 "version": self.launcher.launcher_version or "",
                 "version_type": self.launcher.launcher_version_type or "release",
                 "debug": bool(self.launcher.debug),
+                "active_window_chrome": self.launcher.active_window_chrome,
+                "system_shadow_supported": sys.platform == "win32",
             },
         }
 

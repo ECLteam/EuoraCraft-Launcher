@@ -418,6 +418,8 @@ def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
 
 def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     api = _build_api(tmp_path)
+    api.launcher.active_window_chrome = "system_shadow"
+    api.launcher.config["ui"] = {"theme": {"window_chrome": "custom"}}
 
     result = asyncio.run(api.launcher_info({}))
 
@@ -425,6 +427,7 @@ def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     assert result["data"]["debug"] is True
     assert result["data"]["version"] == "1.4.2-alpha.3+20260906"
     assert result["data"]["version_type"] == "alpha"
+    assert result["data"]["active_window_chrome"] == "system_shadow"
 
 
 def test_info_card_delegates_to_registered_service(tmp_path) -> None:
@@ -935,20 +938,27 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
     assert window_config["minHeight"] == 600
 
 
-@pytest.mark.parametrize(
-    ("window_chrome", "is_native"),
-    [("custom", False), ("native", True), ("unsupported", False), (None, False)],
-)
-def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None, is_native: bool) -> None:
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+@pytest.mark.parametrize("window_chrome", ["custom", "system_shadow", "native", "unsupported", None])
+def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None, platform: str, monkeypatch) -> None:
+    monkeypatch.setattr(import_module("ECL.adapters.tauri"), "sys", SimpleNamespace(platform=platform))
     adapter = object.__new__(Adapter)
     adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": window_chrome}}}
     adapter.launcher_version = "0.0.1-alpha"
 
     window_config = adapter._build_config()["app"]["windows"][0]
 
-    assert window_config["decorations"] is is_native
-    assert window_config["transparent"] is not is_native
-    assert window_config["shadow"] is is_native
+    expected_mode = (
+        "native"
+        if window_chrome == "native"
+        else "system_shadow"
+        if window_chrome == "system_shadow" and platform == "win32"
+        else "custom"
+    )
+    assert adapter._active_window_chrome == expected_mode
+    assert window_config["decorations"] is (expected_mode == "native")
+    assert window_config["transparent"] is (expected_mode == "custom")
+    assert window_config["shadow"] is (expected_mode != "custom")
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
