@@ -462,7 +462,8 @@ class LaunchCoordinator(_GameState):
         use_console_java = bool(use_java_exe)
         crash_analysis_disabled = bool(disable_crash_analysis)
         normalized_priority = self._normalize_process_priority(process_priority)
-        context = self._context(path, self._normalize_source(source))
+        normalized_source = self._normalize_source(source)
+        context = self._context(path, normalized_source)
         isolated = self.resolve_version_isolation(path, version_name, version_isolation)
         # 插件启动钩子需要访问最终游戏目录，提前计算以避免在命令构建后再移动。
         game_directory = path / "versions"
@@ -636,6 +637,37 @@ class LaunchCoordinator(_GameState):
                     self._active_downloads["__launch__"] = downloader
                 try:
                     await downloader.run()
+                    failed_entries = set(downloader.failed_entries)
+                    if failed_entries and not cancel_event.is_set():
+                        fallback_entries = await to_thread.run_sync(
+                            self._fallback_download_entries,
+                            path,
+                            version_name,
+                            normalized_source,
+                            failed_entries,
+                            getattr(downloader, "local_failed_paths", set()),
+                        )
+                        if fallback_entries and not cancel_event.is_set():
+                            completed_count = len(downloader.completed_entries)
+                            self._emit_launch_progress("downloading", "首选下载源失败，正在尝试备用源", 55)
+                            fallback_downloader = self._downloader_factory(
+                                fallback_entries,
+                                progress_callback=lambda done, total: self._emit_launch_progress(
+                                    "downloading",
+                                    "正在从备用源补全游戏文件",
+                                    55 + int((completed_count + done) * 15 / len(download_list)),
+                                ),
+                            )
+                            with self._lock:
+                                self._active_downloads["__launch__"] = fallback_downloader
+                            await fallback_downloader.run()
+                            fallback_failed_paths = {file_path for _, file_path in fallback_downloader.failed_entries}
+                            recovered_paths = {file_path for _, file_path in fallback_entries} - fallback_failed_paths
+                            failed_entries = {
+                                (url, file_path)
+                                for url, file_path in failed_entries
+                                if file_path not in recovered_paths
+                            }
                 except Exception as exc:
                     if cancel_event.is_set():
                         raise GameServiceError("启动已取消", "LAUNCH_CANCELLED") from exc
@@ -645,10 +677,10 @@ class LaunchCoordinator(_GameState):
                         self._active_downloads.pop("__launch__", None)
                 if cancel_event.is_set():
                     raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
-                if downloader.failed_entries:
-                    failed_url, failed_path = next(iter(downloader.failed_entries))
+                if failed_entries:
+                    failed_url, failed_path = next(iter(failed_entries))
                     raise GameServiceError(
-                        f"有 {len(downloader.failed_entries)} 个游戏文件补全失败，例如 {failed_path}（{failed_url}）",
+                        f"有 {len(failed_entries)} 个游戏文件补全失败，例如 {failed_path}（{failed_url}）",
                         "GAME_DOWNLOAD_FAILED",
                     )
 

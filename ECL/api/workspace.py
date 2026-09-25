@@ -242,7 +242,11 @@ class WorkspaceHandlers(_FrontendState):
         return await self._validated_call(
             InstanceTarget,
             body,
-            lambda request: self.game.repair_instance_files(request.game_path, request.version_id),
+            lambda request: self.game.repair_instance_files(
+                request.game_path,
+                request.version_id,
+                source=str((self._get_effective_config().get("download") or {}).get("mirror_source") or "official"),
+            ),
         )
 
     @_ipc_handler("INSTANCE_DELETE_FAILED")

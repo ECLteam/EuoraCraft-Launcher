@@ -52,6 +52,7 @@
 #   - test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -> None
 #   - test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) -> None
 #   - test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
+#   - test_launch_retries_only_failed_game_file_from_alternate_source(tmp_path, monkeypatch) -> None
 #   - test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None
 #   - test_uninstall_version_only_removes_selected_version(tmp_path) -> None
 #   - test_ecl_config_read_write_and_patch(tmp_path) -> None
@@ -1376,6 +1377,63 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
 
     assert error.error_code == "LAUNCH_CANCELLED"
     assert str(error) == "启动已取消"
+
+
+def test_launch_retries_only_failed_game_file_from_alternate_source(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    first_path = str(tmp_path / "first.jar")
+    failed_path = str(tmp_path / "second.jar")
+    primary_files = [
+        ("https://bmclapi.example/first.jar", first_path),
+        ("https://bmclapi.example/second.jar", failed_path),
+    ]
+    alternate_files = [
+        ("https://official.example/first.jar", first_path),
+        ("https://official.example/second.jar", failed_path),
+    ]
+    download_lists = []
+
+    class PartialDownloader(FakeDownloader):
+        def __init__(self, download_list, **kwargs):
+            super().__init__(download_list, **kwargs)
+            download_lists.append(download_list)
+
+        async def run(self):
+            if len(download_lists) == 1:
+                self.completed_entries.add(primary_files[0])
+                self.failed_entries.add(primary_files[1])
+            else:
+                self.completed_entries.add(alternate_files[1])
+            if self.progress_callback:
+                self.progress_callback(len(self.completed_entries), len(self.download_list))
+
+    service = _build_service(
+        downloader_factory=PartialDownloader,
+        instances_manager=FakeInstances(),
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda _path, source: SimpleNamespace(
+            files_checker=SimpleNamespace(
+                check_files=lambda *_: primary_files if source == "bmclapi" else alternate_files
+            )
+        ),
+    )
+
+    result = asyncio.run(
+        service.launch_instance({"version_id": "1.21.8"}, game_path=game_path, java_path=java_path, source="bmclapi")
+    )
+
+    assert result["instanceId"]
+    assert download_lists == [primary_files, [alternate_files[1]]]
+    service.close()
 
 
 def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> None:

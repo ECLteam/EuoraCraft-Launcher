@@ -350,11 +350,12 @@ class WorkspaceCoordinator:
         在用户确认只读清单后，异步调用 Core 文件补全能力。
         """
         target = self.resolve_instance(game_path, version_id)
+        normalized_source = self._normalize_source(source)
 
         def worker(context: OperationContext) -> dict[str, Any]:
             context.progress(5, "正在准备文件补全")
             context.check_cancelled()
-            core = self._context(target.game_path, source)
+            core = self._context(target.game_path, normalized_source)
             # Core 检查器在修复阶段允许写入；扫描阶段由 inspect_instance_files 保证纯只读。
             import asyncio
 
@@ -368,9 +369,35 @@ class WorkspaceCoordinator:
                     ),
                 )
                 asyncio.run(downloader.run())
-                if downloader.failed_entries:
+                failed_entries = set(downloader.failed_entries)
+                if failed_entries:
+                    context.check_cancelled()
+                    fallback_entries = self._fallback_download_entries(
+                        target.game_path,
+                        target.version_id,
+                        normalized_source,
+                        failed_entries,
+                        getattr(downloader, "local_failed_paths", set()),
+                    )
+                    if fallback_entries:
+                        completed_count = len(downloader.completed_entries)
+                        context.progress(10 + completed_count * 85 / len(download_list), "正在尝试备用下载源")
+                        fallback_downloader = self._downloader_factory(
+                            fallback_entries,
+                            progress_callback=lambda done, total: context.progress(
+                                10 + (completed_count + done) * 85 / len(download_list), "正在从备用源补全实例文件"
+                            ),
+                        )
+                        asyncio.run(fallback_downloader.run())
+                        fallback_failed_paths = {file_path for _, file_path in fallback_downloader.failed_entries}
+                        recovered_paths = {file_path for _, file_path in fallback_entries} - fallback_failed_paths
+                        failed_entries = {
+                            (url, file_path) for url, file_path in failed_entries if file_path not in recovered_paths
+                        }
+                context.check_cancelled()
+                if failed_entries:
                     raise GameServiceError(
-                        f"有 {len(downloader.failed_entries)} 个文件补全失败",
+                        f"有 {len(failed_entries)} 个文件补全失败",
                         "GAME_DOWNLOAD_FAILED",
                     )
             context.progress(100, "文件补全完成")

@@ -11,6 +11,7 @@
 #   - test_launch_request_accepts_memory_lock_and_priority_options() -> None
 #   - test_launch_request_rejects_invalid_process_priority() -> None
 #   - test_normalize_process_priority_falls_back_to_normal() -> None
+#   - test_instance_repair_uses_configured_preferred_download_source() -> None
 #   - test_schematic_preview_accepts_frontend_payload_without_enabled() -> None
 #   - test_schematic_material_manifest_validates_and_routes_payload() -> None
 #   - test_request_schema_contains_every_consolidated_typed_command() -> None
@@ -99,6 +100,24 @@ def test_normalize_process_priority_falls_back_to_normal() -> None:
     assert _GameState._normalize_process_priority("unknown") == "normal"
     assert _GameState._normalize_process_priority(None) == "normal"
     assert _GameState._normalize_process_priority("") == "normal"
+
+
+@pytest.mark.asyncio
+async def test_instance_repair_uses_configured_preferred_download_source() -> None:
+    handler = object.__new__(WorkspaceHandlers)
+    calls = []
+    handler._get_effective_config = lambda: {"download": {"mirror_source": "bmclapi"}}
+    handler.game = SimpleNamespace(
+        resolve_version_isolation=lambda _game_path, _version_id: False,
+        repair_instance_files=lambda game_path, version_id, source: (
+            calls.append((game_path, version_id, source)) or {"operationId": "repair-1", "status": "running"}
+        ),
+    )
+
+    result = await handler.game_instance_files_repair({"game_path": ".minecraft", "version_id": "1.21.1"})
+
+    assert result["success"] is True
+    assert calls[0][2] == "bmclapi"
 
 
 @pytest.mark.asyncio

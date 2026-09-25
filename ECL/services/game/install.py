@@ -14,7 +14,7 @@
 import asyncio
 import json
 import shutil
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,12 +22,55 @@ from uuid import uuid4
 import httpx
 from anyio import to_thread
 
-from .base import GameServiceError, _GameState
+from .base import Downloader, GameServiceError, _GameState
 
 
 class InstallCoordinator(_GameState):
     fabric_api_project = "fabric-api"
     fabric_api_timeout_seconds = 10
+
+    async def _retry_install_downloads(
+        self,
+        task_id: str,
+        game_path: Path,
+        save_name: str,
+        source: str,
+        failed_entries: set[tuple[str, str]],
+        primary_downloader: Downloader,
+        progress_state: dict[str, Any],
+        emit_progress: Callable[[int | None], None],
+    ) -> set[tuple[str, str]]:
+        """
+        只将首选源失败的文件交给备用源，保留已下载文件和任务标识。
+
+        备用源没有不同地址时返回原始失败集合，由安装流程统一报告。
+        """
+        if not failed_entries:
+            return failed_entries
+        fallback_entries = await to_thread.run_sync(
+            self._fallback_download_entries,
+            game_path,
+            save_name,
+            source,
+            failed_entries,
+            getattr(primary_downloader, "local_failed_paths", set()),
+        )
+        if not fallback_entries:
+            return failed_entries
+        progress_state["base_completed"] = len(primary_downloader.completed_entries)
+        self._emit_install_progress(task_id, "download", "首选下载源失败，正在尝试备用源", subtask="download_files")
+        fallback_downloader = self._downloader_factory(
+            fallback_entries,
+            progress_callback=lambda done, total: emit_progress(None),
+            speed_callback=lambda speed_mb: emit_progress(int(speed_mb * 1024 * 1024)),
+        )
+        progress_state["downloader"] = fallback_downloader
+        with self._lock:
+            self._active_downloads[task_id] = fallback_downloader
+        await fallback_downloader.run()
+        fallback_failed_paths = {file_path for _, file_path in fallback_downloader.failed_entries}
+        recovered_paths = {file_path for _, file_path in fallback_entries} - fallback_failed_paths
+        return {(url, file_path) for url, file_path in failed_entries if file_path not in recovered_paths}
 
     def _emit_install_progress(
         self,
@@ -211,21 +254,25 @@ class InstallCoordinator(_GameState):
 
             # 进度事件闭包：同时上报字节/文件进度、文件计数与实时速度。
             # 通过可变容器持有 downloader 引用，避免闭包在赋值前被调用。
-            progress_state: dict[str, Any] = {"downloader": None, "speed": 0}
+            progress_state: dict[str, Any] = {"downloader": None, "speed": 0, "base_completed": None}
 
             def _emit_download_progress(speed: int | None = None) -> None:
                 if speed is not None:
                     progress_state["speed"] = speed
                 downloader = progress_state["downloader"]
+                base_completed = progress_state["base_completed"]
+                is_fallback = base_completed is not None
                 self._emit_install_progress(
                     task_id,
                     "download",
                     f"正在下载 {save_name}",
-                    done=downloader.downloaded_bytes,
-                    total=downloader.total_bytes,
-                    progress_type="bytes" if downloader.use_byte_progress else "files",
-                    total_files=downloader.total_files,
-                    downloaded_files=len(downloader.completed_entries),
+                    done=base_completed + len(downloader.completed_entries)
+                    if is_fallback
+                    else downloader.downloaded_bytes,
+                    total=len(download_list) if is_fallback else downloader.total_bytes,
+                    progress_type="files" if is_fallback or not downloader.use_byte_progress else "bytes",
+                    total_files=len(download_list),
+                    downloaded_files=(base_completed or 0) + len(downloader.completed_entries),
                     speed=progress_state["speed"],
                     subtask="download_files",
                 )
@@ -251,10 +298,21 @@ class InstallCoordinator(_GameState):
                 subtask="download_files",
             )
             await downloader.run()
-            if downloader.failed_entries:
-                failed_url, failed_path = next(iter(downloader.failed_entries))
+            failed_entries = set(downloader.failed_entries)
+            failed_entries = await self._retry_install_downloads(
+                task_id,
+                game_path,
+                save_name,
+                source,
+                failed_entries,
+                downloader,
+                progress_state,
+                _emit_download_progress,
+            )
+            if failed_entries:
+                failed_url, failed_path = next(iter(failed_entries))
                 raise GameServiceError(
-                    f"有 {len(downloader.failed_entries)} 个文件下载失败，例如 {failed_path}（{failed_url}）",
+                    f"有 {len(failed_entries)} 个文件下载失败，例如 {failed_path}（{failed_url}）",
                     "GAME_DOWNLOAD_FAILED",
                 )
             self.logger.info("版本安装完成: %s", save_name)

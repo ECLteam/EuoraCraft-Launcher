@@ -40,6 +40,7 @@ from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 
+from .download_sources import PreferredApiClient, alternate_source
 from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
@@ -269,19 +270,29 @@ class _GameState:
                 self.logger.debug("复用游戏核心: path=%s, source=%s", path, normalized_source)
                 return existing
 
-            api_client = self._api_client_factory(self._api_config(normalized_source))
-            files_checker = FilesChecker(api_client)
-            loader_installer = LoaderInstaller(
-                files_checker,
-                self.instances,
-                path,
-                log_callback=lambda message: self.logger.info("%s", message),
-            )
-            context = _CoreContext(
-                api_client=api_client,
-                files_checker=files_checker,
-                games=GetGames(files_checker, loader_installer, path),
-            )
+            preferred_client = self._api_client_factory(self._api_config(normalized_source))
+            try:
+                alternate_client = self._api_client_factory(self._api_config(alternate_source(normalized_source)))
+            except Exception:
+                preferred_client.close()
+                raise
+            api_client = PreferredApiClient(preferred_client, alternate_client, normalized_source, self.logger)
+            try:
+                files_checker = FilesChecker(api_client)
+                loader_installer = LoaderInstaller(
+                    files_checker,
+                    self.instances,
+                    path,
+                    log_callback=lambda message: self.logger.info("%s", message),
+                )
+                context = _CoreContext(
+                    api_client=api_client,
+                    files_checker=files_checker,
+                    games=GetGames(files_checker, loader_installer, path),
+                )
+            except Exception:
+                api_client.close()
+                raise
             self._contexts[key] = context
             self.logger.debug("创建游戏核心: path=%s, source=%s", path, normalized_source)
             return context
@@ -289,6 +300,42 @@ class _GameState:
     def _query_context(self, source: Any = "official") -> _CoreContext:
         # GetGames 的查询方法仍要求 game_path；查询阶段使用一个不会写入的占位路径。
         return self._context(Path.cwd() / ".minecraft", source)
+
+    def _fallback_download_entries(
+        self,
+        game_path: Path,
+        version_name: str,
+        source: str,
+        failed_entries: set[tuple[str, str]],
+        local_failed_paths: set[str] | None = None,
+    ) -> list[tuple[str, str]]:
+        """
+        为失败文件查找备用源地址，仅返回目标路径匹配且 URL 不同的条目。
+
+        用备用 Core 检查器重新生成地址，而不是对任意第三方 URL 做字符串替换。
+        备用目录不可用时保留原始失败结果，由调用方报告错误。
+        """
+        eligible_entries = {
+            (url, file_path) for url, file_path in failed_entries if file_path not in (local_failed_paths or set())
+        }
+        if not eligible_entries:
+            return []
+        alternate = alternate_source(source)
+        try:
+            candidates = self._context(game_path, alternate).files_checker.check_files(game_path, version_name)
+        except Exception as exc:
+            self.logger.warning("无法从 %s 获取失败文件的备用地址: %s", alternate, exc)
+            return []
+        url_by_path = {Path(file_path).resolve(strict=False): url for url, file_path in candidates}
+        fallback_entries = [
+            (url_by_path[Path(file_path).resolve(strict=False)], file_path)
+            for original_url, file_path in eligible_entries
+            if Path(file_path).resolve(strict=False) in url_by_path
+            and url_by_path[Path(file_path).resolve(strict=False)] != original_url
+        ]
+        if fallback_entries:
+            self.logger.warning("%s 下载失败，尝试从 %s 补全 %d 个文件", source, alternate, len(fallback_entries))
+        return fallback_entries
 
     def authlib_login_config(self) -> dict[str, bool]:
         """
