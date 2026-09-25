@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from anyio.from_thread import start_blocking_portal
-from pytauri import Commands
+from pytauri import AppHandle, Commands, Manager, RunEvent, RunEventType
 from pytauri_plugins.dialog import init as dialog_init
 from pytauri_wheel.lib import builder_factory, context_factory
 
@@ -68,8 +68,31 @@ class Adapter:
             )
             self.logger.info("前端界面初始化完成")
             self.logger.info("Tauri 主循环已启动，正在等待前端就绪")
-            app.run_return()
+            self._startup_focus_attempted = False
+            app.run_return(self._focus_main_window_on_ready)
         self.logger.info("前端已退出")
+
+    def _focus_main_window_on_ready(self, app_handle: AppHandle, event: RunEventType) -> None:
+        """
+        在宿主首次就绪时请求主窗口焦点。
+
+        只尝试一次，避免后续事件或前端刷新抢走用户已经切换到其他程序的焦点。
+        系统可能拒绝前台激活；失败时记录原因，但不阻断启动器运行。
+
+        :param app_handle: 当前 Tauri 应用句柄
+        :param event: 宿主主循环事件
+        """
+        if self._startup_focus_attempted or not isinstance(event, RunEvent.Ready):
+            return
+        self._startup_focus_attempted = True
+        try:
+            main_window = Manager.get_webview_window(app_handle, "main")
+            if main_window is None:
+                self.logger.warning("启动时未找到主窗口，无法请求焦点")
+                return
+            main_window.set_focus()
+        except (OSError, RuntimeError):
+            self.logger.exception("启动时请求主窗口焦点失败")
 
     def _build_config(self) -> dict[str, Any]:
         """

@@ -71,6 +71,8 @@
 #   - test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None
 #   - test_adapter_main_window_is_visible_without_native_shadow() -> None
 #   - test_adapter_main_window_chrome_follows_ui_setting(window_chrome, is_native) -> None
+#   - test_adapter_focuses_main_window_once_at_startup_ready(monkeypatch) -> None
+#   - test_adapter_startup_focus_failure_does_not_block_startup(monkeypatch, failure) -> None
 #   - test_focus_window_restores_and_focuses_webview(tmp_path) -> None
 #   - test_emit_to_frontend_stops_after_webview_closed(tmp_path) -> None
 #   - test_microsoft_authorization_event_focuses_before_forwarding(tmp_path, monkeypatch) -> None
@@ -108,6 +110,10 @@ pytauri_module.EventTarget = SimpleNamespace(Any=lambda: object())  # type: igno
 pytauri_module.Commands = object  # type: ignore[attr-defined]
 pytauri_module.Builder = object  # type: ignore[attr-defined]
 pytauri_module.Context = object  # type: ignore[attr-defined]
+pytauri_module.AppHandle = object  # type: ignore[attr-defined]
+pytauri_module.RunEventType = object  # type: ignore[attr-defined]
+pytauri_module.RunEvent = SimpleNamespace(Ready=type("FakeReadyEvent", (), {}))  # type: ignore[attr-defined]
+pytauri_module.Manager = SimpleNamespace(get_webview_window=lambda *_args: None)  # type: ignore[attr-defined]
 pytauri_module.builder_factory = lambda: None  # type: ignore[attr-defined]
 pytauri_module.context_factory = lambda *_args, **_kwargs: None  # type: ignore[attr-defined]
 
@@ -959,6 +965,63 @@ def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None
     assert window_config["decorations"] is (expected_mode == "native")
     assert window_config["transparent"] is (expected_mode == "custom")
     assert window_config["shadow"] is (expected_mode != "custom")
+
+
+def test_adapter_focuses_main_window_once_at_startup_ready(monkeypatch) -> None:
+    adapter_module = import_module("ECL.adapters.tauri")
+    adapter = object.__new__(Adapter)
+    adapter._startup_focus_attempted = False
+    adapter.logger = SimpleNamespace(warning=lambda *_args: None, exception=lambda *_args: None)
+    webview_window = FakeWebviewWindow()
+    lookup_labels: list[str] = []
+
+    def get_main_window(_app_handle, label: str):
+        lookup_labels.append(label)
+        return webview_window
+
+    monkeypatch.setattr(adapter_module.Manager, "get_webview_window", get_main_window)
+    app_handle = object()
+    ready_event = adapter_module.RunEvent.Ready()
+
+    adapter._focus_main_window_on_ready(app_handle, object())
+    assert lookup_labels == []
+    assert webview_window.focused is False
+
+    adapter._focus_main_window_on_ready(app_handle, ready_event)
+    assert lookup_labels == ["main"]
+    assert webview_window.focused is True
+
+    adapter._focus_main_window_on_ready(app_handle, ready_event)
+    assert lookup_labels == ["main"]
+
+
+@pytest.mark.parametrize("failure", [None, OSError("focus denied"), RuntimeError("window closed")])
+def test_adapter_startup_focus_failure_does_not_block_startup(monkeypatch, failure: Exception | None) -> None:
+    adapter_module = import_module("ECL.adapters.tauri")
+    adapter = object.__new__(Adapter)
+    adapter._startup_focus_attempted = False
+    warnings: list[str] = []
+    errors: list[str] = []
+    adapter.logger = SimpleNamespace(
+        warning=lambda message: warnings.append(message), exception=lambda message: errors.append(message)
+    )
+
+    class FailingWindow:
+        def set_focus(self) -> None:
+            if failure is not None:
+                raise failure
+
+    monkeypatch.setattr(
+        adapter_module.Manager,
+        "get_webview_window",
+        lambda _app_handle, _label: None if failure is None else FailingWindow(),
+    )
+
+    adapter._focus_main_window_on_ready(object(), adapter_module.RunEvent.Ready())
+
+    assert adapter._startup_focus_attempted is True
+    assert bool(warnings) is (failure is None)
+    assert bool(errors) is (failure is not None)
 
 
 def test_focus_window_restores_and_focuses_webview(tmp_path) -> None:
